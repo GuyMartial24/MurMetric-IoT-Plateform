@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Buffer SQLite local (données non encore synchronisées — ne pas versionner)
+murmetric_buffer.db
+
+# Données runtime
+*.log
+*.output
+
+# DLLs binaires Dewesoft (télécharger depuis dewesoft.com/download/developer-downloads)
+DSRemoteConnect64.dll
+DSRemoteConnect.dll
+
+# Secrets et tokens — ne jamais versionner
+.env
+*.env
+secrets.json
+k8s/secrets.yaml
+
+# Dossier virtuel Python
+.venv/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Dossier interne Claude Code
+.claude/
+
+# Documents tiers (PDFs, fichiers perso Sofiane Bourbia)
+Sofiane_Bourbia/

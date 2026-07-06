@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: murmetric
+  labels:
+    project: murmetric
+    managed-by: frd-codem

@@ -1,0 +1,104 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # BROKER MQTT
+  # Reçoit les publications des deux ingestions :
+  #   RPi          → frd/capteurs/bruts + frd/capteurs/registre
+  #   PC Windows   → frd/dewesoft/bruts
+  # ---------------------------------------------------------------------------
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # BUS DE MESSAGES KAFKA (mode KRaft — sans Zookeeper)
+  # Découple les producteurs MQTT des consommateurs (InfluxDB, alertes, ML…).
+  # Chaque topic est namespaced par tenant : murmetric.{tenant}.*
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: bitnami/kafka:3.7
+    ports:
+      - "9092:9092"
+    environment:
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      # Création automatique des topics au premier message.
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      # Rétention 7 jours — les messages survivent à un redémarrage d'InfluxDB.
+      - KAFKA_CFG_LOG_RETENTION_HOURS=168
+    volumes:
+      - kafka_data:/bitnami/kafka
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # BASE DE DONNÉES TIME-SERIES
+  # ---------------------------------------------------------------------------
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password_frd_test
+      - DOCKER_INFLUXDB_INIT_ORG=FRD_CODEM
+      - DOCKER_INFLUXDB_INIT_BUCKET=Test_Capteurs
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUX_TOKEN:-MON_TOKEN_API_GENERE_PAR_INFLUXDB}
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # BRIDGE MQTT → KAFKA
+  # Transfère les messages MQTT bruts dans les topics Kafka.
+  # Aucune transformation : données passées telles quelles.
+  # ---------------------------------------------------------------------------
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    environment:
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - TENANT_ID=${TENANT_ID:-frd}
+    depends_on:
+      - mosquitto
+      - kafka
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # CONSOMMATEUR KAFKA → INFLUXDB
+  # Lit les topics Kafka et écrit dans InfluxDB en mode batch asynchrone.
+  # Adapté au débit DeweSoftX (1 msg/s par canal).
+  # Peut être scalé horizontalement : docker compose up --scale kafka-consumer=3
+  # ---------------------------------------------------------------------------
+  kafka-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.kafka-consumer
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - KAFKA_GROUP_ID=murmetric-influx
+      - TENANT_ID=${TENANT_ID:-frd}
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN:-MON_TOKEN_API_GENERE_PAR_INFLUXDB}
+      - INFLUX_ORG=FRD_CODEM
+      - INFLUX_BUCKET=Test_Capteurs
+    depends_on:
+      - kafka
+      - influxdb
+    restart: unless-stopped
+
+volumes:
+  influxdb_data:
+  kafka_data:

@@ -1,0 +1,19 @@
+# Image Docker pour le consommateur Kafka → InfluxDB — VPS cloud, FRD-CODEM.
+#
+# Ce conteneur consomme les topics Kafka MurMetric et écrit dans InfluxDB
+# en mode batch asynchrone. Adapté au débit élevé des capteurs de retrait
+# DeweSoftX (1 mesure/s par canal).
+#
+# Build et démarrage via docker-compose :
+#   docker compose up -d kafka-consumer
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements-vps.txt ./
+RUN pip install --no-cache-dir -r requirements-vps.txt
+
+COPY kafka_consumer_influx.py ./
+
+CMD ["python", "-u", "kafka_consumer_influx.py"]

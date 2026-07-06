@@ -1,0 +1,19 @@
+# Image Docker pour le bridge MQTT → Kafka — VPS cloud, FRD-CODEM.
+#
+# Ce conteneur souscrit aux topics MQTT (RPi + PC Windows) et transfère
+# les messages bruts dans Kafka. L'écriture InfluxDB est déléguée au
+# consommateur kafka_consumer_influx (Dockerfile.kafka-consumer).
+#
+# Build et démarrage via docker-compose :
+#   docker compose up -d bridge
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements-vps.txt ./
+RUN pip install --no-cache-dir -r requirements-vps.txt
+
+COPY bridge_mqtt_to_kafka.py ./
+
+CMD ["python", "-u", "bridge_mqtt_to_kafka.py"]

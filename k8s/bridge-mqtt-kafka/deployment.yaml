@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bridge-mqtt-kafka
+  namespace: murmetric
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bridge-mqtt-kafka
+  template:
+    metadata:
+      labels:
+        app: bridge-mqtt-kafka
+    spec:
+      containers:
+        - name: bridge
+          image: murmetric-bridge:latest
+          # Rebuild requis après modification de bridge_mqtt_to_kafka.py :
+          #   docker build -t murmetric-bridge:latest -f Dockerfile.bridge .
+          env:
+            - name: MQTT_BROKER
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: mqtt-broker
+            - name: MQTT_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: mqtt-port
+            - name: KAFKA_BOOTSTRAP
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: kafka-bootstrap
+            - name: TENANT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: tenant-id

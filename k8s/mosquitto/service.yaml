@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  namespace: murmetric
+spec:
+  selector:
+    app: mosquitto
+  ports:
+    - port: 1883
+      targetPort: 1883
+  # LoadBalancer expose le broker MQTT à l'extérieur (RPi + PC Windows).
+  # Remplacer par NodePort si le cluster ne supporte pas LoadBalancer.
+  type: LoadBalancer

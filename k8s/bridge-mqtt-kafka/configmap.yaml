@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: murmetric-config
+  namespace: murmetric
+data:
+  tenant-id: frd
+  mqtt-broker: mosquitto
+  mqtt-port: "1883"
+  kafka-bootstrap: kafka:9092
+  kafka-group-id: murmetric-influx
+  influx-url: http://influxdb:8086
+  influx-org: FRD_CODEM
+  influx-bucket: Test_Capteurs

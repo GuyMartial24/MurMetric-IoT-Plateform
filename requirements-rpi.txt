@@ -1,0 +1,14 @@
+# Dépendances MurMetric — Raspberry Pi (Linux)
+# Cible : ingestion BLE (configure_capteurs + ingestion_capteurs_bluetooth)
+# Installer avec : pip install -r requirements-rpi.txt
+#
+# Note : le bridge MQTT → InfluxDB tourne sur le VPS (docker-compose).
+# influxdb-client n'est donc pas nécessaire sur le RPi.
+
+# BLE scanning (capteurs Blue Maestro Disc Maxi)
+bleak>=3.0.0
+
+# Publication MQTT vers le broker cloud
+paho-mqtt>=2.1.0
+
+# SQLite (store-and-forward résilience cloud) — stdlib Python, pas d'install

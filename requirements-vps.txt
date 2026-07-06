@@ -1,0 +1,16 @@
+# Dépendances MurMetric — VPS cloud
+# Cible : bridge MQTT → Kafka + consommateur Kafka → InfluxDB
+# Installer avec : pip install -r requirements-vps.txt
+#
+# Deux conteneurs utilisent ce fichier (voir docker-compose.yml) :
+#   bridge          : bridge_mqtt_to_kafka.py  (MQTT → Kafka)
+#   kafka-consumer  : kafka_consumer_influx.py (Kafka → InfluxDB)
+
+# Souscription/publication MQTT
+paho-mqtt>=2.1.0
+
+# Client Kafka (producteur dans bridge, consommateur dans kafka-consumer)
+kafka-python>=2.0.0
+
+# Écriture time-series dans InfluxDB (batch asynchrone)
+influxdb-client>=3.0.0

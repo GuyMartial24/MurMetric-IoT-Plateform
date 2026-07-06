@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-consumer-influx
+  namespace: murmetric
+spec:
+  # Scalable horizontalement si le débit augmente :
+  #   kubectl scale deployment kafka-consumer-influx --replicas=3
+  # Toutes les instances partagent le même group_id Kafka → répartition auto.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-consumer-influx
+  template:
+    metadata:
+      labels:
+        app: kafka-consumer-influx
+    spec:
+      containers:
+        - name: consumer
+          image: murmetric-kafka-consumer:latest
+          # Rebuild requis après modification de kafka_consumer_influx.py :
+          #   docker build -t murmetric-kafka-consumer:latest -f Dockerfile.kafka-consumer .
+          env:
+            - name: KAFKA_BOOTSTRAP
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: kafka-bootstrap
+            - name: KAFKA_GROUP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: kafka-group-id
+            - name: TENANT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: tenant-id
+            - name: INFLUX_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: influx-url
+            - name: INFLUX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: influx-token
+            - name: INFLUX_ORG
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: influx-org
+            - name: INFLUX_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: influx-bucket
