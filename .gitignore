@@ -17,15 +17,16 @@ murmetric_buffer.db
 *.log
 *.output
 
-# DLLs binaires Dewesoft (télécharger depuis dewesoft.com/download/developer-downloads)
-DSRemoteConnect64.dll
-DSRemoteConnect.dll
-
 # Secrets et tokens — ne jamais versionner
 .env
 *.env
 secrets.json
 k8s/secrets.yaml
+mosquitto_password.txt
+certs/*.pem
+certs/*.key
+certs/*.crt
+lancer_ingestion_dewesoft.bat
 
 # Dossier virtuel Python
 .venv/
@@ -39,3 +40,12 @@ k8s/secrets.yaml
 
 # Documents tiers (PDFs, fichiers perso Sofiane Bourbia)
 Sofiane_Bourbia/
+
+# Données POC / relevés terrain — volumineuses (data_retrait/ ~4 Go) et sans
+# équivalent dans le produit final (cf. logique_projet.md section 18) : ne
+# jamais versionner, seuls les scripts qui les traitent le sont.
+data_HR_T/
+data_reel_compile/
+data_retrait/
+data_teneur/
+"Données HR-T.xlsx"
