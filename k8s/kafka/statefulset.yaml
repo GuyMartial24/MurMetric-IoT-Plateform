@@ -16,7 +16,10 @@ spec:
     spec:
       containers:
         - name: kafka
-          image: bitnami/kafka:3.7
+          # bitnami/kafka a été retiré du Docker Hub gratuit (catalogue Bitnami
+          # restructuré en 2025) — les anciens tags versionnés sont conservés
+          # sous le namespace bitnamilegacy/.
+          image: bitnamilegacy/kafka:3.7
           ports:
             - containerPort: 9092
           env:
@@ -36,8 +39,28 @@ spec:
               value: "CONTROLLER"
             - name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE
               value: "true"
+            # 6 partitions par topic auto-créé — condition nécessaire pour que
+            # kafka-consumer-influx (cf. hpa.yaml) puisse réellement scaler :
+            # un consumer group ne peut pas avoir plus de consommateurs actifs
+            # que de partitions sur un topic donné.
+            - name: KAFKA_CFG_NUM_PARTITIONS
+              value: "6"
             - name: KAFKA_CFG_LOG_RETENTION_HOURS
               value: "168"
+            # Heap JVM borné explicitement : sans ça, Kafka dimensionne son
+            # heap par défaut sur la mémoire totale de l'hôte (variable selon
+            # la machine), ce qui rend le démarrage imprévisible et peut faire
+            # dépasser le timeout interne d'enregistrement broker↔controller
+            # (observé : crash-loop "unable to register with controller quorum").
+            - name: KAFKA_HEAP_OPTS
+              value: "-Xmx512m -Xms512m"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           volumeMounts:
             - name: kafka-data
               mountPath: /bitnami/kafka

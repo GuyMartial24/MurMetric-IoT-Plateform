@@ -4,8 +4,8 @@ metadata:
   name: kafka-consumer-influx
   namespace: murmetric
 spec:
-  # Scalable horizontalement si le débit augmente :
-  #   kubectl scale deployment kafka-consumer-influx --replicas=3
+  # Scaling automatique géré par hpa.yaml (HorizontalPodAutoscaler) selon le
+  # CPU consommé — replicas ci-dessous est juste la valeur de démarrage.
   # Toutes les instances partagent le même group_id Kafka → répartition auto.
   replicas: 1
   selector:
@@ -19,6 +19,9 @@ spec:
       containers:
         - name: consumer
           image: murmetric-kafka-consumer:latest
+          # IfNotPresent : image buildée localement (pas de registre), sinon
+          # Kubernetes tente un pull distant par défaut sur un tag ":latest".
+          imagePullPolicy: IfNotPresent
           # Rebuild requis après modification de kafka_consumer_influx.py :
           #   docker build -t murmetric-kafka-consumer:latest -f Dockerfile.kafka-consumer .
           env:
@@ -57,3 +60,11 @@ spec:
                 configMapKeyRef:
                   name: murmetric-config
                   key: influx-bucket
+          # Requis pour que le HPA (hpa.yaml) puisse calculer un % d'usage CPU.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

@@ -7,8 +7,18 @@ spec:
   selector:
     app: kafka
   ports:
-    - port: 9092
+    - name: plaintext
+      port: 9092
       targetPort: 9092
+    # Port du contrôleur KRaft — indispensable même en cluster à 1 nœud : le
+    # broker s'auto-enregistre auprès du contrôleur via kafka:9093 (cf.
+    # KAFKA_CFG_CONTROLLER_QUORUM_VOTERS dans statefulset.yaml). Son absence
+    # ici provoquait un crash-loop permanent ("unable to register with the
+    # controller quorum" — RPC jamais délivrable puisque le Service ne
+    # routait pas ce port), corrigé le 03/08/2026.
+    - name: controller
+      port: 9093
+      targetPort: 9093
   # ClusterIP : Kafka n'est accessible qu'en interne au cluster.
   # Le bridge et le consumer y accèdent via kafka:9092.
   type: ClusterIP

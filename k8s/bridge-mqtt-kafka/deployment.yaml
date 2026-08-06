@@ -4,6 +4,12 @@ metadata:
   name: bridge-mqtt-kafka
   namespace: murmetric
 spec:
+  # ⚠️ Ne PAS scaler ce déploiement en l'état (pas de HPA ici, contrairement à
+  # kafka-consumer-influx). Chaque replica s'abonnerait indépendamment aux
+  # mêmes topics MQTT et republierait donc CHAQUE message dans Kafka en double
+  # (voire N fois) — Mosquitto ne répartit pas la charge entre abonnés comme
+  # le fait un consumer group Kafka. Scaling possible uniquement après avoir
+  # migré vers des "shared subscriptions" MQTT v5 ($share/...), non fait ici.
   replicas: 1
   selector:
     matchLabels:
@@ -16,6 +22,9 @@ spec:
       containers:
         - name: bridge
           image: murmetric-bridge:latest
+          # IfNotPresent : image buildée localement (pas de registre), sinon
+          # Kubernetes tente un pull distant par défaut sur un tag ":latest".
+          imagePullPolicy: IfNotPresent
           # Rebuild requis après modification de bridge_mqtt_to_kafka.py :
           #   docker build -t murmetric-bridge:latest -f Dockerfile.bridge .
           env:
@@ -29,6 +38,16 @@ spec:
                 configMapKeyRef:
                   name: murmetric-config
                   key: mqtt-port
+            - name: MQTT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: mqtt-username
+            - name: MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: mqtt-password
             - name: KAFKA_BOOTSTRAP
               valueFrom:
                 configMapKeyRef:

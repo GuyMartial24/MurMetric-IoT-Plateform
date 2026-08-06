@@ -1,0 +1,36 @@
+# Autoscaling horizontal de kafka-consumer-influx selon la charge CPU.
+#
+# C'est le SEUL composant MurMetric conçu pour scaler automatiquement : toutes
+# les instances partagent le même group_id Kafka (murmetric-influx), donc
+# Kafka répartit les partitions entre elles sans doublon ni perte.
+#
+# maxReplicas=6 est aligné sur KAFKA_CFG_NUM_PARTITIONS=6 (cf. kafka/statefulset.yaml) :
+# au-delà de 6 replicas actifs sur un même topic, les instances supplémentaires
+# resteraient inactives (pas plus de consommateurs actifs que de partitions).
+#
+# Prérequis cluster : metrics-server doit être installé et fonctionnel
+# (k3s l'inclut par défaut). Vérifier avec : kubectl top pods -n murmetric
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kafka-consumer-influx
+  namespace: murmetric
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kafka-consumer-influx
+  minReplicas: 1
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      # Attendre 5 min de charge faible avant de retirer un replica, pour
+      # éviter un yoyo si le débit Kafka est irrégulier (rafales de capteurs).
+      stabilizationWindowSeconds: 300
