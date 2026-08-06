@@ -1,10 +1,12 @@
 # Dépendances MurMetric — PC labo Windows
-# Cible : ingestion DeweSoftX (capteur de retrait)
+# Cible : ingestion DeweSoftX par dépôt de fichiers .dxd (capteur de retrait)
 # Installer avec : pip install -r requirements-windows.txt
 
 # Publication MQTT vers le broker cloud
 paho-mqtt>=2.1.0
 
-# DSRemoteConnect : DLL fournie par DeweSoftX, wrappée via ctypes (stdlib Python)
-# Copier DSRemoteConnect64.dll depuis : C:\ProgramData\DEWESoft\DSRemoteConnect\
 # SQLite (store-and-forward résilience cloud) — stdlib Python, pas d'install
+
+# Import de fichiers .dxd exportés/déposés (ingestion_dewesoft_dxd.py).
+# Pas de dépendance pip — DWDataReader_v5_0_8/ (SDK officiel DeweSoft, vendored)
+# est lu en ctypes brut.

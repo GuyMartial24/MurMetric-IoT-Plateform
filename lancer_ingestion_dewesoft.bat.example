@@ -1,0 +1,26 @@
+@echo off
+REM Lanceur d'ingestion DeweSoftX — PC labo Windows (Amiens), MurMetric/FRD-CODEM.
+REM
+REM Copier ce fichier en "lancer_ingestion_dewesoft.bat" (sans .example) dans
+REM le meme dossier que start_dewesoft.py, puis completer MQTT_BROKER,
+REM MQTT_USERNAME et MQTT_PASSWORD ci-dessous (valeurs generees sur le VPS —
+REM les recuperer via :
+REM   ssh -i <chemin_cle> ubuntu@<IP_VPS_ORACLE> "grep MQTT_ ~/Projets_en_Production/murmetric/.env"
+REM ). Le fichier rempli contient un mot de passe reel : ne jamais le partager
+REM ni le versionner (deja exclu par .gitignore).
+
+set MQTT_BROKER=<IP_VPS_ORACLE>
+set MQTT_PORT=8883
+set MQTT_TLS_ENABLED=true
+set MQTT_CA_CERT=C:\MurMetric\ingestion\murmetric_mosquitto_ca.pem
+
+set MQTT_USERNAME=A_COMPLETER
+set MQTT_PASSWORD=A_COMPLETER
+
+REM Dossier reel ou DeweSoftX genere ses .dxd (pas un dossier cree par MurMetric) :
+set DXD_WATCH_FOLDER=C:\Users\Public\Documents\Dewesoft\Data
+
+cd /d "%~dp0"
+python start_dewesoft.py
+
+pause
