@@ -1,3 +1,18 @@
+# Pile cloud MurMetric / FRD-CODEM — déploiement VPS "simple" (alternative
+# aux manifests k8s/, qui visent le même VPS via k3s pour la scalabilité).
+#
+# ⚠️ Ne PAS faire tourner cette pile en même temps que le déploiement
+# Kubernetes (k3s) sur le même VPS : les deux utilisent les mêmes noms de
+# service et ports par défaut (mosquitto:1883, kafka:9092) et entreraient en
+# collision — vécu concrètement en local le 03/08/2026 (cf. logique_projet.md,
+# section "Points ouverts"). Un seul des deux chemins de déploiement à la
+# fois en production.
+#
+# Secrets requis avant le premier démarrage (voir .env.example) :
+#   1. cp .env.example .env, puis renseigner toutes les valeurs.
+#   2. ./generer_mosquitto_password.sh   (génère mosquitto_password.txt)
+#   3. docker compose up -d
+
 services:
 
   # ---------------------------------------------------------------------------
@@ -5,24 +20,54 @@ services:
   # Reçoit les publications des deux ingestions :
   #   RPi          → frd/capteurs/bruts + frd/capteurs/registre
   #   PC Windows   → frd/dewesoft/bruts
+  # Authentification obligatoire (allow_anonymous false, cf. mosquitto.conf) —
+  # generer_mosquitto_password.sh doit avoir été exécuté au moins une fois.
   # ---------------------------------------------------------------------------
   mosquitto:
     image: eclipse-mosquitto:2.0
     ports:
       - "1883:1883"
+    environment:
+      # Utilisées uniquement par le healthcheck ci-dessous (mosquitto_pub doit
+      # s'authentifier lui aussi, allow_anonymous est désactivé) — le broker
+      # lui-même lit ses identifiants depuis password.txt, pas d'ici.
+      - MQTT_USERNAME=${MQTT_USERNAME:?MQTT_USERNAME doit être défini dans .env}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:?MQTT_PASSWORD doit être défini dans .env}
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      # PAS en lecture seule (:ro) : l'entrypoint de l'image doit pouvoir
+      # chown ce fichier vers l'utilisateur non-root "mosquitto" au démarrage
+      # — un montage :ro en bloque le chown et empêche mosquitto de lire son
+      # propre fichier de mots de passe ("Unable to open pwfile", observé le
+      # 04/08/2026 avec Docker Desktop/Windows, dont les montages bind NTFS
+      # n'exposent pas les vraies permissions POSIX). mosquitto ne réécrit
+      # jamais ce fichier lui-même en fonctionnement normal.
+      - ./mosquitto_password.txt:/mosquitto/config/password.txt
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -p 1883 -u \"$$MQTT_USERNAME\" -P \"$$MQTT_PASSWORD\" -t healthcheck -m ping -q 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+    cpus: 0.5
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # BUS DE MESSAGES KAFKA (mode KRaft — sans Zookeeper)
   # Découple les producteurs MQTT des consommateurs (InfluxDB, alertes, ML…).
   # Chaque topic est namespaced par tenant : murmetric.{tenant}.*
+  # Port 9092 volontairement NON publié vers l'hôte — seuls bridge et
+  # kafka-consumer (sur ce même réseau docker-compose) en ont besoin, via
+  # kafka:9092. L'exposer publiquement n'apporterait rien (KAFKA_CFG_ADVERTISED_LISTENERS
+  # annonce de toute façon le nom interne "kafka", injoignable de l'extérieur)
+  # et élargirait la surface d'attaque inutilement (listener en clair, sans SASL).
   # ---------------------------------------------------------------------------
   kafka:
-    image: bitnami/kafka:3.7
-    ports:
-      - "9092:9092"
+    # bitnami/kafka a été retiré du Docker Hub gratuit (catalogue Bitnami
+    # restructuré en 2025) — les anciens tags versionnés sont conservés
+    # sous le namespace bitnamilegacy/.
+    image: bitnamilegacy/kafka:3.7
     environment:
       - KAFKA_CFG_NODE_ID=1
       - KAFKA_CFG_PROCESS_ROLES=broker,controller
@@ -33,10 +78,29 @@ services:
       - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
       # Création automatique des topics au premier message.
       - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      # 6 partitions par topic auto-créé — condition nécessaire pour que
+      # kafka-consumer-influx puisse scaler à plusieurs replicas (un consumer
+      # group ne peut pas avoir plus de consommateurs actifs que de
+      # partitions sur un topic donné).
+      - KAFKA_CFG_NUM_PARTITIONS=6
       # Rétention 7 jours — les messages survivent à un redémarrage d'InfluxDB.
       - KAFKA_CFG_LOG_RETENTION_HOURS=168
+      # Heap JVM borné explicitement : sans ça, Kafka dimensionne son heap par
+      # défaut sur la mémoire totale de l'hôte, ce qui rend le démarrage
+      # imprévisible et peut provoquer un crash-loop "unable to register with
+      # controller quorum" (observé et corrigé côté k8s le 03/08/2026, cf.
+      # logique_projet.md — même réglage appliqué ici par cohérence/prévention).
+      - KAFKA_HEAP_OPTS=-Xmx512m -Xms512m
     volumes:
       - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    mem_limit: 768m
+    cpus: 1.0
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
@@ -49,12 +113,20 @@ services:
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=password_frd_test
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUX_PASSWORD:?INFLUX_PASSWORD doit être défini dans .env}
       - DOCKER_INFLUXDB_INIT_ORG=FRD_CODEM
-      - DOCKER_INFLUXDB_INIT_BUCKET=Test_Capteurs
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUX_TOKEN:-MON_TOKEN_API_GENERE_PAR_INFLUXDB}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUX_BUCKET:-Capteurs}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUX_TOKEN:?INFLUX_TOKEN doit être défini dans .env}
     volumes:
       - influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    mem_limit: 512m
+    cpus: 1.0
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
@@ -69,11 +141,17 @@ services:
     environment:
       - MQTT_BROKER=mosquitto
       - MQTT_PORT=1883
+      - MQTT_USERNAME=${MQTT_USERNAME:?MQTT_USERNAME doit être défini dans .env}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:?MQTT_PASSWORD doit être défini dans .env}
       - KAFKA_BOOTSTRAP=kafka:9092
       - TENANT_ID=${TENANT_ID:-frd}
     depends_on:
-      - mosquitto
-      - kafka
+      mosquitto:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.5
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
@@ -91,14 +169,49 @@ services:
       - KAFKA_GROUP_ID=murmetric-influx
       - TENANT_ID=${TENANT_ID:-frd}
       - INFLUX_URL=http://influxdb:8086
-      - INFLUX_TOKEN=${INFLUX_TOKEN:-MON_TOKEN_API_GENERE_PAR_INFLUXDB}
+      - INFLUX_TOKEN=${INFLUX_TOKEN:?INFLUX_TOKEN doit être défini dans .env}
       - INFLUX_ORG=FRD_CODEM
-      - INFLUX_BUCKET=Test_Capteurs
+      - INFLUX_BUCKET=${INFLUX_BUCKET:-Capteurs}
     depends_on:
-      - kafka
-      - influxdb
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # GRAFANA — visualisation des mesures stockées dans InfluxDB.
+  # Datasource InfluxDB (Flux) préconfigurée automatiquement au démarrage
+  # via grafana/provisioning/datasources/influxdb.yml — pas de setup manuel.
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana-oss:11.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD doit être défini dans .env}
+      - INFLUX_TOKEN=${INFLUX_TOKEN:?INFLUX_TOKEN doit être défini dans .env}
+      - INFLUX_BUCKET=${INFLUX_BUCKET:-Capteurs}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
     restart: unless-stopped
 
 volumes:
   influxdb_data:
   kafka_data:
+  grafana_data:

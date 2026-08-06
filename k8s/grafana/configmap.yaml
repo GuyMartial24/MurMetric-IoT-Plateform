@@ -1,0 +1,24 @@
+# Provisioning de la datasource InfluxDB — équivalent Kubernetes de
+# grafana/provisioning/datasources/influxdb.yml (utilisé par docker-compose).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: murmetric
+data:
+  influxdb.yml: |
+    apiVersion: 1
+    datasources:
+      - name: InfluxDB - MurMetric
+        type: influxdb
+        access: proxy
+        url: http://influxdb:8086
+        isDefault: true
+        editable: true
+        jsonData:
+          version: Flux
+          organization: FRD_CODEM
+          defaultBucket: Test_Capteurs
+          tlsSkipVerify: true
+        secureJsonData:
+          token: ${INFLUX_TOKEN}
