@@ -120,15 +120,15 @@ Les défis sont multiples :
 │  └──────────────┘   company ID filter  ingestion_capteurs_bluetooth.py  │
 │                                        configure_capteurs.py            │
 │                                              │                          │
-│  ┌──────────────┐   DSRemoteConnect NET       │                          │
+│  ┌──────────────┐   Export .dxd               │                          │
 │  │ Capteur      │ ──────────────────► PC labo Windows                  │
-│  │ retrait (×N) │   1 msg/s           start_dewesoft.py                 │
-│  └──────────────┘                    ingestion_dewesoft.py              │
+│  │ retrait (×N) │   1 msg/s (dépôt fichier)   start_dewesoft.py         │
+│  └──────────────┘                    ingestion_dewesoft_dxd.py          │
 │                                              │                          │
 │                           SQLite local  ◄────┤ Si VPS inaccessible      │
 │                           (murmetric_buffer.db) └── republication auto  │
 └───────────────────────────────┬─────────────────────────────────────────┘
-                                │ MQTT (TLS, port 1883)
+                                │ MQTT (TLS, port 8883)
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CLOUD VPS — docker-compose / Kubernetes                                │
@@ -182,8 +182,9 @@ maximiser l'autonomie. Cette configuration est automatique au démarrage via
 
 ### Capteurs de retrait (DeweSoftX)
 
-- Acquisition via **DSRemoteConnect** (DLL propriétaire Dewesoft, Windows)
-- Mode NET : connexion réseau locale `localhost:8999:8001`
+- Acquisition par **import de fichiers .dxd** déposés/exportés par DeweSoftX
+  dans un dossier surveillé, lus via la librairie officielle **DWDataReader**
+  (SDK vendored, ctypes)
 - **Fréquence : 1 mesure/seconde par canal** (haute fréquence)
 - Données publiées sur le topic MQTT `frd/dewesoft/bruts`
 
@@ -267,7 +268,7 @@ MurMetric-IoT-Plateform/
 │
 ├── 📄 configure_capteurs.py             # Configuration GATT BLE (setlog~86400)
 ├── 📄 ingestion_capteurs_bluetooth.py   # Ingestion BLE passive (scan permanent)
-├── 📄 ingestion_dewesoft.py             # Ingestion DeweSoftX (1 msg/s)
+├── 📄 ingestion_dewesoft_dxd.py         # Ingestion DeweSoftX par dépôt de fichiers .dxd
 │
 ├── 📄 bridge_mqtt_to_kafka.py           # VPS : MQTT → Kafka (3 topics)
 ├── 📄 kafka_consumer_influx.py          # VPS : Kafka → InfluxDB (batch async)
@@ -332,9 +333,6 @@ cd MurMetric-IoT-Plateform
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements-windows.txt
-
-# Copier la DLL depuis l'installation DeweSoftX
-copy "C:\ProgramData\DEWESoft\DSRemoteConnect\DSRemoteConnect64.dll" .
 
 # Configurer l'adresse du broker MQTT cloud
 $env:MQTT_BROKER = "<ip_vps>"

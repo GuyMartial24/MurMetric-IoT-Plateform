@@ -88,7 +88,27 @@ kubectl apply -f k8s/kafka/
 kubectl apply -f k8s/influxdb/
 kubectl apply -f k8s/bridge-mqtt-kafka/
 kubectl apply -f k8s/kafka-consumer-influx/
+kubectl apply -f k8s/grafana/
 ```
+
+**Prérequis pour l'autoscaling (`k8s/kafka-consumer-influx/hpa.yaml`) :** le cluster
+doit avoir `metrics-server` installé et fonctionnel (k3s l'inclut par défaut).
+Vérifier avec `kubectl top pods -n murmetric` — si la commande échoue, l'HPA ne
+pourra jamais scaler (il restera bloqué à `minReplicas`).
+
+**Ce qui scale automatiquement, et ce qui ne scale pas :**
+
+| Composant | Scaling auto ? | Pourquoi |
+|---|---|---|
+| `kafka-consumer-influx` | ✅ HPA (1 à 6 replicas, CPU 70%) | Consumer group Kafka natif — répartition sans doublon |
+| `bridge-mqtt-kafka` | ❌ Fixé à 1 replica | Chaque replica s'abonnerait aux mêmes topics MQTT et republierait chaque message en double — nécessiterait des "shared subscriptions" MQTT v5, non implémentées |
+| `mosquitto`, `kafka`, `influxdb` | ❌ Instance unique | Composants stateful non clusterisés dans cette configuration (InfluxDB OSS ne supporte pas le clustering horizontal ; Kafka et Mosquitto ici sont configurés en nœud unique) |
+| `grafana` | ❌ 1 replica | Stocke son état (dashboards, sessions) en SQLite local — plusieurs replicas auraient chacun leur propre état non partagé |
+
+Si le volume de clients dépasse ce que `kafka-consumer-influx` peut absorber en
+scalant seul, la vraie limite sera Kafka/InfluxDB/Mosquitto en nœud unique — un
+sujet à traiter séparément (cluster Kafka multi-broker, InfluxDB Cloud/Enterprise,
+ou migration vers une autre base time-series).
 
 Le consommateur Kafka est scalable horizontalement :
 `kubectl scale deployment kafka-consumer-influx --replicas=3`
@@ -129,6 +149,9 @@ emplacement et ses flags de configuration. Structure complète d'une entrée :
     "mac": "D2:0D:27:1C:F3:97",
     "nom": "disc-maxi-A03",
     "emplacement": "Atelier Troyes",
+    "nom_mur": "",
+    "nom_couche": "",
+    "position": "",
     "ingestion": true,
     "lint_configure": true,
     "lint_max_confirme_s": 86400.0
@@ -141,14 +164,26 @@ emplacement et ses flags de configuration. Structure complète d'une entrée :
 | `mac` | ❌ lecture seule | Adresse BLE (clé de sécurité — script vérifie cohérence clé/champ) |
 | `nom` | ✅ | Nom lisible du capteur |
 | `emplacement` | ✅ | Localisation physique textuelle |
-| `latitude` | ✅ | Latitude GPS en degrés décimaux (`null` si inconnue) |
-| `longitude` | ✅ | Longitude GPS en degrés décimaux (`null` si inconnue) |
-| `altitude_m` | ✅ | Altitude en mètres NGF (`null` si inconnue) |
+| `nom_mur` | ✅ | Mur/paroi dans lequel le capteur est embarqué (ex. `Mur 1`, librement renommable) ; vide si non applicable (28/07/2026) |
+| `nom_couche` | ✅ | Couche de la paroi (ex. `Milieu isolant`) ; vide si non applicable (28/07/2026) |
+| `position` | ✅ | Position latérale sur le mur pour cette couche (ex. `Bas gauche`) ; vide si non applicable (28/07/2026) |
 | `prestation` | ✅ | Référence de la prestation ou du contrat (ex. `C10517`) |
 | `categorie R&D` | ✅ | Catégorie R&D associée (ex. `Hygrothermal`, `Retrait`, `Thermique`) |
 | `ingestion` | ✅ | `true` = mesures publiées sur MQTT ; `false` (défaut) = exclu |
 | `lint_configure` | ❌ auto | Positionné par `configure_capteurs.py` après succès GATT |
 | `lint_max_confirme_s` | ❌ auto | Valeur d'intervalle de log confirmée (secondes) |
+
+**`nom_mur`/`nom_couche`/`position` (28/07/2026)** : ajoutés pour permettre d'étiqueter
+chaque capteur BLE embarqué dans une paroi (les capteurs HR/T du fichier
+`data_HR_T/Données HR-T.xlsx` utilisé pour le POC de l'abaque 3D sont, dans le
+produit final, ces mêmes capteurs BLE — voir section 18 pour la nuance : le
+fichier Excel simule une base de données pour le POC uniquement, aucun lien
+direct n'existe entre lui et `capteurs.json`). Contrairement au reste du
+fichier, ces trois champs restent **libres et non contraints** (pas de liste
+fermée de murs/couches/positions) — le nombre de murs/couches/positions du
+système n'est donc jamais figé en dur, il se déduit de ce qui existe
+réellement dans le registre. `latitude`/`longitude`/`altitude_m` ont été
+retirés du schéma le même jour (jugés hors sujet pour ce projet).
 
 **Logique de résolution du `capteur_id` affiché :**
 1. `capteurs.json["<MAC>"]["nom"]` si renseigné
@@ -403,14 +438,14 @@ Champs MQTT non stockés : `horodatage` (InfluxDB gère son propre timestamp),
 | `adresse_mac` | Tag | Identifiant unique du capteur |
 | `nom` | Tag | Nom lisible (depuis capteurs.json) |
 | `emplacement` | Tag | Zone physique (depuis capteurs.json) |
+| `nom_mur` | Tag | Mur/paroi (depuis capteurs.json, vide si non applicable) |
+| `nom_couche` | Tag | Couche de la paroi (depuis capteurs.json, vide si non applicable) |
+| `position` | Tag | Position sur le mur (depuis capteurs.json, vide si non applicable) |
 | `prestation` | Tag | Référence de la prestation ou du contrat |
 | `categorie R&D` | Tag | Catégorie R&D associée |
 | `ingestion` | Field bool | true = mesures publiées sur MQTT |
 | `lint_configure` | Field bool | true = intervalle de log optimisé |
 | `lint_max_confirme_s` | Field float | Intervalle de log confirmé (secondes) |
-| `latitude` | Field float | Latitude GPS (si renseignée) |
-| `longitude` | Field float | Longitude GPS (si renseignée) |
-| `altitude_m` | Field float | Altitude NGF en mètres (si renseignée) |
 
 Publiée sur le topic `frd/capteurs/registre` :
 - Au démarrage (connexion MQTT initiale)
@@ -436,7 +471,9 @@ from(bucket: "Test_Capteurs")
 | `source` | Tag | Toujours `"dewesoft"` |
 | `canal_nom` | Tag | Nom du canal DeweSoftX (ex. `VA1`) |
 | `canal_unite` | Tag | Unité de mesure (ex. `mm/m`) |
-| `valeur` | Field float | Valeur de la mesure de retrait |
+| `valeur` | Field float | Valeur brute de la mesure de retrait (jamais modifiée) |
+| `valeur_filtree` | Field float | Valeur après filtre de Hampel anti-vibration (cf. section 17) |
+| `est_aberrant` | Field bool | true si ce point a été corrigé par le filtre |
 | `canal_index` | Field int | Index du canal dans DeweSoftX |
 | `taux_echantillonnage` | Field float | Fréquence d'acquisition (Hz) |
 
@@ -501,6 +538,1357 @@ CREATE TABLE buffer_mqtt (
 - `☁️ MQTT cloud` → mesure publiée directement sur le VPS
 - `💾 SQLite local` → mesure stockée localement en attente
 
+## 14. Configuration environnement PC labo Windows — pilotage COM/DCOM de DeweSoftX
+
+**⚠️ Historique — voie abandonnée le 04/08/2026.** La méthode live/COM
+(`ingestion_dewesoft.py`, `DSRemoteConnect64.dll`/`.dll`, `test_dewesoft_com.py`,
+dépendance `pywin32`) a été **définitivement retirée du dépôt**, plus
+seulement mise en réserve : la méthode d'import de fichiers `.dxd`
+(`ingestion_dewesoft_dxd.py`) est désormais la SEULE méthode d'ingestion
+DeweSoftX. Section conservée pour l'historique de l'investigation
+COM/DCOM (utile si le besoin de temps réel revient un jour), mais ne
+décrit plus une voie active du projet.
+
+Configuration réalisée le 15/07/2026 sur le PC d'acquisition du laboratoire
+d'Amiens, en vue du pilotage automatique de DeweSoftX (version 2023.6) et de
+l'extraction de données via Python — **complémentaire** au fichier
+`DSRemoteConnect64.dll` déjà présent à la racine du repo.
+
+### Windows
+
+- **.NET Framework** activés via *Fonctionnalités Windows* : 3.5 et
+  4.8 Advanced Services.
+- **Serveur COM/DCOM de DewesoftX enregistré** (invite CMD Administrateur) :
+  ```
+  cd "C:\Program Files\DewesoftX\Bin64"
+  DEWESoft.exe /regserver
+  ```
+  Nécessaire car l'exécutable principal se trouve dans un sous-dossier
+  spécifique — l'enregistrement automatique standard ne suffit pas.
+
+### Python
+
+- **Python 3.11** installé avec l'option *Add python.exe to PATH*.
+- **Bibliothèque de liaison retenue : `pywin32`** (`pip install pywin32`),
+  via l'architecture standard COM/OLE de Windows.
+
+**Décision technique — pourquoi pas `pythonnet`/`clr` :** l'approche par le
+moteur .NET géré a été écartée car `DSNET64.dll` (`\Addons64\DSNET`) est une
+bibliothèque **native C++ sans manifeste d'assembly**, donc non chargeable
+proprement par `pythonnet`. L'API COM/OLE exposée par DewesoftX (ProgID
+`Dewesoft.App`) est en revanche parfaitement supportée par `pywin32`.
+
+### Script de validation (test d'intégration réussi)
+
+```python
+import win32com.client
+dewesoft = win32com.client.Dispatch("Dewesoft.App")
+version = dewesoft.Version  # → confirmé : 2023.6
+```
+
+Exécuté avec succès sur le PC d'Amiens — connexion COM au noyau DeweSoftX
+confirmée.
+
+### Statut
+
+L'environnement Python d'Amiens dispose désormais des privilèges nécessaires
+pour, via COM (`Dewesoft.App`) : charger des configurations `.dxs`,
+démarrer/arrêter des enregistrements, et orchestrer l'ingestion des données.
+Cette "tuyauterie" est validée à 100 % côté connexion ; **reste à décider**
+son intégration dans le pipeline d'ingestion existant (cf. points ouverts).
+
+## 15. Granularité temporelle de l'abaque 3D (conception — non implémenté)
+
+Le prototype de l'abaque 3D (T, HR, retrait, teneur en eau, point de rosée —
+cf. artefact partagé séparément) propose un sélecteur d'unité de temps
+Heure/Jour. Dans le prototype, c'est un simple changement d'affichage (division
+par 24) car les données y sont un petit jeu réel mais pré-calculé (JSON
+statique, cf. section 18 — pas de lecture InfluxDB en direct). **En
+production, avec des données InfluxDB horodatées à la seconde sur plusieurs
+mois, ce ne peut pas être un relabeling côté client — il faut une
+ré-agrégation côté serveur.**
+
+### Mécanisme : `aggregateWindow()` (Flux)
+
+```flux
+from(bucket: "Test_Capteurs")
+  |> range(start: v.startTime, stop: v.stopTime)
+  |> filter(fn: (r) => r._measurement == "mesures_capteurs" or r._measurement == "mesures_dewesoft")
+  |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
+```
+
+Le paramètre `every` correspond directement au sélecteur de granularité de
+l'interface. Flux supporte nativement 4 pas pertinents ici :
+
+| Granularité UI | `every` Flux | Remarque |
+|---|---|---|
+| Heure          | `1h`         | — |
+| Jour           | `1d`         | — |
+| Semaine        | `1w`         | — |
+| Mois           | `1mo`        | Calendaire (respecte la vraie longueur du mois, pas fixé à 30 j) |
+
+### Contraintes à respecter à l'implémentation
+
+- **Une seule fenêtre `every` pour toutes les variables affichées** (T, HR,
+  retrait, point de rosée) — c'est ce qui garantit qu'elles restent alignées
+  sur les mêmes bornes temporelles, même si les capteurs BLE et DeweSoftX ont
+  des cadences natives différentes à la source.
+- **Point de rosée** : déjà un champ stocké (`point_de_rosee` dans
+  `construire_point_capteurs()`), s'agrège directement comme T/HR.
+- **Teneur en eau** : n'est *pas* un flux continu comme T/HR/retrait — c'est
+  une saisie manuelle éparse (cf. section 16). `aggregateWindow(fn: mean)`
+  n'est donc pas pertinent pour elle : la plupart des fenêtres n'auraient
+  aucun point à moyenner. Voir section 16 pour la jointure "au plus proche"
+  à utiliser à la place quand elle est croisée avec T/HR dans l'abaque.
+- **Changer de granularité doit redéclencher une requête**, pas juste
+  reformater l'axe — le paramètre proposé côté API : `granularite=heure|jour|semaine|mois`
+  sur l'endpoint qui sert les données à l'abaque, traduit en `every` Flux
+  côté backend.
+- **Coupler la granularité à la fenêtre temporelle affichée** : "Heure" n'a de
+  sens que sur une fenêtre resserrée (quelques semaines) ; sur 6 mois de
+  données, forcer "Heure" produirait des milliers de points par variable pour
+  un gain de lisibilité nul. À terme, la granularité fine pourrait être
+  désactivée/déconseillée au-delà d'une certaine largeur de fenêtre plutôt que
+  laissée comme un réglage totalement indépendant.
+
+## 16. Teneur en eau — saisie manuelle (conception — non implémenté)
+
+Contrairement à T/HR (capteurs BLE) et au retrait (DeweSoftX), la teneur en
+eau n'est mesurée par aucun capteur en continu dans ce projet — elle est
+relevée ponctuellement sur le terrain (type humidimètre à pointes/Protimeter)
+et **saisie manuellement par un utilisateur depuis l'appli**.
+
+### Mesure InfluxDB : `mesures_teneur_eau`
+
+| Champ | Type InfluxDB | Description |
+|---|---|---|
+| `utilisateur_id` | Tag | Identifiant de l'utilisateur ayant saisi la mesure |
+| `utilisateur_nom` | Tag | Nom affiché au moment de la saisie (dénormalisé — volontairement figé même si l'utilisateur renomme son compte plus tard : c'est un historique d'audit, pas un profil vivant) |
+| `mur` | Tag | Mur / point de mesure concerné |
+| `couche` | Tag | Couche de la paroi où la mesure est prise (ex. `Carreau/ext`, `Milieu carreau`, `Milieu isolant`… — même notion que `nom_couche` dans `capteurs.json`/`capteurs_retrait.json` et l'axe couche de l'abaque, valeurs libres non contraintes). Ajouté le 29/07/2026 pour distinguer par ex. carreau intérieur/extérieur. Volontairement pas nommé `position` : ce mot désigne déjà la position **latérale** sur le mur ailleurs dans le projet — le réutiliser ici pour la profondeur aurait créé une ambiguïté |
+| `prestation` | Tag | Référence prestation (cohérence avec `registre_capteurs`) |
+| `teneur_eau_pourcent` | Field (float) | Valeur mesurée (%) |
+| `commentaire` | Field (string, optionnel) | Note libre (ex. "mesuré après pluie") |
+| `date_mesure` | — (devient `_time`) | Date/heure de la mesure **terrain**, saisie par l'utilisateur (par défaut "maintenant" dans le formulaire, modifiable) |
+
+**`_time` = `date_mesure`, pas l'horodatage d'insertion.** Revu suite à
+discussion : plus d'horodatage automatique à l'écriture — le point est écrit
+avec `.time(date_mesure)` explicitement (même mécanisme que
+`construire_point_dewesoft()` pour l'import `.dxd`, section 12), afin que la
+donnée porte la date réelle de la mesure sur le terrain et non celle, sans
+intérêt scientifique, du moment où l'utilisateur a ouvert l'appli pour la
+saisir.
+
+⚠️ Conséquence à connaître : sans horodatage d'insertion séparé, il n'y a plus
+de trace de "quand la saisie a eu lieu dans l'appli" — seulement de "quand la
+mesure a été prise". Si un jour un audit de saisie (traçabilité des
+manipulations dans l'outil, indépendamment de la date terrain) devient utile,
+il faudra un champ supplémentaire dédié à ce moment-là ; ce n'est pas prévu
+pour l'instant.
+
+### Chemin d'écriture
+
+Formulaire de saisie (appli) → API backend → écriture directe InfluxDB.
+**Pas de passage par Kafka** : contrairement aux flux capteurs continus, une
+saisie humaine est un événement isolé et à faible volume, la résilience
+Kafka/SQLite n'apporte rien ici — une simple écriture InfluxDB directe
+suffit.
+
+⚠️ **Sécurité** : `utilisateur_id`/`utilisateur_nom` doivent être résolus
+côté serveur depuis la session authentifiée, **jamais** acceptés tels quels
+depuis un champ du formulaire — sinon un utilisateur pourrait soumettre une
+mesure au nom d'un autre.
+
+### Conséquence sur l'abaque 3D
+
+La teneur en eau est un flux **épars** (quelques points par mur), alors que
+T/HR/retrait sont denses. Les croiser dans l'espace de phase demande une
+**jointure "au plus proche"** (Flux `join()` sur le point T/HR le plus proche
+en temps de chaque saisie de teneur en eau), pas un `aggregateWindow` par
+moyenne comme section 15 — la plupart des fenêtres n'auraient sinon aucune
+valeur à moyenner.
+
+### Intégration POC de données réelles (31/07/2026)
+
+Le paragraphe ci-dessus décrit la **conception de production** (saisie
+manuelle par formulaire, écriture InfluxDB `mesures_teneur_eau`) — toujours
+non implémentée. Séparément, l'utilisateur a fourni un relevé réel de
+teneur en eau (`data_teneur/Teneur en eau Paroi.xlsx`, prélèvements au
+Protimeter/humidimètre à pointes), qui a été intégré dans l'abaque 3D **à la
+place de** l'ancienne valeur synthétique `6 + 0.12 × humidité` (formule
+placeholder sans rapport avec une vraie mesure, seulement là pour que l'axe
+ait une courbe à tracer).
+
+**Structure du fichier source** (feuille "Feuil1", 11 prélèvements du
+21/11/2025 au 18/03/2026, par mur et par couche) :
+- Mur **"normal"** = SOCMA 1 → **Mur 1** ; mur **"gros gravier"** = SOCMA2 →
+  **Mur 2** (mapping confirmé par l'utilisateur le 31/07/2026 — la
+  numérotation "SOCMA 1/SOCMA2" de ce fichier est différente de la
+  convention "SOCMA 2 = Mur 1 / SOCMA 2BIS = Mur 2" du fichier HR/T,
+  section 18, donc pas déductible automatiquement).
+- 3 couches par mur ("Carreau ext" / "Carreau int" / "Isolant"), un
+  sous-ensemble des 5 couches T/HR (carreau_ext, milieu_carreau,
+  carreau_isolant, milieu_isolant, isolant_osb) — mappées ainsi (meilleure
+  hypothèse physique, confirmée par l'utilisateur) :
+  `Carreau ext → carreau_ext`, `Carreau int → carreau_isolant`,
+  `Isolant → milieu_isolant`. **`milieu_carreau` et `isolant_osb` n'ont
+  aucune donnée réelle de teneur en eau** — l'abaque affiche "—" pour ces
+  deux couches plutôt qu'une valeur inventée.
+
+**Pipeline** : nouveau script `data_reel_compile/extraire_teneur_eau_reel.py`
+(parse le classeur, détecte la ligne d'en-tête des dates dynamiquement plutôt
+que des numéros de ligne en dur, produit `teneur_eau_reel.json`, 64 mesures).
+`combiner_donnees_reelles.py`/`combiner_donnees_reelles_3h.py` font ensuite
+la jointure "au plus proche dans le temps" par (mur, couche) — **sans limite
+de distance** : un jour sans nouveau prélèvement garde la dernière valeur
+connue la plus proche, même si elle date de plusieurs semaines (ex. le jeu
+de données daily va jusqu'au 26/05/2026, ~2 mois après le dernier
+prélèvement du 18/03/2026 — la valeur affichée ce jour-là est donc une
+estimation tenue, pas une mesure fraîche ; à garder en tête en lisant le
+graphique). Chaque entrée finale porte `teneurEau` (valeur de la couche
+"milieu isolant", cohérente avec la valeur par défaut de T/HR) et
+`teneurEauCouches.{carreau_ext,carreau_isolant,milieu_isolant}`.
+
+**Dans l'abaque** : contrairement à T/HR, la teneur en eau réelle **ne varie
+pas par position** (bas gauche/milieu, haut milieu/droite) — seulement par
+couche — puisqu'elle n'a été mesurée qu'une fois par mur et par couche, pas
+par position sur le mur. `construireDataReelle()`, `appliquerPositionTH()`,
+`axisValue()` et l'infobulle de survol ont tous été mis à jour pour lire
+`teneurEauCouches[couche]` (position ignorée pour cet axe) au lieu de
+l'ancienne formule. Conséquence UX : comparer les **positions** avec la
+teneur en eau sur un axe produit plusieurs courbes identiques (aucune valeur
+ne varie), documenté dans l'astuce du panneau "Comparer plusieurs positions"
+plutôt que masqué ; comparer les **couches**, en revanche, est désormais
+pleinement pertinent (3 courbes réellement différentes).
+
+## 17. Filtrage anti-vibration (Hampel) — implémenté
+
+Les capteurs de retrait sont sensibles aux vibrations (choc/passage à
+proximité), ce qui crée des pics ponctuels dans les courbes — confirmé sur
+les fichiers réels de `data_retrait/` : un pic isolé jusqu'à ~17000x le bruit
+normal lors d'un essai de calibration (21/11/2025), simultané sur les 8
+canaux (signature d'une perturbation externe, pas d'une panne isolée).
+
+### Algorithme (`filtrer_hampel()` dans `ingestion_dewesoft_dxd.py`)
+
+Filtre de Hampel : médiane + MAD (écart absolu médian) glissants sur une
+fenêtre courte (±`HAMPEL_FENETRE` échantillons, défaut 10). Un point est
+remplacé par la médiane de sa fenêtre si son écart dépasse
+`HAMPEL_SEUIL_K × MAD` (défaut 8×).
+
+**Deux itérations ratées avant la version retenue**, pour mémoire :
+1. Un plancher à 0 (pas de plancher) : loupait les pics quand la fenêtre
+   contenait beaucoup de valeurs identiques (quantification du capteur) —
+   le MAD glissant tombait exactement à zéro et désactivait la détection au
+   lieu de la déclencher.
+2. Un plancher basé sur le MAD global du fichier entier : corrigeait le
+   problème 1 mais donnait des faux positifs (confondait le bruit de
+   quantification normal avec un vrai pic) sur certains canaux, et un
+   plancher à 10 % du MAD global loupait les pics modérés en fonctionnement
+   courant. Une fenêtre secondaire plus large (~600 échantillons) réglait la
+   précision mais rendait le traitement ~30x plus lent (impraticable sur un
+   fichier de 432 000 échantillons/canal).
+
+**Version retenue** : le plancher utilise le MAD des *différences
+successives* dans la même petite fenêtre (pas une fenêtre séparée) — coût
+négligeable, insensible à la dérive lente du signal, et ne s'effondre pas à
+zéro aussi facilement qu'un MAD sur les valeurs brutes. Validé sur les
+fichiers réels : zéro faux positif sur les enregistrements propres, détection
+correcte du pic de calibration sur les 8 canaux. ~4s/canal sur un fichier de
+12h (432 000 échantillons) — acceptable pour un traitement par lot toutes les
+12h.
+
+### Ajustabilité du seuil — ce qui est fait vs ce qui reste à faire
+
+`HAMPEL_SEUIL_K`/`HAMPEL_FENETRE` sont des variables d'environnement,
+réglables **au déploiement**, pas encore par l'utilisateur final **depuis
+l'application**. Rendre le seuil ajustable en direct depuis l'interface
+demande de recalculer le filtre à la demande à partir de `valeur` (toujours
+brute) côté backend/API — composant qui n'existe pas encore dans ce dépôt.
+En attendant, changer le seuil impose de retraiter les `.dxd` sources
+(conservés dans `DXD_PROCESSED_FOLDER`, jamais supprimés).
+
+### Interface (maquette)
+
+La maquette de l'abaque 3D superpose les deux vues plutôt qu'un simple
+interrupteur brut/filtré : nuage de points bruts pâle en arrière-plan,
+trajectoire filtrée en trait plein par-dessus — montre visuellement *ce qui a
+été retiré*. Un curseur "sensibilité" y simule l'ajustement du seuil
+(recalcul en direct côté client) — préfigure l'ajustement en direct réel, qui
+nécessitera le backend évoqué ci-dessus. Ce filtrage tourne sur le jeu de
+données réelles décrit en section 18 (l'artefact n'a plus de jeu simulé
+depuis le 24/07/2026 — cf. section 18).
+
+## 18. Abaque 3D — intégration des données réelles (POC, implémenté)
+
+L'artefact de l'abaque 3D trace les données effectivement mesurées, pour
+valider que la visualisation tient sur de vraies données avant tout
+développement backend. Un jeu de données **simulé** a coexisté un temps avec
+le jeu réel (bouton Simulé/Réel, pour démontrer le déphasage HR→teneur en
+eau→retrait avant que les vraies données ne soient prêtes) — **retiré le
+24/07/2026** avec le panneau "Administration" (mock utilisateurs/permissions,
+lui aussi supprimé) : consigne explicite que cette interface ne sert qu'au
+monitoring/filtrage/visualisation par l'utilisateur final, pas à une
+démonstration multi-mode ni à la gestion des accès.
+
+**Important (précisé le 31/07/2026)** : tout le pipeline `data_reel_compile/`
+(scripts d'extraction + fichiers JSON intermédiaires + fichier Excel
+`data_HR_T/Données HR-T.xlsx`) est un outillage **exclusivement POC**, sans
+équivalent dans le produit final. Dans la version finale :
+- chaque fichier `.dxd` est extrait **automatiquement dès sa génération**
+  par `ingestion_dewesoft_dxd.py` (section 12/19) — pas de compilation par
+  lot ni de fenêtre de dates à gérer ;
+- les mesures BLE HR/T sont stockées **automatiquement en base** (InfluxDB)
+  par `ingestion_capteurs_bluetooth.py`, en continu — pas de classeur Excel.
+
+Le classeur Excel et l'extraction de plusieurs `.dxd` à la fois n'existent
+donc que pour simuler, une fois, un jeu de données réaliste à partir duquel
+construire et démontrer l'abaque — à ne jamais confondre avec l'architecture
+d'ingestion réelle (section 12).
+
+### Mapping capteurs → position → mur
+
+Le fichier `data_HR_T/Données HR-T.xlsx` (55 capteurs T+HR numérotés) a été
+recoupé avec les onglets "Courbes de suivi T"/"Courbe de suivi HR" en
+inspectant le XML des graphiques Excel (`<c:f>` des séries) pour retrouver
+quel numéro de capteur correspond à quelle position physique du mur. Résultat :
+
+- **SOCMA 2 = Mur 1**, **SOCMA 2BIS = Mur 2** (confirmé — SOCMA est juste une
+  autre appellation du mur, le POC garde le nom "Mur 1/2").
+- Chaque mur a 4 positions non ambiguës : *bas gauche, bas milieu, haut
+  milieu, haut droite*. Une 5<sup>e</sup> position, *centre milieu*, existe
+  mais est **partagée entre les deux murs** dans le classeur (même capteur
+  référencé sur les deux graphiques) — exposée séparément plutôt que
+  rattachée arbitrairement à un mur.
+- Chaque position a plusieurs profondeurs (carreau/isolant, milieu isolant,
+  isolant/OSB, milieu carreau…) ; la couche **« milieu isolant »** a été
+  retenue comme représentative pour le POC.
+
+### Pipeline d'extraction (`data_reel_compile/`)
+
+Trois scripts, rejouables tels quels (lisent/écrivent dans ce dossier) :
+
+| Script | Rôle |
+|---|---|
+| `extraire_retrait_reel.py` | Parcourt `data_retrait/*.dxd` (SDK DWDataReader), médiane robuste par fichier et par canal (8 canaux : HA1/VA1/HB1/VB1 mur 1, HA2/VA2/HB2/VB2 mur 2), agrège au jour. Garde-fou de plausibilité physique (retrait > 10 mm ⇒ exclu comme panne, pas comme pic). |
+| `extraire_hr_t_reel.py` | Parcourt `Données HR-T.xlsx`, couche "milieu isolant", **par position** (pas de moyenne inter-position), exclut les relevés HR≥99,99 % (saturation) et les doublons sporadiques inter-capteurs (rafales < 30 échantillons, cf. section "anomalies" ci-dessous), agrège au jour. |
+| `combiner_donnees_reelles.py` | Jointure sur la date en **intersection stricte** entre les deux sorties ci-dessus (retrait ET T/HR tous les deux mesurés), calcule le point de rosée réel (Magnus-Tetens, mêmes constantes que `ingestion_capteurs_bluetooth.py`), produit `donnees_reelles_finales.json`/`donnees_reelles_compact.json` (celui-ci embarqué tel quel dans l'artefact). |
+
+Fenêtre retenue : 1<sup>er</sup> déc. 2025 → 26 mai 2026 — **99 jours**,
+tous avec retrait ET T/HR mesurés, non consécutifs (la couverture des
+fichiers `.dxd` était irrégulière avant le passage en cadence d'export
+systématique).
+
+**Historique** : 33 → 53 jours (24/07/2026) — la jointure ne rejette plus un
+jour entier quand un seul des deux murs n'a pas de moyenne T/HR calculable
+ce jour-là (ex. toutes les positions saturées) — ce mur affiche « — »
+ponctuellement, l'autre mur et le retrait restent exploitables. Essai à 112
+jours (28/07/2026, **abandonné le jour même**) : passage d'une intersection
+à une **union** (retrait ET/OU T/HR), abandonné au profit du retour à
+l'intersection stricte — mieux vaut n'afficher que des jours où retrait ET
+T/HR sont tous deux de vraies mesures, plutôt que des jours partiels.
+
+**53 → 99 jours (31/07/2026)** : un collègue a fait remarquer, à juste titre,
+que 53 jours semblait faible vu la durée réelle de la campagne. Cause
+trouvée : `extraire_retrait_reel.py` et `extraire_hr_t_reel.py` fixaient
+tous deux `DEBUT`/`FIN` **en dur** à déc. 2025 → mars 2026 — une fenêtre
+choisie tôt dans le projet et jamais mise à jour depuis, alors que la
+collecte a continué.
+
+**`DEBUT`/`FIN` supprimées, pas seulement élargies** : plutôt que de
+re-choisir une nouvelle fenêtre fixe qui redeviendrait obsolète dans
+quelques mois, les deux scripts traitent maintenant **tout ce qui est
+disponible**, sans borne de dates. Rappel important (cf. plus haut) : ce
+pipeline est un outillage **POC uniquement** — dans le produit final,
+chaque fichier est ingéré à son arrivée, donc cette question de fenêtre à
+maintenir ne se posera jamais. Supprimer les bornes évite juste de refaire
+cette découverte à chaque future mise à jour du POC. Contrepartie
+mineure : le temps d'extraction croît avec la taille de la campagne (357
+fichiers retrait ≈ 6 min aujourd'hui) et chaque exécution donne un résultat
+différent (plus grand) que la précédente — un "instantané toujours à jour"
+plutôt qu'une fenêtre de recherche figée et reproductible, cohérent avec
+l'usage (une campagne en cours, pas une étude rétrospective).
+
+| Source | Jours distincts disponibles (sans borne) | Période |
+|---|---|---|
+| Retrait (`data_retrait/*.dxd`) | 167 jours (357 fichiers) | 21/11/2025 → 27/07/2026 |
+| T/HR (`Données HR-T.xlsx`) | 177 jours (1396 mesures) | 01/12/2025 → 27/05/2026 |
+| **Intersection stricte retenue** | **99 jours** | **01/12/2025 → 26/05/2026** |
+
+L'intersection reste plafonnée par le T/HR (qui s'arrête fin mai 2026) : le
+retrait disponible en juin-juillet 2026 n'apparaît donc pas dans l'abaque,
+mais reste exploité pour repérer l'anomalie 3 ci-dessous. 78 jours de la
+fenêtre T/HR complète (177 jours) n'ont aucun fichier `.dxd`
+correspondant — reconfirmé (31/07/2026) que ce n'est pas un filtrage à tort
+mais une vraie absence de mesure ; toujours écartés plutôt que comblés par
+interpolation, conformément au principe déjà retenu (cf. paragraphe
+précédent).
+
+**Un correctif introduit pendant l'essai en union est resté, à raison** :
+`filtrerHampel()` (artefact) traitait un retrait `null`/`undefined` comme un
+pic à corriger (coercition JS silencieuse vers `0`) au lieu de l'ignorer.
+Ce cas existe toujours au niveau d'un canal individuel (ex. HB2, HA2, HA1 —
+cf. anomalies ci-dessous) — le correctif reste donc nécessaire et a été
+conservé.
+
+**Correction d'une affirmation précédente** : cette note indiquait que la
+fenêtre "ne pouvait pas s'élargir plus" car les positions T/HR ne seraient
+valides que jusqu'au 22 mars 2026 dans le classeur. Vérification directe du
+classeur le 31/07/2026 : c'était inexact (ou périmé — le classeur source a
+pu être mis à jour depuis) — des mesures T/HR exploitables existent bien
+jusqu'au 27 mai 2026. Corrigé ici plutôt que laissé comme trace d'erreur.
+
+### Anomalies réelles trouvées, documentées plutôt que masquées
+
+1. **Capteur HB2 (mur 2), 4 mars 2026** : panne soutenue (-17,7 mm constant
+   sur 100 % des échantillons de 2 fichiers) — catégoriquement différente
+   d'un pic de vibration (section 17) : c'est un contrôle de plausibilité
+   physique *inter-fichiers* qui l'a détectée, pas le filtre de Hampel
+   (conçu pour des pics ponctuels *intra*-fichier). Point exclu.
+2. **Capteur HA2 (mur 2), 30 avril → 18 mai 2026** (trouvé le 31/07/2026, à
+   l'élargissement de la fenêtre) : panne soutenue similaire à HB2
+   (-16,25 mm environ, constant), détectée et exclue par le même contrôle de
+   plausibilité physique.
+3. **Capteur HA1 (mur 1), à partir du 5 juin 2026, toujours en cours au
+   27 juillet 2026** (trouvé le 31/07/2026, à la suppression des bornes
+   `DEBUT`/`FIN`) : panne soutenue du même type (-10,80 mm environ,
+   constant), sur la totalité des fichiers depuis cette date. **Hors de la
+   période affichée dans l'abaque** (le T/HR s'arrête fin mai 2026, avant le
+   début de cette panne) — n'a donc aucun effet sur le POC, mais mérite un
+   signalement à l'équipe terrain : à la différence de HB2/HA2 (pannes
+   ponctuelles, quelques semaines), celle-ci n'est toujours pas résolue au
+   dernier fichier disponible.
+4. **3 fichiers du 8 avril 2026** (trouvés le 31/07/2026) : contenaient par
+   erreur des canaux de **diagnostic système** (CPU/mémoire/disque/réseau,
+   ex. "MemTotal", "DiskFree") au lieu du seul retrait — sans lien avec un
+   phénomène physique, exclus par le même contrôle de plausibilité (valeurs
+   très hors de portée pour un retrait en mm). Cause probable : un groupe de
+   canaux de supervision DeweSoft resté actif par erreur lors de ces
+   mesures.
+5. **Mur 1, à partir du 6 février 2026** : les 4 positions T/HR se mettent à
+   reporter des valeurs strictement identiques **dans le classeur Excel
+   source lui-même** (vérifié cellule par cellule, pas un artefact
+   d'extraction), **en continu** (rafales de 336 à 567 échantillons) — le
+   Mur 2 continue de varier normalement. Cause probable : panne d'acquisition
+   ou bascule capteur/logger côté source, non investiguée plus avant.
+   Conséquence pratique : le sélecteur de position n'apporte plus rien pour
+   le Mur 1 après cette date, jusqu'à la coupure totale ci-dessous.
+   **Gardé tel quel** (état soutenu, pas une valeur ponctuelle à corriger).
+6. **Aucune T/HR exploitable (les deux murs), 25 mars → 26 mai 2026**
+   (46 jours, trouvé le 31/07/2026 à l'élargissement de la fenêtre) :
+   cellules T **et** HR réellement vides dans le classeur source pour
+   toutes les positions des deux murs sur cette période — vérifié
+   directement (pas un artefact de saturation ni de filtrage). Retrait
+   gardé quand même pour ces jours (intersection stricte toujours respectée
+   côté date), T/HR affiché « — ». Cause non investiguée (arrêt
+   d'acquisition T/HR côté source, probablement).
+7. **Doublons sporadiques inter-capteurs, ailleurs dans le classeur** :
+   d'autres paires de capteurs sans lien physique (positions différentes,
+   parfois des deux murs) rapportent occasionnellement des valeurs T *et*
+   HR strictement identiques par courtes rafales (1 à ~15 échantillons
+   épars dans tout le fichier) — une contamination croisée entre colonnes,
+   pas un phénomène physique ni du bruit BLE. Repéré en creusant la question
+   *"le filtre de Hampel marche-t-il aussi pour T/HR ?"* : la réponse est
+   non — ce n'est pas le même type de bruit (voir ci-dessous) — mais
+   l'analyse a mis au jour ce doublon. **Corrigé** (contrairement à
+   l'anomalie 5) : `extraire_hr_t_reel.py` détecte les rafales de correspondance
+   exacte entre chaque paire de positions et exclut celles de longueur
+   **< 30 échantillons** (~3,75 j à 3h) comme doublon sporadique, tout en
+   laissant intactes les rafales plus longues (l'anomalie 5, qui est un état
+   soutenu et non une contamination ponctuelle — la marge entre les deux
+   plages observées, ~15 vs ~238+ échantillons, est large).
+
+**Pourquoi pas un filtre de Hampel pour T/HR ?** Vérifié empiriquement (39
+capteurs, T et HR) : quasiment aucun pic ponctuel n'est présent, et les rares
+écarts détectés sont soit les doublons ci-dessus (anomalie 3, exact, pas du
+bruit), soit de mineurs sauts d'humidité *synchrones sur plusieurs capteurs
+à la fois* (jusqu'à 12 positions, sur les deux murs, au même horodatage) —
+une signature incompatible avec une interférence BLE indépendante par
+capteur, plus probablement un bref événement environnemental réel ou un
+artefact d'export groupé. Leur amplitude reste dans l'ordre de grandeur de
+la variation normale (percentile 95-99 des écarts habituels), très loin des
+~17000x observés sur le pic de calibration du retrait (section 17). Un
+filtre de Hampel calé comme celui du retrait (k=8, fenêtre courte)
+flaguerait de la variation normale comme aberrante sur un jeu de données
+bien plus clairsemé (pas de 3h, pas le pas de quelques ms/s du retrait) —
+**non retenu**. La détection de doublon (anomalie 3) cible le vrai problème
+trouvé, avec un mécanisme différent (comparaison exacte inter-capteurs, pas
+médiane/MAD glissante).
+
+### Interface : sélecteur de position (données réelles uniquement)
+
+Un sélecteur permet de choisir la position T/HR affichée (moyenne des 4
+positions par défaut, ou une position précise) — le retrait garde son
+sélecteur de canal existant (HA/VA/HB/VB), pas de doublon. Recalcul des
+bornes d'axes, du cache du filtre de Hampel et du curseur temporel à chaque
+changement de mur/position.
+
+**Comparaison de plusieurs positions T/HR à la fois** : sur le même modèle
+que la comparaison de canaux de retrait, une case à cocher fait apparaître
+jusqu'à 4 courbes T/HR superposées (bas gauche/milieu, haut milieu/droite —
+centre milieu partagé exclu, pas propre à un mur donc pas comparable aux 4
+autres). Une position substitue sa température **et** son humidité en même
+temps sur tous les axes concernés (X/Y/Z), puisqu'une position = un seul
+capteur qui porte les deux grandeurs. **Mutuellement exclusive** avec la
+comparaison de canaux de retrait (cocher l'une décoche l'autre) — mélanger
+les deux aurait multiplié les courbes sans qu'aucune ne reste lisible.
+
+### Couche de la paroi (28/07/2026)
+
+Jusqu'ici, T/HR était figé sur la couche **« milieu isolant »** (choix fait
+initialement, cf. début de cette section). Sur demande, la couche devient
+elle aussi un axe de sélection — mur → position → **couche** — avec la même
+logique de comparaison multiple que les positions.
+
+**Mapping capteur → couche, reconstruit et vérifié le 28/07/2026** par
+lecture directe du XML des graphiques du classeur (`xl/charts/chartN.xml` :
+colonne de chaque série de graphique recoupée avec l'entête "Capteur" de la
+feuille de données), confirmant à l'identique le mapping déjà établi. Chaque
+position a 4 couches standards — Milieu carreau, Carreau/isolant, Milieu
+isolant, Isolant/OSB (ordre physique extérieur → intérieur) — sauf
+**Haut milieu** (les deux murs) et **Centre milieu partagé**, qui en ont une
+5<sup>e</sup> : **Carreau/ext** (point de mesure côté extérieur).
+
+`extraire_hr_t_reel.py` extrait maintenant les 39 capteurs (au lieu de 9) —
+un par (mur, position, couche). Le détecteur de doublon sporadique (section
+"anomalies" ci-dessus) tourne donc sur 741 paires au lieu de 36. **Bug trouvé
+et corrigé pendant cette extension** : la condition de correspondance
+comptait `None == None` (deux capteurs saturés/exclus **au même instant** —
+un cas réel et fréquent, pas un doublon) comme une correspondance, gonflant
+les exclusions de 431 à plusieurs milliers. Corrigé en exigeant que les 4
+valeurs comparées (T et HR des deux capteurs) soient des nombres réels, pas
+seulement égales — ramène les exclusions à un niveau plausible (~885 pour 39
+capteurs, contre 431 pour 9). Ce bug affectait aussi, dans une moindre
+mesure, la version à 9 capteurs déjà en production ; corrigé du même coup.
+
+**Comparaison de couches, plafonnée à 4** (comme les canaux et les
+positions) : Carreau/ext exclu de la comparaison multiple — aucune 5<sup>e</sup>
+teinte n'a été trouvée qui passe la validation CVD all-pairs sans collision
+avec les 4 couleurs déjà en place (essayé : violet, teal, olive, brun —
+toutes échouent le plancher de vision normale ΔE<15 contre au moins une des
+4 existantes). Carreau/ext reste sélectionnable seul via le menu déroulant.
+La comparaison de couches ne s'active que pour une position précise (pas
+« Moyenne ») et est **mutuellement exclusive** avec les deux autres
+comparaisons (canaux de retrait, positions) — au total, trois modes de
+comparaison qui s'excluent deux à deux.
+
+### Statut : POC autonome, pas encore relié au pipeline applicatif
+
+Comme pour la section 17, ceci vit uniquement dans l'artefact (fichier HTML
+autonome, aucun composant frontend dans ce dépôt) et dans
+`data_reel_compile/` (JSON pré-calculés, pas de lecture InfluxDB en direct).
+Si ce mode "données réelles" doit un jour alimenter l'appli réelle, il faudra
+un backend qui interroge InfluxDB avec la même logique de jointure
+retrait/T-HR/position — pas seulement rejouer les scripts Python actuels.
+
+### Variante démo — agrégation par tranche de 3h (31/07/2026)
+
+Pour explorer si un pas plus fin que le jour révèle des cycles jour/nuit
+utiles à une démo (question posée après avoir chiffré l'écart de cadence
+retrait 10 Hz / T/HR 3h — cf. discussion dédiée), une **copie dédiée** de
+tout le pipeline a été créée, **sans toucher aux scripts/artefact de
+référence** (qui restent l'agrégation au jour, section 18 ci-dessus) :
+
+| Référence (jour) | Copie démo (3h) |
+|---|---|
+| `extraire_retrait_reel.py` | `extraire_retrait_reel_3h.py` |
+| `extraire_hr_t_reel.py` | `extraire_hr_t_reel_3h.py` |
+| `combiner_donnees_reelles.py` | `combiner_donnees_reelles_3h.py` |
+| `retrait_reel.json`, `hr_t_reel.json` | `retrait_reel_3h.json`, `hr_t_reel_3h.json` |
+| `donnees_reelles_finales/compact.json` | `donnees_reelles_finales/compact_3h.json` |
+| `abaque-3d-hygrothermique.html` | `abaque-3d-hygrothermique-3h.html` (artefact séparé, URL distincte) |
+
+**Résultat** : 642 tranches de 3h (contre 99 jours pour la référence),
+1er déc. 2025 → 26 mai 2026.
+
+**Particularité technique** : le découpage par tranche de 3h a besoin de
+l'horodatage RÉEL de chaque échantillon 10 Hz, pas seulement de la date du
+fichier (déduite du nom dans la version au jour) — les fichiers `.dxd` ne
+démarrent pas sur une frontière de tranche (ex. 03h53, 15h53), et l'écart
+entre l'heure du nom de fichier et l'heure interne réelle peut atteindre
+~1h (vérifié : un fichier nommé "081014" démarre en réalité à 07h10).
+`extraire_retrait_reel_3h.py` utilise donc `DWIGetMeasurementInfo`
+(`start_store_time`) comme le fait `ingestion_dewesoft_dxd.py`, puis
+calcule les bornes d'index de chaque tranche par arithmétique (échantillons
+uniformément espacés à 10 Hz) plutôt que de tester chaque échantillon un
+par un — un test par échantillon aurait été beaucoup trop lent en Python
+pur (~432 000 échantillons/fichier/canal). Logique validée sur un fichier
+réel avant de lancer le lot complet.
+
+**Ajustement nécessaire côté abaque** : la fenêtre du filtre de Hampel
+(demi-fenêtre, en nombre de points) a été portée de 10 à 80 — à 8 tranches
+de 3h par jour, 80 tranches couvrent la même portée calendaire (~10 jours)
+que 10 points en pas journalier ; sans cet ajustement, le lissage aurait
+porté sur une fenêtre 8× plus courte en temps réel.
+
+**Coût** : fichier artefact ~2,9 Mo (contre ~575 Ko pour la référence) —
+encore raisonnable pour une démo statique, mais nettement plus lourd. Pas
+de plan pour remplacer la référence au jour par cette variante ; les deux
+coexistent, la variante 3h n'étant qu'une exploration.
+
+## 19. Registre d'étiquetage mur/couche/position (produit final, 28/07/2026)
+
+Objectif : que l'application puisse, pour un mur donné, retrouver la liste
+des capteurs qui y sont embarqués — **indépendamment** du POC de l'abaque
+(section 18), qui utilise sa propre logique figée dérivée du fichier Excel de
+simulation. Ce fichier Excel **ne sert qu'au POC** : aucun lien n'existe (et
+ne doit exister) entre lui et les registres décrits ici, qui visent le
+produit final.
+
+### Capteurs HR/T — extension de `capteurs.json` (section 3)
+
+Les capteurs HR/T embarqués dans une paroi sont, dans le produit final, des
+capteurs **Blue Maestro BLE** comme les autres — pas un système séparé. Le
+mur/couche/position s'ajoutent donc comme champs supplémentaires,
+optionnels, sur les entrées existantes de `capteurs.json` (détail en
+section 3) plutôt que dans un fichier à part.
+
+### Capteurs de retrait — nouveau fichier `capteurs_retrait.json`
+
+Contrairement au BLE, un capteur de retrait est **filaire**, identifié par
+son **nom de canal DeweSoft** (ex. `HA1`), pas par une adresse MAC — pas
+d'identifiant matériel unique fourni par le fabricant, pas de découverte
+BLE. Un registre séparé est donc justifié : les champs BLE (`mac`,
+`lint_configure`, `lint_gatt_absent`...) n'ont pas de sens pour un canal
+filaire.
+
+Schéma (mêmes principes que `capteurs.json` — `_schema` auto-documenté,
+champs libres/non contraints) :
+
+```json
+{
+  "_schema": {
+    "_description": "Mapping nom de canal DeweSoft (fichiers .dxd, data_retrait/) → étiquetage mur/couche/position pour les capteurs de retrait filaires. Pas d'adresse MAC ni de découverte BLE : les canaux sont fixés par le câblage du rig DeweSoft ; auto-enregistrés vides à la première lecture, complétés ensuite par l'utilisateur.",
+    "canal": "Nom du canal tel qu'il apparaît dans les fichiers .dxd (ex. 'HA1'). LECTURE SEULE — doit correspondre à la clé parente.",
+    "nom_mur": "Nom du mur/paroi sur lequel le capteur est monté. Éditable ; vide si non applicable/inconnu.",
+    "nom_couche": "Couche de la paroi, si applicable (rare pour un capteur de surface). Éditable ; vide par défaut.",
+    "position": "Position du capteur sur le mur (ex. 'Bas gauche'), si connue. Éditable ; vide par défaut.",
+    "categorie R&D": "Catégorie R&D associée (ex. 'Retrait'). Libre.",
+    "prestation": "Référence de prestation associée. Libre.",
+    "ingestion": "true = ce canal est pris en compte par ingestion_dewesoft_dxd.py ; false (défaut à l'auto-enregistrement) = exclu."
+  }
+}
+```
+
+Pas de champ `partage_entre_murs` (tranché le 28/07/2026 : n'a pas de sens
+pour un capteur BLE, et pour le retrait le même besoin serait plutôt
+couvert par le futur usage du champ `categorie R&D`/une valeur `nom_mur`
+laissée vide plutôt qu'un booléen dédié).
+
+**Auto-enregistrement, symétrique du BLE** : à la lecture de chaque fichier
+`.dxd`, pour tout `canal_nom` absent du registre, `ingestion_dewesoft_dxd.py`
+ajoute automatiquement une entrée vide (`ingestion: false`) — aucun canal
+n'est ingéré silencieusement sans laisser de trace à étiqueter. Le fichier
+part vide (pas de pré-remplissage manuel des 8 canaux déjà connus) : le
+premier fichier `.dxd` traité les fait apparaître de lui-même.
+
+**Rechargement à chaud** : même mécanisme que `capteurs.json` côté BLE
+(comparaison de la date de modification du fichier à chaque tour de la
+boucle de surveillance) — une modification de `capteurs_retrait.json` par
+l'utilisateur est prise en compte sans redémarrer le script.
+
+**Risque identifié et traité — collision de noms de canal** : les 8 canaux
+actuels (HA1/VA1/HB1/VB1 = Mur 1, HA2/VA2/HB2/VB2 = Mur 2) vivent **tous
+dans le même fichier `.dxd`, en même temps** (vérifié : un fichier réel
+contient bien les 8 canaux des deux murs simultanément) — il n'y a **aucune
+séparation par dossier/fichier** entre murs, tout repose sur le nom du
+canal étant globalement unique. Le champ `description` du canal (qui aurait
+pu porter une info complémentaire) est vide dans les fichiers actuels — pas
+de filet de sécurité disponible côté métadonnées DeweSoft. Si un jour deux
+murs partageaient par erreur un même nom de canal (ex. deux "VA1"
+distincts), rien ne permettrait de les distinguer par les données seules.
+Traitement : convention de nommage globalement unique à maintenir côté
+configuration DeweSoft (déjà le cas aujourd'hui via le chiffre final) +
+garde-fou logiciel (ci-dessous) qui détecte et signale la collision au lieu
+de la laisser corrompre silencieusement une étiquette.
+
+**Garde-fou collision** : si un fichier `.dxd` contient deux canaux de même
+nom, `ingestion_dewesoft_dxd.py` ne les traite jamais comme un seul —
+l'anomalie est signalée par un `print()` (visible en direct) **et** publiée
+comme point InfluxDB dédié (mesure `alertes_ingestion`, tag
+`type: "collision_canal"`, `canal_nom`, `fichier_source`) via le chemin
+MQTT → Kafka → InfluxDB déjà en place. Motivation du choix InfluxDB plutôt
+que le seul log console : aucun script du pipeline n'a de journalisation
+persistante aujourd'hui (tout part sur `stdout`, perdu si personne ne
+regarde au bon moment) — publier l'anomalie comme donnée la rend
+persistante, horodatée, interrogeable en Flux, et exploitable dans Grafana
+(déjà déployé et validé dans ce projet) sans outil supplémentaire.
+
+**Où ces erreurs sont monitorées** : dans Grafana, pas dans un nouvel onglet
+de l'application utilisateur — cohérent avec la décision de garder
+l'interface abaque réservée au monitoring/filtrage/visualisation des
+données par l'utilisateur final (cf. section 18), pas à la gestion
+technique des capteurs/registres.
+
+**Implémenté (29/07/2026)** : `capteurs_retrait.json` créé (vide, `_schema`
+seul) ; `ingestion_dewesoft_dxd.py` complété avec le rechargement à chaud,
+l'auto-enregistrement (`enregistrer_canal_si_inconnu`), la porte `ingestion`
+(un canal `false` — défaut à l'auto-enregistrement — n'est tout simplement
+pas publié), le garde-fou collision (`print` + publication sur le nouveau
+topic MQTT `frd/dewesoft/alertes`), et l'enrichissement du payload
+`mesures_dewesoft` avec `nom_mur`/`nom_couche`/`position`/`categorie R&D`.
+`bridge_mqtt_to_kafka.py` relaie ce nouveau topic vers
+`murmetric.{tenant}.dewesoft.alertes` ; `kafka_consumer_influx.py` y ajoute
+un consommateur dédié (`construire_point_alerte`, mesure `alertes_ingestion`)
+et reçoit les mêmes tags mur/couche/position sur `mesures_dewesoft`. Au
+passage, `construire_point_registre` dans `kafka_consumer_influx.py` (chemin
+Kafka, celui retenu comme principal — cf. Points ouverts) a été corrigé : il
+lui manquait les tags `nom_mur`/`nom_couche`/`position` déjà présents côté
+`bridge_mqtt_to_influx.py`, et il portait encore l'ancienne boucle
+`latitude`/`longitude`/`altitude_m` (champs supprimés de `capteurs.json`).
+
+## 20. Courbes agrégées — somme et moyenne entre séries (conception — non implémenté, 29/07/2026)
+
+Objectif : en plus du mode **comparaison** déjà prévu (section 17/18 —
+plusieurs courbes distinctes affichées côte à côte, plafonné à 4), permettre
+d'afficher une **courbe unique dérivée**, calculée point par point à partir
+de plusieurs séries sélectionnées par l'utilisateur, selon **deux opérations
+au choix** :
+
+- **Somme arithmétique** (ex. `VA1(t) + VA2(t)`) ;
+- **Moyenne arithmétique** (ex. `moyenne(VA1(t), VA2(t))`).
+
+**Champs concernés — les trois familles de données du projet** :
+- **Canaux de retrait** (DeweSoft) — ex. `VA1 + VA2`, `HA1 + HA2`.
+- **Teneur en eau** (section 16) — ex. somme/moyenne entre couches saisies
+  manuellement.
+- **HR et T** (capteurs BLE) — même possibilité prévue, entre positions ou
+  entre couches selon l'axe choisi par l'utilisateur.
+
+Cette courbe agrégée est **distincte** du mode comparaison : ce n'est pas
+plusieurs courbes superposées, mais une seule courbe calculée, qui vient
+s'ajouter aux choix d'affichage de l'utilisateur.
+
+**Alignement temporel — deux cas différents** :
+- **Retrait et HR/T** : échantillonnage dense et régulier (1 mesure/s pour le
+  retrait, cadence propre au capteur BLE pour HR/T) — les séries à combiner
+  partagent déjà le même axe temporel, la somme/moyenne point par point est
+  directe (`aggregateWindow` équivalent, sans jointure particulière).
+- **Teneur en eau** : saisies manuelles éparses (section 16) — les couches à
+  combiner n'ont pas forcément été saisies au même instant. Combiner deux
+  couches demande donc la même logique de **jointure "au plus proche"** déjà
+  prévue en section 16 pour croiser teneur en eau et T/HR, appliquée cette
+  fois entre couches de teneur en eau plutôt qu'entre teneur en eau et T/HR.
+
+Non implémenté à ce stade — conception uniquement, à construire au moment de
+développer l'interface applicative réelle (l'abaque 3D reste un POC
+autonome, cf. section 18).
+
+## 21. Résolution mur/couche/position → capteur(s) réel(s) (analyse, 30/07/2026)
+
+Question posée : quand l'utilisateur choisit un mur, une couche et une
+position dans l'interface, cela filtre-t-il une liste de capteurs
+correspondants ?
+
+**Dans le POC (section 18)** : non, il ne s'agit pas d'un filtrage. La
+structure de données dérivée du classeur Excel garantit une correspondance
+**1:1:1:1** — chaque combinaison (mur, position, couche) pointe vers
+exactement un capteur (`d.positions[position].couches[couche]`), par
+construction (4 positions × 5 couches par mur, une colonne par capteur dans
+le classeur source). Il n'y a donc jamais 0 ni plusieurs candidats à
+départager dans le POC.
+
+**Dans le produit final, la situation est différente.** `capteurs.json` et
+`capteurs_retrait.json` (section 19) utilisent des champs
+`nom_mur`/`nom_couche`/`position` **libres et non contraints** — décision
+volontaire pour ne pas figer par avance le nombre de murs/couches/positions
+du système. Rien n'empêche alors, en pratique :
+- **Zéro capteur correspondant** — étiquette pas encore renseignée, faute de
+  frappe (ex. "Haut Milieu" vs "haut milieu" vs "Haut-Milieu").
+- **Plusieurs capteurs correspondants** — deux capteurs étiquetés par erreur
+  avec la même combinaison (mur, couche, position), ou redondance
+  volontaire (deux capteurs au même emplacement nominal pour validation
+  croisée).
+
+Sans traitement particulier, ces deux cas se traduiraient par un graphique
+vide (0 capteur) ou par un choix silencieux arbitraire du premier capteur
+trouvé (plusieurs capteurs) — dans les deux cas, l'utilisateur ne
+comprendrait pas pourquoi la courbe est absente ou ne correspond pas à ce
+qu'il attend.
+
+**Recommandation (non implémentée)** : plutôt qu'une liste de capteurs à
+parcourir dans l'interface (complexité ajoutée pour un cas qui, avec un bon
+étiquetage, ne montre presque toujours qu'un seul élément), un **indicateur
+inline** suffirait :
+- Cas normal (exactement un capteur résolu) : afficher son nom (ou MAC)
+  directement dans la légende/l'infobulle de la courbe — confirme quel
+  capteur physique alimente les données affichées.
+- Cas anormal (0 ou plusieurs capteurs résolus pour la combinaison choisie) :
+  alerte explicite plutôt qu'un graphique vide ou un choix arbitraire.
+
+Cette approche rejoint la philosophie déjà retenue pour les collisions de
+canaux de retrait (section 19, mesure `alertes_ingestion`) : ne jamais
+échouer silencieusement, signaler l'anomalie plutôt que de la masquer ou de
+la deviner. Non implémenté à ce stade — pertinent pour l'interface
+applicative réelle, pas pour le POC (dont la structure de données exclut
+structurellement ce problème).
+
+## 22. Arrière-plan personnalisable de la zone d'affichage (POC, 30/07/2026)
+
+L'abaque 3D permet désormais de choisir la couleur de l'arrière-plan de la
+zone d'affichage (`.stage-inner`), via un sélecteur de couleur unique dans
+le panneau latéral, à côté d'un lien "Réinitialiser". Même principe que les
+couleurs personnalisables déjà en place pour les canaux/positions/couches
+(section 19/20) : le sélecteur est pré-rempli avec la couleur du thème
+actif, donc aucun changement visuel tant que l'utilisateur n'y touche pas.
+
+**Simplification assumée** : l'arrière-plan par défaut est un dégradé radial
+entre deux teintes (`--stage-bg`/`--stage-bg-2`, variables selon le thème
+clair/sombre). La personnalisation le remplace par une **couleur unie**
+plutôt que d'exposer les deux teintes du dégradé — plus simple à piloter
+avec un seul sélecteur, cohérent avec les contrôles de couleur existants.
+
+**Point ouvert, volontairement non traité dans le POC** : aucun ajustement
+automatique du contraste texte/grille n'accompagne ce changement de
+couleur. Le texte (`--stage-text`/`--stage-text-dim`) et la grille
+(`--stage-grid`/`--stage-grid-strong`) restent aux teintes claires pensées
+pour un fond sombre — si l'utilisateur choisit une couleur de fond claire,
+la lisibilité peut se dégrader (texte clair sur fond clair). Assumé pour le
+POC (complexité non justifiée à ce stade) mais **prévu pour le produit
+final** : calculer automatiquement la luminance de la couleur choisie et
+basculer le texte/la grille vers une teinte sombre ou claire selon le
+contraste obtenu (même logique que la validation CVD/contraste déjà
+appliquée ailleurs dans le projet pour les palettes de courbes), plutôt que
+de laisser l'utilisateur produire par erreur un graphique illisible.
+
+## 23. Axes gradués — vue 2D uniquement (POC, 30/07/2026)
+
+Chaque axe actif (X/Y/Z) affiche des graduations intermédiaires (petite
+marque + valeur), mais **seulement en vue 2D** (un axe mis sur "Aucun",
+projection orthographique à plat). En vue 3D (rotation libre), aucune
+graduation intermédiaire — des graduations sur 2-3 axes vus sous un angle
+quelconque surchargeraient vite la vue et se chevaucheraient avec les
+points de données.
+
+**Minimum et maximum exacts** (30/07/2026) : dans les deux modes, chaque
+axe affiche aussi son minimum et son maximum **exacts** (pas seulement des
+valeurs rondes proches) — à l'origine et à l'extrémité du trait. En 2D,
+ça complète les graduations arrondies (qui tombent rarement pile sur les
+bornes réelles) ; en 3D, c'est la seule info numérique sur l'axe.
+
+**Pourquoi limité au 2D** : `projectSmart()` est purement orthographique en
+2D (`yaw`/`pitch` figés à 0, `nz` figé à 0) — interpoler linéairement entre
+les deux extrémités de l'axe à l'écran correspond alors exactement à
+interpoler la valeur normalisée sous-jacente, sans distorsion de
+perspective à corriger. Ça ne serait pas vrai en 3D (la perspective courbe
+l'espacement des graduations).
+
+**Valeurs des graduations — algorithme "à valeurs rondes"** (fonction
+`calculerGraduations()`, méthode de Heckbert utilisée par D3/Excel) : plutôt
+que diviser l'écart min/max réel en parts égales (ce qui donnerait des
+virgules arbitraires, ex. 18.3/19.9/21.5), l'algorithme choisit un **pas
+rond** (1, 2, 5, 10, 20, 25, 50…) adapté à l'échelle de la grandeur
+affichée, puis place les graduations sur les multiples de ce pas contenus
+dans l'écart affiché. Conséquences :
+- Le nombre réel de graduations varie selon l'écart (visé ~8, mais peut
+  descendre à 3 sur un écart étroit comme l'humidité, ou monter à 10 sur un
+  écart large) — jamais figé à une valeur fixe.
+- Les graduations restent **dans les bornes exactement tracées** de l'axe
+  (pas d'extension du domaine affiché aux prochaines valeurs rondes,
+  contrairement à l'affichage "large" par défaut d'Excel/matplotlib) — pour
+  ne pas décaler l'échelle des points de données déjà calculée par
+  `recalculerRanges()`.
+- Le nombre de décimales affichées s'adapte automatiquement au pas choisi
+  (ex. pas=0.1 → 1 décimale, pas=5 → 0 décimale) plutôt que d'utiliser
+  systématiquement le nombre de décimales fixe de la grandeur (`AXES[k].decimals`,
+  toujours utilisé en vue 3D pour le seul minimum affiché).
+
+**Chevauchement étiquette exacte / graduation ronde (corrigé le
+31/07/2026)** : quand une graduation ronde tombe très près d'une borne
+exacte (ex. borne max = 101, graduation la plus proche = 100), les deux
+étiquettes se dessinaient au même endroit à l'écran et fusionnaient en un
+texte illisible (ex. "100101"). Corrigé en calculant la distance en pixels
+entre chaque graduation et les deux extrémités de l'axe (`f * len` et
+`(1 - f) * len`, où `len` est la longueur écran du trait) : en dessous d'un
+seuil de 18px, l'étiquette de la graduation est simplement omise (le trait
+de graduation reste dessiné) — seule l'étiquette exacte, plus informative,
+reste affichée à cet endroit.
+
+## 24. Lecture de valeur par projection (POC, 30/07/2026)
+
+Objectif : permettre de lire, à partir d'une valeur cible sur un axe (ex.
+Température = 20°C), la ou les valeurs correspondantes sur l'autre axe —
+comme on projetterait à la règle depuis un axe jusqu'à la courbe, puis
+jusqu'à l'autre axe. Réservé à la **vue 2D** (un axe sur "Aucun") pour la
+même raison que les graduations (section 23) : les lignes de projection
+perdraient leur sens visuel dans une vue 3D qui peut tourner.
+
+### Pourquoi une recherche, pas une fonction mathématique
+
+Les données ne sont pas une fonction simple (une Température ne donne pas
+*une* Humidité) — c'est une **série temporelle** : chaque jour a son propre
+couple de valeurs. La courbe peut repasser plusieurs fois par une même
+valeur cible à des dates différentes, avec une valeur différente sur
+l'autre axe à chaque fois. La fonctionnalité cherche donc, parmi les points
+**réellement affichés** (période en cours, courbe choisie), celui ou ceux
+dont la valeur sur l'axe cible est la plus proche de la cible saisie —
+**tous** les points trouvés dans une tolérance (2 % de l'étendue de l'axe)
+sont surlignés et étiquetés, jamais un seul choisi arbitrairement qui
+cacherait une ambiguïté réelle des données.
+
+### Workflow
+
+1. Deux champs numériques apparaissent (un par axe actif), avec le nom et
+   l'unité de l'axe correspondant. Taper une valeur dans l'un désigne cet
+   axe comme cible et vide l'autre champ (jamais deux points de départ
+   ambigus à la fois).
+2. **Si une seule courbe est affichée** (pas de comparaison canaux/positions/
+   couches active) : la recherche porte dessus automatiquement.
+3. **Si plusieurs courbes sont affichées** (comparaison active) : un clic
+   sur une entrée de la **légende** du graphique désigne la courbe sur
+   laquelle chercher (surlignée dans la légende) — identifiée par son
+   triplet `(channelKey, positionKey, coucheKey)`, pas par son texte, pour
+   rester robuste si les libellés changent. Sans ce choix, un message
+   invite à cliquer une courbe.
+4. Résultat, dessiné sur le graphique : un marqueur sur l'axe cible à la
+   valeur saisie, une ligne pointillée jusqu'à chaque point trouvé sur la
+   courbe (cercle blanc, même style que le survol), puis une seconde ligne
+   pointillée projetant chaque point vers l'autre axe, avec la valeur lue
+   et la date du point en étiquette.
+5. Un bouton "Effacer la projection" (ou vider les champs) retire
+   marqueurs et pointillés.
+
+### Simplification géométrique exploitée
+
+En vue 2D, les deux axes actifs sont toujours parfaitement horizontal et
+vertical à l'écran (projection orthographique, `yaw`/`pitch` figés à 0,
+origine commune) — la projection perpendiculaire d'un point vers l'axe
+"autre" se réduit donc à maintenir la coordonnée fixe de cet axe (x fixe
+s'il est vertical, y fixe s'il est horizontal), sans calcul géométrique
+complexe.
+
+## 25. Graphiques compagnons valeur/temps (POC, vue 2D uniquement, 31/07/2026)
+
+### Demande initiale et pourquoi elle a été reformulée
+
+Un utilisateur a souhaité qu'un « second repère » avec le temps en abscisse
+**et** en ordonnée entoure le repère X/Y en vue 2D, comme un cadre extérieur.
+Analyse : géométriquement, cela n'a pas de sens tel quel — une trajectoire
+dans le plan (X, Y) n'est pas une fonction monotone du temps (la courbe
+repasse par les mêmes zones à des dates différentes), donc « le temps » ne
+peut pas être à la fois l'axe horizontal ET l'axe vertical d'un même cadre
+sans se contredire. L'équivalent réellement implémentable est deux **petits
+graphiques compagnons séparés**, où le temps est authentiquement l'axe
+horizontal : un pour la grandeur de l'axe X du graphique principal, un pour
+celle de l'axe Y — chacun affichant "valeur en fonction du temps" (une vraie
+fonction, contrairement au repère principal). Alternative proposée puis
+validée par l'utilisateur.
+
+### Portée du MVP
+
+- Réservé à la **vue 2D** (mêmes raisons que sections 23/24) : en 2D, les
+  deux graphiques compagnons correspondent exactement aux deux axes actifs
+  (`getAxisMode().activeSlots`), quel que soit celui des trois (X/Y/Z) mis
+  sur "Aucun".
+- **Courbes multiples (précisé le 31/07/2026)** : si une comparaison
+  (canaux de retrait, positions ou couches T/HR) est active sur le
+  graphique principal, le compagnon de l'axe concerné affiche lui aussi une
+  ligne par courbe active — mêmes couleur et style de trait (plein/tirets/
+  pointillés) que la légende du graphique principal, réutilisant
+  directement le tableau `legendChannels` et la fonction `axisValue()`
+  construits dans `render()` (passés en argument à `dessinerCompagnons()`
+  plutôt que remontés en variables globales). L'autre compagnon, si son axe
+  n'est concerné par aucune comparaison active, garde la courbe moyenne par
+  défaut. Filtrage par axe : les entrées avec `channelKey` s'appliquent au
+  compagnon "Retrait", celles avec `positionKey` (positions ou couches) aux
+  compagnons température/humidité/rosée/teneur en eau.
+- Repère vertical synchronisé avec le survol du graphique principal
+  (`hoveredIndex`), pour relier visuellement un point survolé à sa position
+  dans le temps.
+- Graduations de valeur "à valeurs rondes" en réutilisant
+  `calculerGraduations()` (section 23), à 4 graduations cibles (au lieu de 8)
+  vu la hauteur réduite (140px).
+- Case à cocher "Graphiques compagnons" (masqués par défaut) : active/désactive
+  l'affichage sans dépendre uniquement du mode 2D/3D.
+- **Positionnement (deux tentatives, corrigé le 31/07/2026)** : première
+  tentative — `#companion-wrap` enfant direct de `.layout` (grille CSS
+  `258px 1fr`) avec `grid-column: 2` forcé, pour rester dans la colonne du
+  graphique. **Insuffisant** : une grille CSS partage la **hauteur de
+  ligne** entre toutes ses colonnes — comme `.rail` (panneau latéral, avec
+  beaucoup de champs) est plus haut que `.stage-wrap` (le graphique), la
+  ligne entière s'étire à la hauteur de `.rail`, et un 2ᵉ élément en colonne
+  2 n'apparaît qu'après la fin de cette ligne, donc après la fin du panneau
+  latéral, pas juste après le graphique — d'où le grand espace vide constaté
+  à l'usage. **Correction définitive** : `.stage-wrap` et `#companion-wrap`
+  sont désormais regroupés dans un conteneur `.stage-col`
+  (`display: flex; flex-direction: column; gap: 16px;`), qui devient le seul
+  enfant de la colonne 2 de `.layout` — les deux empilent alors l'un sous
+  l'autre indépendamment de la hauteur de `.rail`, puisqu'ils partagent le
+  même flux flex plutôt que la même ligne de grille.
+
+### Conception « facile à retirer »
+
+Contrainte explicite de l'utilisateur : si la fonctionnalité ne convient
+pas, elle doit pouvoir être supprimée proprement. Toutes les additions sont
+regroupées et marquées d'un commentaire "COMPAGNONS", en cinq endroits
+précis dans `abaque-3d-hygrothermique.html` :
+1. Bloc CSS `.companion-wrap`, `.companion-wrap.visible`, `.companion-chart`
+   et ses enfants (le conteneur `.stage-col` n'est pas marqué "COMPAGNONS" —
+   si la fonctionnalité est retirée, il suffit de remettre `.stage-wrap` en
+   enfant direct de `.layout` et de supprimer `.stage-col`).
+2. Bloc HTML `#companion-toggle-group` (case à cocher, juste après
+   `#proj-group`).
+3. Bloc HTML `#companion-wrap` (les deux `<canvas>` et leurs libellés,
+   dans `.stage-col`, juste après `.stage-wrap`).
+4. Bloc JS (fonctions `updateCompanionVisibility()`,
+   `dessinerCompagnonUnique()`, `dessinerCompagnons()`, juste avant
+   `render()`) + l'appel `updateCompanionVisibility()` ajouté dans
+   `onAxisChange()`.
+5. L'unique ligne d'appel `dessinerCompagnons();` en fin de `render()`.
+
+Supprimer ces cinq blocs retire la fonctionnalité sans laisser de résidu.
+
+### Statut
+
+Implémenté à l'identique dans l'abaque de référence (jour) et dans la
+variante démo 3h (`abaque-3d-hygrothermique-3h.html`, section 18) — mêmes
+cinq blocs "COMPAGNONS", `getSeriesFiltrees()` de la variante 3h utilisant
+déjà sa propre demi-fenêtre Hampel (80, cf. section 18) sans adaptation
+supplémentaire nécessaire côté compagnons.
+
+## 26. Cadre temporel englobant (POC, vue 2D uniquement, 03/08/2026)
+
+### Origine de la demande — deux reformulations
+
+Fait suite à la demande initiale du "second repère englobant" (section 25,
+temps en abscisse ET en ordonnée d'un cadre extérieur). Deux précisions
+successives de l'utilisateur ont fait évoluer la conception :
+1. Le besoin n'est **pas géométrique** mais lié à l'**impression/capture
+   d'écran** — l'infobulle de survol (qui affiche la date exacte d'un point)
+   disparaît sur une image figée, donc plus aucun moyen de savoir "à quel
+   moment" correspond un point une fois le graphique capturé pour un rapport.
+   (Une première implémentation avait alors peint quelques dates directement
+   sur la courbe — remplacée par ce qui suit.)
+2. L'utilisateur a ensuite demandé le cadre englobant **littéral** malgré
+   tout, avec le temps sur les 2 côtés (x et y) — pas de simples étiquettes
+   sur la courbe.
+
+### Solution implémentée : projection à deux bords
+
+Pour concilier la demande littérale avec la contrainte géométrique déjà
+identifiée (la position X ou Y d'un point n'est pas une fonction bijective
+du temps — une trajectoire peut repasser par la même zone à des dates
+différentes, donc un axe de temps continu unique n'a pas de sens) :
+
+- Un **second repère** est tracé, parallèle aux 2 axes de valeur actifs,
+  décalé vers l'extérieur (26px, du côté opposé au centre du graphique —
+  même heuristique que `etiquetteBorne()`, section 23).
+- Pour quelques points choisis le long de la trajectoire par défaut (6,
+  indices régulièrement espacés), **deux lignes de projection** partent du
+  point vers ce cadre extérieur (une par côté) — même principe que la
+  lecture par projection (section 24) — avec une graduation + la date à
+  l'endroit où chaque ligne l'atteint.
+- Ce n'est **pas un axe continu unique** : chaque point projeté porte sa
+  **propre** date ; deux points différents peuvent tout à fait projeter au
+  même endroit sur un des deux côtés avec des dates différentes (la
+  contradiction géométrique n'est pas résolue, seulement rendue non
+  trompeuse — chaque étiquette reste individuellement correcte).
+- Techniquement : `axisEcran[slot]` porte désormais aussi `perpX`/`perpY`
+  (calculés dans la boucle de tracé des axes) pour permettre de reconstruire
+  la ligne parallèle en dehors de `render()` ; le point projeté sur cette
+  ligne pour un point `p` de la courbe est simplement `p` translaté du même
+  vecteur de décalage que la ligne (puisqu'elle lui est parallèle).
+
+Portée, pour rester simple et lisible — inchangée par rapport à la première
+version :
+- **Vue 2D uniquement** (mêmes raisons que sections 23/24/25).
+- **Trajectoire par défaut uniquement** (pas de comparaison canaux/positions/
+  couches active).
+- **Case à cocher dédiée** ("Cadre temporel englobant"), décochée par
+  défaut — à activer spécifiquement avant une capture d'écran pour un
+  rapport.
+
+Bloc isolé exprès (case à cocher `#reperes-temps-toggle-group`, fonction
+`dessinerCadreTempsEnglobant()` juste avant `render()`, appel dans
+`render()`, `perpX`/`perpY` ajoutés à `axisEcran`) : supprimer ces quatre
+endroits retire la fonctionnalité sans résidu (le retrait de `perpX`/`perpY`
+d'`axisEcran` est sans risque, rien d'autre ne les lit). Implémenté à
+l'identique dans les deux fichiers (jour et démo 3h).
+
+### Numérotation plutôt que dates en toutes lettres, et retrait des marqueurs sur la courbe (03/08/2026)
+
+Deux ajustements demandés après un premier essai :
+- **Plus aucun marqueur ni texte sur la trajectoire elle-même** — seule la
+  ligne de projection (fine, semi-transparente) part du point vers le cadre ;
+  le point n'est plus mis en évidence sur la courbe (le petit disque blanc
+  a été retiré).
+- **Repères numérotés (1 à 6) sur le cadre**, plutôt que la date écrite en
+  toutes lettres à chaque graduation — plus compact, surtout quand les deux
+  projections d'un même point tombent près l'une de l'autre sur un bord.
+  La correspondance numéro → date exacte est reportée dans une **légende
+  permanente** en haut à droite du graphique (`#reperes-temps-legend`,
+  élément HTML superposé au canvas comme `#hud-title`/`#legend-time`), afin
+  de ne pas perdre l'information : c'est tout l'intérêt de cette
+  fonctionnalité (rester lisible sur une image figée) de ne pas la renvoyer
+  derrière un survol.
+
+### Correction : graduations RÉGULIÈRES par indice temporel, pas dérivées de la courbe (03/08/2026)
+
+La version ci-dessus plaçait encore les 6 repères en projetant des points
+choisis **sur la trajectoire** vers le cadre (lignes de projection depuis la
+courbe) — l'utilisateur a précisé que ce n'était pas la demande : les 2
+côtés du cadre sont des **axes de temps à part entière**, donc leurs
+graduations doivent être **régulièrement espacées par indice temporel**
+(comme un axe de valeur normal), pas positionnées selon où la courbe passe.
+
+Corrigé : chaque graduation `k` (0 à 5) est placée à la fraction
+`k / (NB_REPERES_TEMPS - 1)` de la longueur du côté du cadre — exactement
+comme une graduation de valeur classique interpole entre `origin` et `far`
+— au lieu d'être dérivée de la position d'un point de la courbe. Les 2
+lignes de projection depuis la courbe et le petit marqueur blanc ont
+disparu : le cadre est désormais un **axe de temps indépendant**, sans lien
+géométrique avec la courbe elle-même. Ce découplage règle aussi, de fait, la
+contradiction géométrique identifiée section 25 (position non bijective au
+temps) : un axe gradué par indice temporel, sans référence à la position de
+la courbe, n'a lui aucune ambiguïté — chaque graduation correspond à un seul
+instant, par construction. `dessinerCadreTempsEnglobant()` prend désormais
+`cutoffN` (nombre de points affichés) au lieu du tableau `pts` de la
+trajectoire.
+
+### Deuxième correction : réutiliser les graduations de l'axe "Temps" plutôt qu'une numérotation maison (03/08/2026)
+
+Même la version "graduée par indice" ci-dessus restait un système maison
+(numéros 1 à 6 + légende séparée #reperes-temps-legend). L'utilisateur a
+précisé, capture à l'appui, que les graduations du cadre doivent ressembler
+**exactement** à celles de l'axe "Temps" déjà existant (bornes exactes +
+valeurs rondes, ex. "-115 h", "0 h", "1000 h", "2038 h" sur la capture) —
+et que l'utilisateur doit pouvoir changer l'unité affichée (heure/jour/
+semaine/mois) **exactement comme pour n'importe quel axe assigné "Temps"**.
+
+Corrigé en réutilisant directement l'infrastructure existante plutôt qu'un
+système séparé :
+- `ranges.t` est **toujours calculé** par `recalculerRanges()` (fait partie
+  de `AXIS_ORDER`), que "Temps" soit ou non assigné à un axe visible — donc
+  disponible pour graduer le cadre même quand aucun axe X/Y n'est "Temps".
+- `dessinerCadreTempsEnglobant()` appelle `calculerGraduations(ranges.t.lo,
+  ranges.t.hi, 8)` et `formatTemps()`, exactement comme la boucle de tracé
+  des axes (section 23) — même seuil anti-chevauchement (18px) que le
+  correctif de cette section.
+- **Plus de numérotation ni de légende séparée** : les graduations
+  affichent directement la valeur de temps formatée (ex. "1000 h"), donc
+  elles se suffisent à elles-mêmes — `#reperes-temps-legend` (HTML + CSS
+  `.hud-reperes-legend`) a été retiré.
+- Comme `formatTemps()` lit déjà `state.timeUnit`, changer l'unité via le
+  sélecteur `#unit-toggle` existant change aussi l'affichage du cadre —
+  aucun nouveau contrôle nécessaire. `dessinerCadreTempsEnglobant()` ne
+  prend donc plus `cutoffN` en argument (les graduations dépendent
+  uniquement de `ranges.t`, pas du nombre de points affichés).
+
+## 27. Durcissement de `docker-compose.yml` pour la production (04/08/2026)
+
+Analyse complète de `docker-compose.yml` demandée par l'utilisateur, suivie
+d'une correction de tous les points relevés. Testé de bout en bout en local
+(authentification MQTT, healthchecks, limites de ressources, port Kafka non
+publié, bucket renommé) — un message publié avec les bons identifiants
+traverse correctement mosquitto → bridge → Kafka → kafka-consumer → InfluxDB
+(bucket `Capteurs`).
+
+### Sécurité
+
+- **Authentification MQTT obligatoire** : `mosquitto.conf` passe à
+  `allow_anonymous false` + `password_file`. Nouveau script
+  `generer_mosquitto_password.sh` (utilise l'image `eclipse-mosquitto`
+  elle-même via `docker run`, aucune installation locale requise) génère
+  `mosquitto_password.txt` (gitignored) depuis `MQTT_USERNAME`/`MQTT_PASSWORD`
+  dans `.env`. **Piège rencontré et corrigé** : le fichier généré est monté
+  **sans** `:ro` — un montage en lecture seule empêche l'entrypoint de
+  l'image mosquitto de `chown` le fichier vers l'utilisateur non-root sous
+  lequel le broker tourne réellement, provoquant "Unable to open pwfile" au
+  démarrage (observé avec Docker Desktop/Windows, dont les montages bind
+  NTFS n'exposent pas les vraies permissions POSIX — `chmod` côté hôte n'a
+  aucun effet). mosquitto ne réécrit jamais ce fichier en fonctionnement
+  normal, donc l'absence de `:ro` ne l'expose pas à une modification
+  involontaire par le conteneur.
+- **`MQTT_USERNAME`/`MQTT_PASSWORD`** ajoutés aux 4 scripts qui se
+  connectent en MQTT (`ingestion_capteurs_bluetooth.py`, `ingestion_dewesoft.py`,
+  `ingestion_dewesoft_dxd.py`, `bridge_mqtt_to_kafka.py`) — vides par défaut
+  (pas d'authentification tentée) pour ne pas casser un usage contre un
+  broker encore en `allow_anonymous` ; doivent être configurés dans
+  l'environnement local du PC labo Windows et du Raspberry Pi (Amiens),
+  séparément du `.env` du VPS.
+- **TLS pour les clients distants** : nouveaux `mosquitto.prod.conf` (listener
+  8883 avec certificat) + `docker-compose.prod.yml` (override, utilise la
+  syntaxe `!override` de la Compose Specification pour remplacer entièrement
+  `ports`/`volumes` du service mosquitto plutôt que les fusionner). Activé
+  via `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`,
+  nécessite des certificats dans `certs/` (non fournis — voir `certs/README.md`,
+  typiquement Let's Encrypt/certbot). Le listener interne 1883 (non publié
+  vers l'hôte dans ce mode) reste en clair pour le trafic conteneur-à-conteneur
+  (bridge), qui ne quitte jamais la machine.
+- **Secrets obligatoires, plus de valeur par défaut faible** : `INFLUX_TOKEN`,
+  `INFLUX_PASSWORD` (nouveau — le mot de passe admin InfluxDB était codé en
+  dur `password_frd_test`, jamais paramétrable), `GRAFANA_ADMIN_PASSWORD`,
+  `MQTT_USERNAME`, `MQTT_PASSWORD` utilisent tous la syntaxe
+  `${VAR:?message}` — `docker compose up` refuse de démarrer si `.env` est
+  incomplet, plutôt que de retomber silencieusement sur une valeur devinable.
+- **Port Kafka 9092 non publié vers l'hôte** : seuls `bridge` et
+  `kafka-consumer` (même réseau docker-compose) en ont besoin, via
+  `kafka:9092` — la publication vers l'hôte était de toute façon
+  partiellement inopérante pour un vrai client externe
+  (`KAFKA_CFG_ADVERTISED_LISTENERS` annonce le nom interne "kafka") et
+  élargissait la surface d'attaque (listener en clair, sans SASL) sans
+  bénéfice.
+
+### Fiabilité — parité avec les manifests Kubernetes
+
+- **`KAFKA_HEAP_OPTS=-Xmx512m -Xms512m`** ajouté au service `kafka` — même
+  réglage que `k8s/kafka/statefulset.yaml`, qui documente ce réglage comme
+  nécessaire pour éviter un dimensionnement de heap imprévisible pouvant
+  provoquer un crash-loop "unable to register with controller quorum"
+  (cf. section "Points ouverts", correctif Kubernetes du 03/08/2026).
+- **Limites de ressources** (`mem_limit`/`cpus`, syntaxe "legacy" garantie de
+  fonctionner hors Swarm, plutôt que `deploy.resources` historiquement
+  réservé à Swarm) sur tous les services.
+- **Healthchecks** ajoutés à `mosquitto`, `kafka`, `influxdb`, `grafana` +
+  `depends_on: ... condition: service_healthy` sur `bridge`, `kafka-consumer`,
+  `grafana`. Risque atténué mais réel avant ce correctif : `depends_on` sans
+  condition attend seulement le démarrage du conteneur, pas sa disponibilité
+  réelle — la résilience applicative (retry Kafka déjà en place côté
+  `bridge_mqtt_to_kafka.py`/`kafka_consumer_influx.py`) compensait, mais
+  sans garantie d'ordre propre.
+
+### Autres
+
+- **Bucket InfluxDB renommé** `Test_Capteurs` → `Capteurs` (paramétrable via
+  `INFLUX_BUCKET`, défaut `Capteurs`) — l'ancien nom trahissait une origine
+  de test restée dans la config par défaut. Mis à jour partout où il est
+  référencé côté docker-compose : `docker-compose.yml`,
+  `kafka_consumer_influx.py` (valeur par défaut du fallback),
+  `grafana/provisioning/datasources/influxdb.yml` (`${INFLUX_BUCKET}`,
+  substitution vérifiée empiriquement fonctionnelle dans ce fichier de
+  provisioning). **Non répercuté côté Kubernetes** (`k8s/influxdb/statefulset.yaml`,
+  `k8s/bridge-mqtt-kafka/configmap.yaml`) : ce sont deux déploiements
+  indépendants, celui-ci n'est pas remis en cause après sa validation du
+  03/08/2026.
+- **Avertissement de non-coexistence** ajouté en tête de `docker-compose.yml` :
+  ne pas faire tourner cette pile et le déploiement Kubernetes (k3s) en même
+  temps sur le même VPS — mêmes noms de service/ports par défaut, collision
+  vécue concrètement en local le 03/08/2026.
+- `.env.example` mis à jour avec toutes les nouvelles variables et leur rôle.
+
+## 28. Bascule vers Kubernetes (k3s) avec TLS pour la scalabilité automatique (04/08/2026)
+
+**Contexte / décision produit.** Le nombre de parois et de capteurs suivis va
+augmenter fortement à court terme. `docker-compose.yml` (section 27) n'offre
+aucune scalabilité automatique — c'est exactement ce que le déploiement
+Kubernetes (`k8s/`) apporte via le `HorizontalPodAutoscaler` de
+`kafka-consumer-influx` (1 à 6 replicas selon le CPU, cf. section 12/`k8s/kafka-consumer-influx/hpa.yaml`).
+Décision : **basculer la production du VPS de docker-compose vers Kubernetes**,
+pas les faire cohabiter (cf. avertissement de non-coexistence, section 27).
+Le VPS n'a pas de nom de domaine → un certificat Let's Encrypt est impossible
+(validation de domaine requise) → un **certificat TLS auto-signé** est utilisé
+à la place, viable ici car les deux extrémités (broker VPS, clients PC
+Amiens/RPi) sont contrôlées par la même personne et peuvent explicitement
+faire confiance à ce certificat précis (pas de chaîne de confiance publique
+nécessaire).
+
+**k3s installé en mode `--docker`** (`curl -sfL https://get.k3s.io | sh -s -
+--docker`) plutôt que le containerd embarqué par défaut — partage le moteur
+Docker déjà présent sur le VPS, donc les images buildées localement
+(`murmetric-bridge:latest`, `murmetric-kafka-consumer:latest`, déjà
+construites pour docker-compose) restent visibles telles quelles, sans export/
+import manuel. VPS constaté ARM64 (Oracle Ampere A1) — sans incidence, les
+images utilisées (`bitnamilegacy/kafka:3.7`, `python:*-slim`, etc.) étaient
+déjà validées ARM64 via docker-compose sur cette même machine.
+`metrics-server` et Traefik sont inclus par défaut dans k3s (le job Helm
+d'installation de Traefik a échoué une première fois puis réussi seul au
+redémarrage automatique — comportement normal, pas une panne à corriger).
+
+**Certificat auto-signé.** Généré directement sur le VPS (la clé privée ne
+quitte jamais la machine) :
+```
+openssl req -x509 -nodes -newkey rsa:2048 -keyout privkey.pem -out fullchain.pem \
+  -days 3650 -subj '/CN=<IP_VPS>/O=MurMetric-FRD-CODEM' \
+  -addext 'subjectAltName=IP:<IP_VPS>'
+```
+Le SAN (`subjectAltName`) doit être l'**adresse IP publique**, pas un nom
+DNS — les clients (paho-mqtt/`ssl`) valident le nom du serveur contre ce SAN
+lors du handshake TLS ; une IP littérale dans `connect()` ne correspond qu'à
+un SAN de type `IP:`. Importé comme Secret Kubernetes de type `tls` :
+`kubectl create secret tls mosquitto-tls --cert=fullchain.pem --key=privkey.pem -n murmetric`
+(non versionné, généré manuellement à chaque déploiement).
+
+**Manifests Kubernetes mis à niveau pour la parité de sécurité avec
+docker-compose (section 27) :**
+- `k8s/mosquitto/configmap.yaml` : double listener — `1883` (interne au
+  cluster uniquement, jamais exposé) et `8883` (TLS, exposé publiquement),
+  tous deux avec `allow_anonymous false` / `password_file`. Nécessite
+  `per_listener_settings true` en tête de fichier — **sans cette option,
+  mosquitto refuse de démarrer** (`Error: Duplicate password_file value in
+  configuration`) dès que `allow_anonymous`/`password_file`/`certfile` sont
+  redéfinis par listener ; sans cette directive, mosquitto les traite comme
+  des réglages globaux et rejette leur répétition. Bug rencontré et corrigé
+  lors du premier déploiement (`mosquitto` en `CrashLoopBackOff`).
+- `k8s/mosquitto/deployment.yaml` : le fichier de mots de passe (Secret,
+  clé `mosquitto-password-file`) et les certificats (Secret `mosquitto-tls`)
+  sont montés dans des répertoires **séparés** de la ConfigMap
+  (`/mosquitto/secrets`, `/mosquitto/certs`) plutôt que dans
+  `/mosquitto/config` — un `Pod` ne peut pas superposer deux sources de
+  volume différentes (ConfigMap + Secret) au même chemin sans `subPath`.
+  Les `chown` échoués au démarrage du conteneur (montages en lecture seule,
+  visibles dans les logs : `Read-only file system`) sont **sans
+  conséquence** : les fichiers montés depuis un Secret Kubernetes sont
+  lisibles par tous par défaut (mode `0644`), donc l'utilisateur non-root
+  `mosquitto` peut les lire même sans en devenir propriétaire — à ne pas
+  confondre avec le bug de permissions docker-compose (section 27), dont la
+  cause et la portée sont différentes.
+- `k8s/mosquitto/service.yaml` : **scindé en deux `Service` distincts** — un
+  seul objet `Service` ne peut pas avoir un port en `ClusterIP` et un autre
+  en `LoadBalancer`. `mosquitto` (`ClusterIP`, port 1883) reste le point
+  d'entrée interne utilisé par `bridge-mqtt-kafka` (aucun changement côté
+  `murmetric-config`) ; `mosquitto-external` (`LoadBalancer`, port 8883)
+  expose le TLS publiquement, via le `ServiceLB` intégré de k3s (règles
+  `iptables` DNAT — pas de socket visible en `LISTEN` côté hôte, c'est
+  normal, le trafic est redirigé au niveau noyau).
+- `k8s/bridge-mqtt-kafka/deployment.yaml` : ajout de `MQTT_USERNAME`/
+  `MQTT_PASSWORD` via `secretKeyRef` (`murmetric-secrets`) — absents
+  jusqu'ici, le bridge se connectait donc en anonyme (silencieusement
+  toléré tant que `k8s/mosquitto/configmap.yaml` avait `allow_anonymous
+  true`).
+- `k8s/secrets.yaml.template` étendu avec `mqtt-username`, `mqtt-password`,
+  `mosquitto-password-file` (contenu du fichier de hash bcrypt généré par
+  `generer_mosquitto_password.sh`, encodé en base64). Le vrai
+  `k8s/secrets.yaml` a été généré **directement sur le VPS** à partir des
+  valeurs déjà présentes dans `.env`/`mosquitto_password.txt` (mêmes
+  identifiants MQTT que docker-compose, puisque les deux déploiements ne
+  tournent jamais simultanément) — jamais affichées ni transmises en clair.
+
+**Support TLS côté client** ajouté à `ingestion_dewesoft.py`,
+`ingestion_dewesoft_dxd.py`, `ingestion_capteurs_bluetooth.py` (les 3
+scripts qui tournent sur le PC labo Windows/RPi à Amiens) : nouvelles
+variables d'environnement `MQTT_TLS_ENABLED` et `MQTT_CA_CERT`, appelant
+`mqtt_client.tls_set(ca_certs=MQTT_CA_CERT)` avant `connect()` quand activé.
+`bridge_mqtt_to_kafka.py` (tourne côté VPS, ne parle qu'en interne au
+cluster) n'a **pas** reçu ce support — volontairement, le trafic
+bridge↔mosquitto ne quitte jamais le réseau interne k8s.
+
+**Test de bout en bout réalisé** (même rigueur que docker-compose, section
+27) : publication authentifiée + TLS depuis un pod jetable dans le cluster
+(`mosquitto_pub -h mosquitto-external -p 8883 --cafile ... -u ... -P ...`,
+avec `--insecure` pour ignorer la vérification du nom d'hôte uniquement —
+le certificat ne couvre que l'IP publique, or le test se fait via le nom de
+Service interne ; un vrai client distant se connectant par l'IP publique
+n'a pas ce problème), suivie d'une vérification directe dans InfluxDB
+(plage de temps absolue, cf. piège de la section 12) confirmant l'écriture
+de la valeur de test, puis nettoyage du pod et du point de test.
+`kubectl top pods` / `kubectl get hpa` confirment que `metrics-server`
+fonctionne réellement (CPU rapporté par pod, HPA actif à `5%/70%`).
+
+**Point ouvert / action utilisateur requise :** l'accessibilité **externe**
+réelle du port 8883 (depuis Internet, pas depuis l'intérieur du cluster) n'a
+pas pu être vérifiée depuis l'environnement d'exécution de Claude Code — un
+test de connexion TCP échoue de façon identique sur le port 8883 (nouveau)
+et sur le port 1883 (déjà fonctionnel en docker-compose), alors qu'un test
+de contrôle vers un hôte externe quelconque réussit instantanément ; tout
+indique que l'adresse IP sortante de cet environnement n'est simplement pas
+autorisée par le Security List Oracle Cloud du VPS, pas un problème réel du
+port 8883. Le port 8883 doit être ajouté au Security List / Network
+Security Group Oracle Cloud (VCN → Security Lists → règle ingress TCP 8883
+depuis `0.0.0.0/0`) avant de considérer le nouveau chemin TLS opérationnel
+pour de vrais clients distants — probablement déjà fait pour 1883/3000/8086
+lors du déploiement docker-compose initial, mais 8883 est un port
+supplémentaire, pas automatiquement couvert.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
@@ -509,11 +1897,88 @@ CREATE TABLE buffer_mqtt (
 - La configuration GATT s'applique à tous les capteurs Blue Maestro détectés,
   y compris ceux avec `ingestion: false` — comportement intentionnel (optimiser
   la pile avant validation), mais peut être restreint si nécessaire.
-- Grafana n'est pas encore inclus dans `docker-compose.yml` ni dans les manifests
-  Kubernetes — à ajouter avec une datasource InfluxDB préconfigurée.
 - Le namespace Kubernetes `murmetric` est mono-tenant — une isolation par tenant
   (namespace ou cluster dédié) sera nécessaire en mode SaaS multi-clients.
 - `secrets.yaml` est à créer manuellement depuis `secrets.yaml.template` et ne
   doit jamais être versionné.
+- **Tranché (23/07/2026) : ingestion par lot retenue comme méthode principale,
+  pas live.** La licence "Dewesoft NET" nécessaire au streaming (`ingestion_dewesoft.py`,
+  DSRemoteConnect) coûte trop cher pour l'usage prévu. `ingestion_dewesoft_dxd.py`
+  (dépôt de fichiers `.dxd`) devient donc le chemin d'ingestion **unique**.
+  **Câblé le 03/08/2026** : `start_dewesoft.py` lance
+  `ingestion_dewesoft_dxd.py`.
+  **Tranché définitivement le 04/08/2026** : la méthode live/COM est
+  abandonnée pour de bon, pas seulement reléguée en réserve —
+  `ingestion_dewesoft.py`, `test_dewesoft_com.py`, `DSRemoteConnect64.dll`/`.dll`
+  et la dépendance `pywin32` sont supprimés du dépôt ; `start_dewesoft.py`
+  simplifié en conséquence (plus de branche `DEWESOFT_MODE`, un seul chemin
+  d'exécution). Cf. section 14 pour l'historique de l'investigation COM/DCOM,
+  conservé à titre documentaire.
+  Décision d'architecture associée : `ingestion_dewesoft_dxd.py` tourne en
+  LOCAL sur le PC labo Windows d'Amiens (même machine que DeweSoftX), pas sur
+  le VPS cloud — DeweSoftX dépose/exporte directement dans le dossier
+  surveillé, sans Syncthing ni autre composant réseau intermédiaire (une
+  mention antérieure de Syncthing dans cette note était trompeuse, corrigée).
+  `docker-compose.yml` n'a donc pas besoin de service dédié pour ce chemin
+  d'ingestion. Le dossier surveillé (`DXD_WATCH_FOLDER`) reste une variable
+  d'environnement (déjà le cas dans `ingestion_dewesoft_dxd.py`) ;
+  `start_dewesoft.py` lui fournit une valeur par défaut
+  (`DXD_WATCH_FOLDER_DEFAUT = r"C:\MurMetric\depot_dxd"`) uniquement si elle
+  n'est pas déjà définie dans l'environnement — changer de dossier à la mise
+  en prod ne demande donc de toucher qu'un seul réglage (variable
+  d'environnement, prioritaire, ou cette constante).
+  **Dossier réel confirmé le 04/08/2026** :
+  `C:\Users\Public\Documents\Dewesoft\Data` (dossier public généré par
+  DeweSoftX lui-même, pas un dossier créé pour MurMetric) —
+  `DXD_WATCH_FOLDER_DEFAUT` mis à jour en conséquence. Choix assumé de
+  laisser `ingestion_dewesoft_dxd.py` déplacer les fichiers traités/en
+  erreur dans des sous-dossiers `traites/`/`erreurs/` **à l'intérieur** de
+  ce dossier DeweSoft plutôt que vers un emplacement séparé — DeweSoftX ne
+  semble pas dépendre de la présence continue des fichiers exportés dans ce
+  dossier pour son propre fonctionnement, mais si un comportement DeweSoft
+  imprévu apparaît suite à cette réorganisation, envisager de rediriger
+  `DXD_PROCESSED_FOLDER`/`DXD_ERROR_FOLDER` vers un dossier hors de
+  `Public\Documents\Dewesoft\Data`.
+- **Bug critique corrigé (03/08/2026) : `kafka-0` en `CrashLoopBackOff`
+  permanent sur le déploiement Kubernetes local (namespace `murmetric`,
+  actif depuis son premier déploiement — 780 redémarrages sur 10 jours,
+  jamais fonctionnel).** Découvert en testant l'ingestion `.dxd` de bout en
+  bout : le `Service` Kubernetes `kafka` (`k8s/kafka/service.yaml`)
+  n'exposait que le port 9092 (PLAINTEXT), jamais le 9093 (CONTROLLER) —
+  or `KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093` (`k8s/kafka/statefulset.yaml`)
+  exige que le broker joigne le contrôleur via `kafka:9093` pour
+  s'auto-enregistrer, même en cluster à 1 seul nœud (broker+controller
+  combinés). Le port n'étant jamais routé par le `Service`, l'enregistrement
+  échouait systématiquement au bout de ~55s ("unable to register with the
+  controller quorum"), provoquant le crash-loop. Un correctif antérieur
+  (`KAFKA_HEAP_OPTS` borné, déjà présent dans le manifeste) traitait un
+  symptôme voisin mais ne pouvait pas résoudre celui-ci. Conséquence en
+  cascade : le bridge MQTT→Kafka et le kafka-consumer-influx étaient eux
+  aussi bloqués en boucle de reconnexion infinie depuis le premier
+  déploiement — **aucune donnée n'a jamais transité par ce pipeline
+  Kubernetes avant ce correctif** (bucket InfluxDB vérifié vide). Corrigé en
+  ajoutant le port 9093 (nommé `controller`) au `Service` ; `kafka-0`
+  démarre maintenant proprement (0 redémarrage sur 2m30 observées), le
+  bridge et le consumer se reconnectent, et un test d'ingestion réel (fichier
+  `.dxd` du 23/06/2026, canal HA1, 432 000 mesures) a été vérifié bout en
+  bout jusqu'à InfluxDB (valeurs identiques à la lecture SDK directe du
+  fichier source). Kubernetes est destiné à être intégré au projet pour la
+  scalabilité (nombre croissant de parois/capteurs) — ce correctif était
+  donc bloquant pour cet objectif, pas seulement pour un test isolé.
+- Grafana **est** intégré (`docker-compose.yml` + `k8s/grafana/`, datasource
+  InfluxDB préconfigurée) — corriger cette note si elle traîne ailleurs comme
+  point ouvert.
+- **Exigence produit pour le rendu final (28/07/2026) : Grafana embarqué dans
+  l'interface utilisateur**, pas seulement disponible comme outil séparé —
+  l'utilisateur doit pouvoir choisir, depuis l'appli, entre la visualisation
+  maison (ex. l'abaque 3D) et des panneaux/dashboards Grafana natifs, sans
+  changer d'onglet/outil. Prérequis technique identifié mais non traité :
+  embarquer un dashboard Grafana (typiquement en `<iframe>`) demande
+  d'activer `allow_embedding` côté configuration Grafana, et de régler
+  l'authentification de l'iframe (accès anonyme en lecture seule sur les
+  dashboards partagés, ou un proxy d'authentification) — sinon l'utilisateur
+  devrait se reconnecter séparément à l'intérieur de l'iframe. Non
+  implémenté ; à traiter au moment de construire l'interface applicative
+  réelle (l'abaque 3D reste un POC autonome, cf. section 18).
 
 
