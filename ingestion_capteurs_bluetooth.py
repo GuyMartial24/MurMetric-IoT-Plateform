@@ -26,6 +26,10 @@ Usage :
     Variables d'environnement reconnues :
         MQTT_BROKER       Adresse du broker MQTT cloud (défaut : localhost)
         MQTT_PORT         Port du broker               (défaut : 1883)
+        MQTT_USERNAME     Utilisateur MQTT             (défaut : vide, pas d'auth tentée)
+        MQTT_PASSWORD     Mot de passe MQTT            (défaut : vide)
+        MQTT_TLS_ENABLED  Active TLS (1/true)          (défaut : désactivé)
+        MQTT_CA_CERT      Certificat à faire confiance  (obligatoire si MQTT_TLS_ENABLED)
         MQTT_TOPIC        Topic de publication         (défaut : frd/capteurs/bruts)
         RECONF_INTERVAL   Intervalle reconfiguration en secondes (défaut : 21600)
         SQLITE_RETENTION  Rétention du buffer local en jours     (défaut : 7)
@@ -55,6 +59,16 @@ sys.stdout.reconfigure(encoding="utf-8")
 # ---------------------------------------------------------------------------
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+# Authentification MQTT (03/08/2026, cf. logique_projet.md) — Mosquitto
+# n'accepte plus les connexions anonymes. Vide = pas d'authentification
+# tentée.
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
+# TLS (04/08/2026, cf. logique_projet.md) — certificat auto-signé (pas de nom
+# de domaine sur le VPS) : MQTT_CA_CERT doit pointer vers ce même certificat,
+# qui sert alors de racine de confiance unique côté client.
+MQTT_TLS_ENABLED = os.getenv("MQTT_TLS_ENABLED", "").lower() in ("1", "true", "yes")
+MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "")
 MQTT_TOPIC = os.getenv("MQTT_TOPIC", "frd/capteurs/bruts")
 
 # Topic dédié aux métadonnées de configuration des capteurs (registre).
@@ -262,9 +276,9 @@ def publier_registre() -> None:
             "mac": mac,
             "nom": infos.get("nom", ""),
             "emplacement": infos.get("emplacement", ""),
-            "latitude": infos.get("latitude"),
-            "longitude": infos.get("longitude"),
-            "altitude_m": infos.get("altitude_m"),
+            "nom_mur": infos.get("nom_mur", ""),
+            "nom_couche": infos.get("nom_couche", ""),
+            "position": infos.get("position", ""),
             "prestation": infos.get("prestation", ""),
             "categorie R&D": infos.get("categorie R&D", ""),
             "ingestion": infos.get("ingestion", False),
@@ -525,9 +539,9 @@ def enregistrer_capteur_si_inconnu(mac: str) -> None:
             "mac": mac,
             "nom": "",
             "emplacement": "",
-            "latitude": None,
-            "longitude": None,
-            "altitude_m": None,
+            "nom_mur": "",
+            "nom_couche": "",
+            "position": "",
             "prestation": "",
             "categorie R&D": "",
             "ingestion": False,
@@ -542,9 +556,9 @@ def enregistrer_capteur_si_inconnu(mac: str) -> None:
         "mac": mac,
         "nom": "",
         "emplacement": "",
-        "latitude": None,
-        "longitude": None,
-        "altitude_m": None,
+        "nom_mur": "",
+        "nom_couche": "",
+        "position": "",
         "prestation": "",
         "categorie R&D": "",
         "ingestion": False,
@@ -608,6 +622,10 @@ if en_attente_au_demarrage:
 # Initialisation du client MQTT avec callbacks de connexion.
 # ---------------------------------------------------------------------------
 mqtt_client = mqtt.Client()
+if MQTT_USERNAME:
+    mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+if MQTT_TLS_ENABLED:
+    mqtt_client.tls_set(ca_certs=MQTT_CA_CERT)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_disconnect = on_disconnect
 

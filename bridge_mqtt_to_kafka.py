@@ -9,6 +9,7 @@ Mapping topics MQTT → Kafka :
     frd/capteurs/bruts      → murmetric.{tenant}.capteurs.bruts
     frd/capteurs/registre   → murmetric.{tenant}.capteurs.registre
     frd/dewesoft/bruts      → murmetric.{tenant}.dewesoft.bruts
+    frd/dewesoft/alertes    → murmetric.{tenant}.dewesoft.alertes
 
 Les messages sont transférés tels quels (JSON brut) sans transformation.
 La transformation et l'écriture dans InfluxDB sont déléguées au consommateur
@@ -28,6 +29,8 @@ Usage :
     Variables d'environnement :
         MQTT_BROKER     Adresse du broker MQTT    (défaut : localhost)
         MQTT_PORT       Port MQTT                 (défaut : 1883)
+        MQTT_USERNAME   Utilisateur MQTT          (défaut : vide, pas d'auth tentée)
+        MQTT_PASSWORD   Mot de passe MQTT         (défaut : vide)
         KAFKA_BOOTSTRAP Serveurs Kafka            (défaut : localhost:9092)
         TENANT_ID       Identifiant tenant SaaS   (défaut : frd)
 """
@@ -35,6 +38,7 @@ Usage :
 import json
 import os
 import sys
+import time
 
 import paho.mqtt.client as mqtt
 from kafka import KafkaProducer
@@ -44,6 +48,12 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+# Authentification MQTT (03/08/2026, cf. logique_projet.md) — Mosquitto
+# n'accepte plus les connexions anonymes. Vide = pas d'authentification
+# tentée (utile seulement en test local contre un broker encore en
+# allow_anonymous ; le mosquitto.conf du projet ne l'autorise plus).
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 TENANT_ID = os.getenv("TENANT_ID", "frd")
 
@@ -52,6 +62,7 @@ TOPIC_MAP: dict[str, str] = {
     "frd/capteurs/bruts":    f"murmetric.{TENANT_ID}.capteurs.bruts",
     "frd/capteurs/registre": f"murmetric.{TENANT_ID}.capteurs.registre",
     "frd/dewesoft/bruts":    f"murmetric.{TENANT_ID}.dewesoft.bruts",
+    "frd/dewesoft/alertes":  f"murmetric.{TENANT_ID}.dewesoft.alertes",
 }
 
 
@@ -60,16 +71,33 @@ def _on_kafka_erreur(exc: KafkaError) -> None:
     print(f"❌ Kafka — erreur d'envoi : {exc}")
 
 
+def _connecter_producteur_kafka() -> KafkaProducer:
+    """Créer le producteur Kafka, en réessayant tant que le bootstrap échoue.
+
+    KafkaProducer() se connecte au cluster dès sa construction et lève une
+    exception immédiate si Kafka est injoignable — sans ce ré-essai, le
+    conteneur planterait au moindre léger décalage de démarrage entre
+    services (ex. Kubernetes, où l'ordre de disponibilité des pods n'est pas
+    garanti malgré depends_on/initContainers).
+    """
+    while True:
+        try:
+            return KafkaProducer(
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                # acks=1 : attendre confirmation d'au moins 1 broker.
+                # Équilibre fiabilité/débit — passer à acks="all" si réplication activée.
+                acks=1,
+                retries=3,
+                retry_backoff_ms=500,
+            )
+        except Exception as exc:
+            print(f"⚠️  Kafka injoignable ({exc}) — nouvelle tentative dans 5 s...")
+            time.sleep(5)
+
+
 print("⏳ Connexion à Kafka...")
-producteur = KafkaProducer(
-    bootstrap_servers=KAFKA_BOOTSTRAP,
-    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-    # acks=1 : attendre confirmation d'au moins 1 broker.
-    # Équilibre fiabilité/débit — passer à acks="all" si réplication activée.
-    acks=1,
-    retries=3,
-    retry_backoff_ms=500,
-)
+producteur = _connecter_producteur_kafka()
 print(f"✅ Kafka prêt ({KAFKA_BOOTSTRAP})")
 
 
@@ -114,6 +142,8 @@ def on_connect(client, userdata, flags, rc) -> None:
 
 
 mqtt_client = mqtt.Client()
+if MQTT_USERNAME:
+    mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 

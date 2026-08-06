@@ -162,6 +162,9 @@ def construire_point_registre(data: dict) -> Point | None:
         # Tags string : permettent le filtrage dans Grafana.
         .tag("nom", data.get("nom") or "Non défini")
         .tag("emplacement", data.get("emplacement") or "Non défini")
+        .tag("nom_mur", data.get("nom_mur") or "Non défini")
+        .tag("nom_couche", data.get("nom_couche") or "Non défini")
+        .tag("position", data.get("position") or "Non défini")
         .tag("prestation", data.get("prestation") or "Non défini")
         .tag("rd", data.get("categorie R&D") or "Non défini")
         # Fields booléens et numériques.
@@ -172,12 +175,6 @@ def construire_point_registre(data: dict) -> Point | None:
     lint_max = data.get("lint_max_confirme_s")
     if isinstance(lint_max, (int, float)):
         point = point.field("lint_max_confirme_s", float(lint_max))
-
-    # Coordonnées GPS — stockées uniquement si renseignées (non null).
-    for champ in ("latitude", "longitude", "altitude_m"):
-        valeur = data.get(champ)
-        if isinstance(valeur, (int, float)):
-            point = point.field(champ, float(valeur))
 
     return point
 
