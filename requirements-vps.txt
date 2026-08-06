@@ -13,4 +13,4 @@ paho-mqtt>=2.1.0
 kafka-python>=2.0.0
 
 # Écriture time-series dans InfluxDB (batch asynchrone)
-influxdb-client>=3.0.0
+influxdb-client>=1.45.0

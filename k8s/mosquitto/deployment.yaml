@@ -18,10 +18,30 @@ spec:
           image: eclipse-mosquitto:2.0
           ports:
             - containerPort: 1883
+            - containerPort: 8883
           volumeMounts:
             - name: config
               mountPath: /mosquitto/config
+            - name: secrets
+              mountPath: /mosquitto/secrets
+              readOnly: true
+            - name: certs
+              mountPath: /mosquitto/certs
+              readOnly: true
       volumes:
         - name: config
           configMap:
             name: mosquitto-config
+        - name: secrets
+          secret:
+            secretName: murmetric-secrets
+            items:
+              - key: mosquitto-password-file
+                path: password.txt
+        - name: certs
+          # Secret TLS créé manuellement (pas via secrets.yaml, dérivé de
+          # fichiers .pem générés sur le VPS) :
+          #   kubectl create secret tls mosquitto-tls --cert=fullchain.pem \
+          #     --key=privkey.pem -n murmetric
+          secret:
+            secretName: mosquitto-tls

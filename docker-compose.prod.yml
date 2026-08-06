@@ -1,0 +1,22 @@
+# Override PRODUCTION (VPS) — active le TLS Mosquitto pour les clients
+# distants (PC labo Windows + Raspberry Pi, Amiens). Nécessite des
+# certificats valides dans ./certs/ au préalable (cf. mosquitto.prod.conf).
+#
+# Usage :
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Le fichier docker-compose.yml de base reste utilisable seul (sans TLS) pour
+# le développement local, où des certificats ne sont pas toujours disponibles.
+
+services:
+  mosquitto:
+    ports: !override
+      # 1883 n'est plus publié vers l'hôte — accessible uniquement en interne
+      # (conteneur bridge, même réseau docker-compose). Seul 8883 (TLS) est
+      # exposé publiquement, pour les clients distants (Amiens).
+      - "8883:8883"
+    volumes: !override
+      - ./mosquitto.prod.conf:/mosquitto/config/mosquitto.conf:ro
+      # PAS :ro — cf. commentaire équivalent dans docker-compose.yml.
+      - ./mosquitto_password.txt:/mosquitto/config/password.txt
+      - ./certs:/mosquitto/certs:ro

@@ -1,3 +1,9 @@
+# Deux Services distincts (un seul objet Service ne peut pas avoir un port en
+# ClusterIP et un autre en LoadBalancer) :
+#   - "mosquitto"          : interne au cluster, 1883 en clair — utilisé par
+#                             bridge-mqtt-kafka (murmetric-config: mqtt-broker).
+#                             Jamais exposé hors du cluster.
+#   - "mosquitto-external"  : 8883 TLS, exposé publiquement (PC Amiens, RPi).
 apiVersion: v1
 kind: Service
 metadata:
@@ -9,6 +15,19 @@ spec:
   ports:
     - port: 1883
       targetPort: 1883
-  # LoadBalancer expose le broker MQTT à l'extérieur (RPi + PC Windows).
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto-external
+  namespace: murmetric
+spec:
+  selector:
+    app: mosquitto
+  ports:
+    - port: 8883
+      targetPort: 8883
+  # LoadBalancer (k3s ServiceLB) expose 8883/TLS sur l'IP publique du VPS.
   # Remplacer par NodePort si le cluster ne supporte pas LoadBalancer.
   type: LoadBalancer

@@ -5,8 +5,27 @@ metadata:
   namespace: murmetric
 data:
   mosquitto.conf: |
+    # Requis dès que allow_anonymous/password_file/certfile sont redéfinis
+    # par listener — sans ça, mosquitto traite password_file comme un
+    # réglage global et rejette sa répétition ("Duplicate password_file
+    # value", observé le 04/08/2026 sur le déploiement k8s).
+    per_listener_settings true
+
+    # 1883 : interne au cluster uniquement (bridge-mqtt-kafka, service
+    # ClusterIP "mosquitto") — jamais exposé publiquement.
     listener 1883
-    allow_anonymous true
+    allow_anonymous false
+    password_file /mosquitto/secrets/password.txt
+
+    # 8883 : accès distant (PC Amiens, Raspberry Pi) via le Service
+    # LoadBalancer "mosquitto-external" — chiffré TLS, pas de nom de domaine
+    # disponible donc certificat auto-signé (cf. logique_projet.md).
+    listener 8883
+    allow_anonymous false
+    password_file /mosquitto/secrets/password.txt
+    certfile /mosquitto/certs/tls.crt
+    keyfile /mosquitto/certs/tls.key
+
     persistence true
     persistence_location /mosquitto/data/
     log_dest stdout
