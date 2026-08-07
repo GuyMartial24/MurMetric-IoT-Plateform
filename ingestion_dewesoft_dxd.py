@@ -23,7 +23,9 @@ Prérequis :
 
 Horodatage : chaque échantillon est republié avec un horodatage ABSOLU
 reconstitué (horodatage_mesure_iso = début de fichier .dxd + temps relatif de
-l'échantillon). kafka_consumer_influx.py utilise ce champ pour dater le point
+l'échantillon, RAMENÉ À L'ORIGINE DU FICHIER — les horodatages relatifs du SDK
+sont comptés depuis le début de la session d'acquisition, pas du fichier ;
+cf. le bloc « Origine des horodatages relatifs » dans extraire_et_publier()). kafka_consumer_influx.py utilise ce champ pour dater le point
 InfluxDB avec l'horodatage réel de la mesure — l'import différé d'un .dxd
 ancien ne s'empile donc pas sur la date d'exécution du consumer.
 
@@ -66,6 +68,9 @@ Usage :
         MQTT_CA_CERT         Certificat à faire confiance     (obligatoire si MQTT_TLS_ENABLED)
         MQTT_TOPIC_DEWESOFT  Topic de publication            (défaut : frd/dewesoft/bruts)
         MQTT_TOPIC_ALERTES   Topic anomalies d'ingestion      (défaut : frd/dewesoft/alertes)
+        MQTT_MAX_INFLIGHT    Messages QoS 1 simultanés en vol (défaut : 1000)
+        MQTT_MAX_EN_ATTENTE  Plafond de messages QoS 1 non acquittés (défaut : 20000)
+        MQTT_ATTENTE_TIMEOUT Attente max d'une place avant bascule SQLite, en s (défaut : 60)
         DXD_WATCH_FOLDER     Dossier surveillé               (obligatoire)
         DXD_PROCESSED_FOLDER Sous-dossier fichiers traités    (défaut : <watch>/traites)
         DXD_ERROR_FOLDER     Sous-dossier fichiers en erreur  (défaut : <watch>/erreurs)
@@ -76,6 +81,8 @@ Usage :
         SYNC_INTERVAL        Intervalle entre deux tentatives de sync en secondes (défaut : 30)
         HAMPEL_FENETRE       Demi-largeur de la fenêtre glissante, en échantillons (défaut : 10)
         HAMPEL_SEUIL_K       Multiplicateur du MAD au-delà duquel un point est aberrant (défaut : 8.0)
+        DXD_BATCH_SIZE       Échantillons regroupés par message MQTT (défaut : 600)
+        TOLERANCE_PAS_S      Écart max à la grille t0+k*dt avant de couper un lot (défaut : 1e-6)
 """
 
 import ctypes
@@ -143,6 +150,55 @@ MQTT_TLS_ENABLED = os.getenv("MQTT_TLS_ENABLED", "").lower() in ("1", "true", "y
 MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "")
 MQTT_TOPIC_DEWESOFT = os.getenv("MQTT_TOPIC_DEWESOFT", "frd/dewesoft/bruts")
 MQTT_TOPIC_ALERTES = os.getenv("MQTT_TOPIC_ALERTES", "frd/dewesoft/alertes")
+# Nombre de messages QoS 1 "en vol" (envoyés, en attente d'accusé de réception)
+# autorisés simultanément — le défaut paho-mqtt (20) plafonne le débit à
+# ~20/aller-retour réseau, ce qui devient le goulot d'étranglement dominant
+# sur un import massif de fichiers .dxd historiques (mesuré : ~374 msg/s
+# Amiens→VPS avec le défaut). Aucun changement de fiabilité ni de contenu —
+# juste plus d'envois simultanés avant d'attendre l'accusé de réception.
+MQTT_MAX_INFLIGHT = int(os.getenv("MQTT_MAX_INFLIGHT", "1000"))
+
+# ---------------------------------------------------------------------------
+# Contre-pression QoS 1 (06/08/2026, cf. logique_projet.md).
+#
+# PROBLÈME MESURÉ : mqtt_client.publish(..., qos=1) ne fait qu'empiler le
+# message dans la file interne de paho et rend la main immédiatement. La
+# boucle d'extraction soumettait donc ~21 000 msg/s alors que le réseau n'en
+# évacuait que ~1 100/s. La file interne enflait jusqu'à ce que l'identifiant
+# de message paho — un compteur sur 16 BITS, donc 65 535 valeurs — reboucle
+# et retombe sur un identifiant encore non acquitté. À partir de là, paho
+# renvoie MQTT_ERR_QUEUE_SIZE (rc=15) pour CHAQUE publication.
+#
+# Or publier_ou_stocker() interprétait tout rc non nul comme « cloud
+# indisponible » et basculait le message vers SQLite — alors que la connexion
+# MQTT était parfaitement saine. D'où le symptôme observé : le buffer SQLite
+# local qui grossit sans fin, avec des horodatages « maintenant », pendant que
+# le broker est joignable. Mesuré sur 200 000 messages sans contre-pression :
+# premier échec à i=70 186 avec exactement 65 535 messages en attente, puis
+# 127 320 messages sur 200 000 (64 %) refusés et détournés vers SQLite.
+#
+# CORRECTIF : borner le nombre de messages QoS 1 non acquittés bien en-dessous
+# de 65 535. La boucle d'extraction se cale alors sur le débit réel du
+# pipeline au lieu de le devancer, publish() ne rate plus jamais, et SQLite
+# redevient ce qu'il doit être : un secours en cas de vraie coupure réseau.
+# ---------------------------------------------------------------------------
+# RECALIBRÉ le 07/08/2026 pour la publication par lots : ce plafond compte des
+# MESSAGES, pas des échantillons. Tant qu'un message = un échantillon, 20 000
+# messages en vol = 20 000 échantillons. Depuis le passage aux lots de 600, la
+# même valeur autoriserait 12 MILLIONS d'échantillons en vol — soit plus que le
+# travail total d'un fichier : la contre-pression ne s'exerçait donc plus du
+# tout, l'extraction rendait la main instantanément et le fichier était déclaré
+# traité alors que la quasi-totalité des messages dormait encore dans la file
+# paho. 200 messages ≈ 120 000 échantillons ≈ 3,4 Mo en vol : assez pour
+# saturer la liaison (mesuré : ~90 messages/s), assez peu pour que la file se
+# vide en quelques secondes.
+MQTT_MAX_EN_ATTENTE = int(os.getenv("MQTT_MAX_EN_ATTENTE", "200"))
+# Attente maximale de l'acquittement des messages restants avant de déclarer un
+# fichier traité (cf. attendre_publications_terminees()).
+DRAIN_TIMEOUT = float(os.getenv("DRAIN_TIMEOUT", "120"))
+# Délai au-delà duquel on cesse d'attendre une place et on bascule sur SQLite
+# (évite de bloquer indéfiniment si le broker cesse d'acquitter sans couper).
+MQTT_ATTENTE_TIMEOUT = float(os.getenv("MQTT_ATTENTE_TIMEOUT", "60"))
 
 # ---------------------------------------------------------------------------
 # Registre d'étiquetage des capteurs de retrait (mur/couche/position),
@@ -170,6 +226,60 @@ POLL_INTERVAL_DXD = float(os.getenv("POLL_INTERVAL_DXD", "5"))
 STABLE_CHECKS = int(os.getenv("STABLE_CHECKS", "3"))
 
 # ---------------------------------------------------------------------------
+# Partitionnement multi-processus : RETIRÉ le 07/08/2026.
+#
+# Une version antérieure permettait de lancer N processus d'ingestion sur le
+# même dossier (SHARD_INDEX / SHARD_COUNT, répartition par crc32 du nom de
+# fichier) pour accélérer le rattrapage des .dxd historiques. Mesuré côté VPS,
+# ce partitionnement n'apportait RIEN : 4,68 Mbit/s avec 1 processus contre
+# 4,85 Mbit/s avec 4 processus. Le plafond n'était ni le CPU d'Amiens
+# (25-60 % d'occupation) ni sa liaison montante (13,7 Mbit/s atteints avec de
+# grosses charges utiles), mais le coût PAR MESSAGE — donc un plafond partagé
+# entre tous les processus, que multiplier les processus ne pouvait pas lever.
+#
+# La publication par lots (cf. DXD_BATCH_SIZE) s'attaque directement à cette
+# cause et rend un seul processus largement suffisant : 54 246 échantillons/s
+# mesurés, contre ~1 020 auparavant. Le partitionnement a donc été supprimé
+# plutôt que conservé « au cas où » — il ajoutait de la complexité (dont un
+# verrou capteurs_retrait.json non valable entre processus) sans gain mesuré.
+# ---------------------------------------------------------------------------
+# Publication par LOTS (07/08/2026, cf. logique_projet.md).
+#
+# PROBLÈME MESURÉ : le format « un message MQTT par échantillon » pèse ~520
+# octets pour transporter un seul flottant, dont ~490 de métadonnées
+# (fichier, mur, couche, position, canal, unité, fréquence, horodatage ISO)
+# strictement IDENTIQUES pour tous les échantillons d'un canal d'un fichier.
+# Le débit Amiens→VPS plafonnait alors à ~1 020 échantillons/s, non pas par
+# manque de bande passante (le même PC atteint ~13,7 Mbit/s avec de grosses
+# charges utiles) ni de CPU (25-60 % d'occupation), mais à cause du COÛT PAR
+# MESSAGE. Preuve : lancer 4 processus d'ingestion en parallèle ne changeait
+# rien (4,85 contre 4,68 Mbit/s mesurés côté VPS) — le plafond est partagé,
+# pas par processus. C'est pourquoi la parallélisation côté VPS (3 replicas
+# de bridge, souscriptions partagées, HPA à 6 consumers) n'avait rien donné :
+# elle traitait un goulot d'étranglement qui n'existait pas.
+#
+# CORRECTIF : un message par LOT d'échantillons d'un même canal. Les
+# métadonnées constantes sortent du lot (une fois par message au lieu d'une
+# fois par échantillon) et les horodatages deviennent t0 + k*dt. Coût mesuré :
+# ~28,6 octets/échantillon, soit 54 246 échantillons/s Amiens→VPS contre
+# ~1 020 avant (×53).
+#
+# DXD_BATCH_SIZE : 600 échantillons ≈ 17 ko/message — largement sous toutes
+# les limites de la chaîne (Mosquitto message_size_limit, Kafka
+# max.message.bytes à 1 Mio, max_request_size du producteur). Monter plus
+# haut ne gagne presque rien (28,6 contre 31,9 octets/échantillon entre 600
+# et 100) tout en alourdissant la mémoire et la granularité de reprise.
+# ---------------------------------------------------------------------------
+DXD_BATCH_SIZE = int(os.getenv("DXD_BATCH_SIZE", "600"))
+# Version du format de charge utile — le consumer s'en sert pour distinguer
+# un lot d'un message point-par-point de l'ancien format.
+FORMAT_LOT = 2
+# Écart maximal toléré à la grille t0 + k*dt avant de couper le lot. Les
+# fichiers réels restent à ~5.6e-8 s ; 1 µs correspond à la précision à
+# laquelle l'ancien format arrondissait déjà (timedelta → microsecondes).
+TOLERANCE_PAS_S = float(os.getenv("TOLERANCE_PAS_S", "1e-6"))
+
+# ---------------------------------------------------------------------------
 # Filtre anti-vibration (Hampel) — réglage par défaut à l'ingestion.
 # ---------------------------------------------------------------------------
 HAMPEL_FENETRE = int(os.getenv("HAMPEL_FENETRE", "10"))
@@ -192,6 +302,16 @@ _mqtt_connecte: bool = False
 # Réveille immédiatement tache_sync_sqlite() à la reconnexion MQTT, au lieu
 # d'attendre le prochain tick périodique de SYNC_INTERVAL_SECONDES.
 _sync_event = threading.Event()
+
+# Compteur de messages QoS 1 publiés mais pas encore acquittés par le broker
+# (cf. MQTT_MAX_EN_ATTENTE) — incrémenté avant publish(), décrémenté par
+# on_publish(). Protégé par une Condition pour endormir le producteur quand
+# le plafond est atteint plutôt que de le laisser saturer la file de paho.
+_en_attente: int = 0
+_cond_en_attente = threading.Condition()
+# Statistiques d'observabilité, affichées en fin de fichier.
+_nb_publies: int = 0
+_nb_bufferises: int = 0
 
 
 # ===========================================================================
@@ -244,17 +364,89 @@ def compter_messages_en_attente() -> int:
         return count
 
 
+def _reserver_place() -> bool:
+    """Attendre qu'une place se libère parmi les messages QoS 1 en attente.
+
+    Returns:
+        True si une place a été réservée (le compteur a été incrémenté et
+        devra être décrémenté par on_publish ou par _liberer_place), False
+        s'il faut basculer sur SQLite (déconnexion ou attente trop longue).
+    """
+    global _en_attente
+    debut = time.monotonic()
+    with _cond_en_attente:
+        while _en_attente >= MQTT_MAX_EN_ATTENTE:
+            if not _mqtt_connecte:
+                return False
+            if time.monotonic() - debut > MQTT_ATTENTE_TIMEOUT:
+                print(
+                    f"⚠️  {MQTT_MAX_EN_ATTENTE} messages QoS 1 toujours non "
+                    f"acquittés après {MQTT_ATTENTE_TIMEOUT:.0f}s — "
+                    "bascule SQLite."
+                )
+                return False
+            _cond_en_attente.wait(0.5)
+        _en_attente += 1
+        return True
+
+
+def _liberer_place() -> None:
+    """Rendre une place réservée pour un message qui n'a pas été accepté."""
+    global _en_attente
+    with _cond_en_attente:
+        _en_attente -= 1
+        _cond_en_attente.notify_all()
+
+
+def attendre_publications_terminees(timeout: float | None = None) -> int:
+    """Attendre l'acquittement de tous les messages QoS 1 encore en vol.
+
+    À appeler avant de considérer un fichier .dxd comme traité : publish() ne
+    fait qu'empiler dans la file interne de paho, donc au retour de
+    l'extraction une partie des messages n'a pas encore quitté la machine.
+    Sans cette attente, « fichier déplacé dans traites/ » ne signifie pas
+    « données arrivées chez le broker », et tout arrêt du processus perd
+    silencieusement la file — ce qui s'est produit lors du test du 07/08/2026.
+
+    Args:
+        timeout: Attente maximale en secondes (défaut : DRAIN_TIMEOUT).
+
+    Returns:
+        Nombre de messages encore non acquittés (0 = tout est parti).
+    """
+    limite = time.monotonic() + (DRAIN_TIMEOUT if timeout is None else timeout)
+    with _cond_en_attente:
+        while _en_attente > 0 and time.monotonic() < limite:
+            _cond_en_attente.wait(0.5)
+        return _en_attente
+
+
 def publier_ou_stocker(topic: str, payload: dict) -> None:
-    """Publier sur MQTT cloud ou stocker localement si cloud indisponible."""
+    """Publier sur MQTT cloud ou stocker localement si cloud indisponible.
+
+    Applique une contre-pression : au plus MQTT_MAX_EN_ATTENTE messages
+    QoS 1 non acquittés simultanément. Sans cela, la boucle d'extraction
+    devance largement le réseau, épuise l'espace d'identifiants de message
+    de paho (16 bits) et fait échouer toutes les publications suivantes,
+    qui finissent alors dans SQLite alors que le cloud est joignable
+    (cf. commentaire de MQTT_MAX_EN_ATTENTE).
+    """
+    global _nb_publies, _nb_bufferises
     payload_json = json.dumps(payload)
-    if _mqtt_connecte:
+    if _mqtt_connecte and _reserver_place():
         try:
             result = mqtt_client.publish(topic, payload_json, qos=1)
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                _nb_publies += 1
                 return
+            # Aucun on_publish ne viendra pour ce message : rendre la place.
+            _liberer_place()
+            print(f"⚠️  Publication MQTT refusée (rc={result.rc}) — stockage SQLite.")
         except Exception as exc:
+            _liberer_place()
             print(f"⚠️  Publication MQTT échouée ({exc}) — stockage SQLite.")
     stocker_localement(topic, payload_json)
+    _nb_bufferises += 1
 
 
 # ===========================================================================
@@ -387,9 +579,30 @@ def on_connect(client, userdata, flags, rc) -> None:
         print(f"❌ Connexion MQTT cloud refusée (code {rc})")
 
 
+def on_publish(client, userdata, mid) -> None:
+    """Libérer une place de contre-pression à chaque acquittement QoS 1.
+
+    S'exécute sur le thread réseau de paho : ne doit rien faire d'autre que
+    décrémenter le compteur et réveiller le producteur éventuellement endormi.
+    """
+    global _en_attente
+    with _cond_en_attente:
+        if _en_attente > 0:
+            _en_attente -= 1
+        if _en_attente < MQTT_MAX_EN_ATTENTE:
+            _cond_en_attente.notify_all()
+
+
 def on_disconnect(client, userdata, rc) -> None:
-    global _mqtt_connecte
+    global _mqtt_connecte, _en_attente
     _mqtt_connecte = False
+    # La session est propre (clean_session par défaut) : les messages encore
+    # en attente ne seront jamais acquittés. Remettre le compteur à zéro et
+    # réveiller le producteur, sinon il resterait bloqué à attendre des
+    # acquittements qui ne viendront plus.
+    with _cond_en_attente:
+        _en_attente = 0
+        _cond_en_attente.notify_all()
     if rc != 0:
         print(f"⚠️  Déconnecté du Broker MQTT cloud (rc={rc}) — basculement SQLite.")
 
@@ -442,9 +655,15 @@ def tache_sync_sqlite() -> None:
             if not _mqtt_connecte:
                 print("⚠️  Déconnexion pendant la sync — arrêt du batch.")
                 break
+            # Réserver une place comme le fait publier_ou_stocker() : sinon
+            # on_publish() libérerait une place jamais réservée et
+            # relâcherait d'autant la contre-pression de l'extraction.
+            if not _reserver_place():
+                break
             try:
                 result = mqtt_client.publish(topic, payload, qos=1)
                 if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                    _liberer_place()
                     erreurs += 1
                     continue
                 result.wait_for_publish(timeout=5.0)
@@ -454,6 +673,7 @@ def tache_sync_sqlite() -> None:
                 envoyes += 1
                 time.sleep(0.05)  # Pause légère pour ne pas saturer le broker.
             except Exception as exc:
+                _liberer_place()
                 print(f"⚠️  Erreur sync message {row_id} : {exc}")
                 erreurs += 1
 
@@ -514,6 +734,47 @@ def attendre_fichier_stable(chemin: str) -> bool:
 # ===========================================================================
 # Filtre de Hampel (médiane + MAD glissantes) — rejette les pics de vibration.
 # ===========================================================================
+
+def decouper_lot(timestamps, debut: int, fin_max: int) -> int:
+    """Déterminer où s'arrête un lot à pas d'échantillonnage constant.
+
+    Le format par lot encode les horodatages sous la forme t0 + k*dt au lieu
+    d'une chaîne ISO par échantillon : c'est ce qui fait tomber le coût de
+    ~520 à ~29 octets/échantillon. Cet encodage n'est exact que si le pas est
+    réellement constant sur toute la durée du lot — on ne le SUPPOSE donc pas,
+    on le VÉRIFIE, et on coupe le lot dès qu'un échantillon s'écarte de la
+    grille de plus de TOLERANCE_PAS_S.
+
+    Mesuré sur les fichiers réels (949 fichiers, 8 canaux, 10 Hz) : un seul
+    pas distinct (0.1 s) et un écart maximal à la grille de 5.6e-8 s sur une
+    fenêtre de 600 échantillons — très en-dessous de la microseconde à
+    laquelle l'ancien format arrondissait déjà. Un fichier comportant un vrai
+    trou serait simplement découpé en plusieurs lots, sans perte de précision.
+
+    Args:
+        timestamps: Horodatages DeweSoft (secondes) du canal courant.
+        debut: Index du premier échantillon du lot.
+        fin_max: Borne supérieure exclusive souhaitée pour le lot.
+
+    Returns:
+        Index de fin (exclu) effectif du lot : fin_max, ou plus tôt si le pas
+        d'échantillonnage cesse d'être constant.
+    """
+    if fin_max - debut <= 2:
+        return fin_max
+
+    t0 = timestamps[debut]
+    dt = timestamps[debut + 1] - t0
+    if dt <= 0:
+        # Pas exploitable (horodatages identiques ou décroissants) : lot d'un
+        # seul échantillon, le consumer le datera avec t0 seul.
+        return debut + 1
+
+    for k in range(2, fin_max - debut):
+        if abs(timestamps[debut + k] - (t0 + k * dt)) > TOLERANCE_PAS_S:
+            return debut + k
+    return fin_max
+
 
 def filtrer_hampel(
     valeurs: list[float],
@@ -621,6 +882,65 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
             # (chaque canal reste traité séparément via son canal_index), mais
             # l'anomalie doit être signalée car le registre capteurs_retrait.json
             # ne peut alors pas savoir lequel des deux étiqueter correctement.
+            # ---------------------------------------------------------------
+            # Origine des horodatages relatifs (07/08/2026, cf.
+            # logique_projet.md).
+            #
+            # DeweSoftX enregistre ici UNE acquisition continue découpée en
+            # segments de 12 h. Les horodatages relatifs renvoyés par
+            # DWIGetScaledSamples sont comptés depuis le début de la SESSION
+            # d'acquisition, pas depuis le début du fichier : le premier
+            # échantillon d'un segment vaut donc 0, 43 200, 604 800, 691 200 s…
+            # (toujours un multiple de 43 200 s = 12 h), selon le rang du
+            # segment dans la session.
+            #
+            # start_store_time, lui, correspond bien au début DE CE FICHIER
+            # (vérifié : il coïncide exactement avec la date/heure du nom de
+            # fichier sur tous les fichiers échantillonnés).
+            #
+            # Additionner les deux comptait donc le décalage DEUX FOIS et
+            # datait les mesures de plusieurs jours dans le futur — mesuré sur
+            # Mur_terlian_2026_06_18_092618.dxd : t[0] = 604 800 s, donc les
+            # points étaient écrits au 25/06 au lieu du 18/06, soit pile
+            # 7 jours trop tard. Pire, ce décalage étant un multiple entier de
+            # 12 h, les points d'un fichier venaient ÉCRASER silencieusement
+            # ceux d'un autre segment (même mesure, mêmes tags, même _time).
+            #
+            # On ramène donc l'origine au premier échantillon réellement
+            # stocké dans le fichier. Le minimum est pris sur l'ensemble des
+            # canaux pour préserver leur alignement relatif si l'un d'eux
+            # démarrait plus tard que les autres.
+            # ---------------------------------------------------------------
+            premiers_horodatages = []
+            for k in range(ch_count.value):
+                cnt_k = ctypes.c_longlong()
+                check_error(
+                    lib,
+                    lib.DWIGetScaledSamplesCount(
+                        reader, channel_list[k].index, ctypes.byref(cnt_k)
+                    ),
+                )
+                if cnt_k.value == 0:
+                    continue
+                un = ctypes.c_longlong(1)
+                ech_1 = (ctypes.c_double * 1)()
+                hor_1 = (ctypes.c_double * 1)()
+                check_error(
+                    lib,
+                    lib.DWIGetScaledSamples(
+                        reader, channel_list[k].index, 0, un, ech_1, hor_1
+                    ),
+                )
+                premiers_horodatages.append(hor_1[0])
+
+            decalage_session = min(premiers_horodatages) if premiers_horodatages else 0.0
+            if decalage_session:
+                print(
+                    f"   🕒 Origine relative recalée : premier échantillon à "
+                    f"t={decalage_session:.0f}s ({decalage_session / 86400:.2f} j) "
+                    f"→ ramené à {horodatage_debut.isoformat()}"
+                )
+
             noms_canaux = [decode_bytes(channel_list[k].name) for k in range(ch_count.value)]
             compte_noms = Counter(noms_canaux)
             for nom_duplique, occurrences in compte_noms.items():
@@ -676,32 +996,66 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
                 # une passe plutôt que point par point.
                 valeurs_filtrees, indices_aberrants = filtrer_hampel(list(samples))
 
-                for j in range(sample_cnt.value):
-                    horodatage_mesure = horodatage_debut + timedelta(seconds=timestamps[j])
-                    payload = {
-                        "source": "dewesoft",
-                        "methode": "import_dxd",
-                        "fichier_source": nom_fichier,
-                        "canal_index": i,
-                        "canal_nom": nom_canal,
-                        "canal_unite": unite,
-                        "nom_mur": infos_canal.get("nom_mur", ""),
-                        "nom_couche": infos_canal.get("nom_couche", ""),
-                        "position": infos_canal.get("position", ""),
-                        "categorie R&D": infos_canal.get("categorie R&D", ""),
-                        "valeur": samples[j],
-                        "valeur_filtree": valeurs_filtrees[j],
-                        "est_aberrant": j in indices_aberrants,
-                        "horodatage_dewesoft": timestamps[j],
-                        "horodatage_mesure_iso": horodatage_mesure.isoformat(),
-                        "horodatage": horodatage_lecture,
-                        "taux_echantillonnage": taux,
-                    }
-                    publier_ou_stocker(MQTT_TOPIC_DEWESOFT, payload)
-                    nb_mesures += 1
+                # Métadonnées identiques pour TOUS les échantillons de ce canal
+                # dans ce fichier : sorties du lot une seule fois (cf.
+                # DXD_BATCH_SIZE) au lieu d'être répétées à chaque échantillon.
+                meta_canal = {
+                    "source": "dewesoft",
+                    "methode": "import_dxd_batch",
+                    "format": FORMAT_LOT,
+                    "fichier_source": nom_fichier,
+                    "canal_index": i,
+                    "canal_nom": nom_canal,
+                    "canal_unite": unite,
+                    "nom_mur": infos_canal.get("nom_mur", ""),
+                    "nom_couche": infos_canal.get("nom_couche", ""),
+                    "position": infos_canal.get("position", ""),
+                    "categorie R&D": infos_canal.get("categorie R&D", ""),
+                    "horodatage": horodatage_lecture,
+                    "taux_echantillonnage": taux,
+                }
 
-                    if nb_mesures % 1000 == 0:
-                        print(f"   ... {nb_mesures} mesure(s) publiées")
+                total = sample_cnt.value
+                debut_lot = 0
+                while debut_lot < total:
+                    fin_lot = decouper_lot(
+                        timestamps, debut_lot, min(debut_lot + DXD_BATCH_SIZE, total)
+                    )
+                    n_lot = fin_lot - debut_lot
+
+                    # Horodatage du 1er échantillon du lot, arrondi à la
+                    # microseconde comme le faisait timedelta() dans l'ancien
+                    # format point-par-point — la reconstitution côté consumer
+                    # (t0_ns + k*dt_ns) redonne donc exactement les mêmes
+                    # instants qu'avant, à la microseconde près.
+                    t0 = horodatage_debut + timedelta(
+                        seconds=timestamps[debut_lot] - decalage_session
+                    )
+                    t0_ns = int(round(t0.timestamp() * 1_000_000)) * 1_000
+                    dt_ns = (
+                        int(round((timestamps[debut_lot + 1] - timestamps[debut_lot]) * 1e9))
+                        if n_lot > 1
+                        else 0
+                    )
+
+                    payload = dict(meta_canal)
+                    payload["t0_ns"] = t0_ns
+                    payload["dt_ns"] = dt_ns
+                    payload["n"] = n_lot
+                    payload["horodatage_dewesoft"] = timestamps[debut_lot]
+                    payload["valeurs"] = [samples[k] for k in range(debut_lot, fin_lot)]
+                    payload["valeurs_filtrees"] = valeurs_filtrees[debut_lot:fin_lot]
+                    payload["indices_aberrants"] = [
+                        k - debut_lot
+                        for k in range(debut_lot, fin_lot)
+                        if k in indices_aberrants
+                    ]
+
+                    publier_ou_stocker(MQTT_TOPIC_DEWESOFT, payload)
+                    nb_mesures += n_lot
+                    debut_lot = fin_lot
+
+                print(f"   ... {nom_canal} : {total} mesure(s) publiées")
 
                 if indices_aberrants:
                     print(
@@ -770,9 +1124,34 @@ def boucle_surveillance() -> None:
                 continue  # disparu entre-temps (déjà traité ailleurs, etc.)
 
             print(f"⏳ Extraction de {nom}...")
+            debut_fichier = time.monotonic()
             try:
                 nb_canaux, nb_mesures = extraire_et_publier(chemin)
-                print(f"✅ {nom} : {nb_canaux} canal(aux), {nb_mesures} mesure(s) publiées.")
+                # publish() ne fait qu'empiler dans la file interne de paho :
+                # au retour d'extraire_et_publier(), une partie des messages
+                # n'est pas encore partie sur le réseau, et AUCUN n'est encore
+                # forcément acquitté par le broker. Déplacer le fichier dans
+                # "traites" à cet instant reviendrait à le déclarer traité
+                # alors qu'un arrêt du processus perdrait tout ce qui reste en
+                # file. Mesuré le 07/08/2026 : sur un import de 2 fichiers
+                # (11 520 messages de lot), 6 100 messages ont été perdus
+                # exactement de cette façon — le fichier était marqué traité,
+                # puis le processus arrêté, et 47 % des points n'étaient jamais
+                # arrivés dans InfluxDB.
+                restants = attendre_publications_terminees()
+                duree = time.monotonic() - debut_fichier
+                if restants:
+                    print(
+                        f"⚠️  {nom} : {restants} message(s) toujours non acquittés "
+                        f"après {DRAIN_TIMEOUT}s — fichier laissé en place pour "
+                        "être retenté au prochain passage."
+                    )
+                    continue
+                print(
+                    f"✅ {nom} : {nb_canaux} canal(aux), {nb_mesures} mesure(s) "
+                    f"en {duree:.0f}s ({nb_mesures / duree:.0f} mesures/s) — "
+                    f"{_nb_publies} publiées MQTT, {_nb_bufferises} bufferisées SQLite."
+                )
                 deplacer_sans_ecraser(chemin, DXD_PROCESSED_FOLDER)
             except Exception as exc:
                 print(f"❌ Échec extraction {nom} : {exc}")
@@ -791,6 +1170,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("  MurMetric — Import DeweSoftX par dépôt de fichiers .dxd (Plan B)")
     print("=" * 60)
+    print(f"  Publication par lots : {DXD_BATCH_SIZE} échantillons/message")
 
     if not DXD_WATCH_FOLDER:
         print("❌ DXD_WATCH_FOLDER non défini. Exemple :")
@@ -811,7 +1191,9 @@ if __name__ == "__main__":
         mqtt_client.tls_set(ca_certs=MQTT_CA_CERT)
     mqtt_client.on_connect = on_connect
     mqtt_client.on_disconnect = on_disconnect
+    mqtt_client.on_publish = on_publish
     mqtt_client.reconnect_delay_set(min_delay=1, max_delay=60)
+    mqtt_client.max_inflight_messages_set(MQTT_MAX_INFLIGHT)
 
     try:
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
