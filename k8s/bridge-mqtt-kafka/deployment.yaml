@@ -4,13 +4,32 @@ metadata:
   name: bridge-mqtt-kafka
   namespace: murmetric
 spec:
-  # ⚠️ Ne PAS scaler ce déploiement en l'état (pas de HPA ici, contrairement à
-  # kafka-consumer-influx). Chaque replica s'abonnerait indépendamment aux
-  # mêmes topics MQTT et republierait donc CHAQUE message dans Kafka en double
-  # (voire N fois) — Mosquitto ne répartit pas la charge entre abonnés comme
-  # le fait un consumer group Kafka. Scaling possible uniquement après avoir
-  # migré vers des "shared subscriptions" MQTT v5 ($share/...), non fait ici.
+  # Ramené de 3 à 1 replica le 07/08/2026, après mesure.
+  #
+  # Les 3 replicas avaient été mis en place pour lever un goulot d'étranglement
+  # supposé côté VPS. Mesure côté VPS : le plafond n'était pas là. Publier vers
+  # un topic AUQUEL AUCUN BRIDGE N'EST ABONNÉ (donc bridge/Kafka/consumer/
+  # InfluxDB entièrement contournés) reproduisait exactement le même plafond —
+  # celui-ci était côté Amiens, dans le coût par message MQTT. Les 3 replicas
+  # n'apportaient donc rien et consommaient du CPU sur un nœud 4 cœurs partagé
+  # avec d'autres projets (MailFlow, MINER).
+  #
+  # Avec la publication par lots (600 échantillons/message, cf.
+  # ingestion_dewesoft_dxd.py), le NOMBRE de messages à relayer chute d'un
+  # facteur ~600 : à 54 000 échantillons/s cela ne fait que ~90 messages/s de
+  # ~17 ko. Un seul replica est largement dimensionné. Les souscriptions
+  # partagées ($share/...) restent en place dans bridge_mqtt_to_kafka.py : elles
+  # ne coûtent rien à 1 replica et permettent de remonter à N sans changement
+  # de code si un besoin réel apparaît.
   replicas: 1
+  # Recreate conservé même après le passage aux souscriptions partagées :
+  # un chevauchement ancien/nouveau pod pendant un RollingUpdate ne cause
+  # plus de doublon (Mosquitto répartit entre le groupe, il ne duplique
+  # pas), mais Recreate reste plus simple à raisonner et la coupure est de
+  # toute façon absorbée sans perte par la file Mosquitto + le buffer
+  # SQLite côté ingestion.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: bridge-mqtt-kafka
@@ -27,6 +46,20 @@ spec:
           imagePullPolicy: IfNotPresent
           # Rebuild requis après modification de bridge_mqtt_to_kafka.py :
           #   docker build -t murmetric-bridge:latest -f Dockerfile.bridge .
+          #
+          # requests/limits ajoutés le 07/08/2026 : ce nœud 4 cœurs est PARTAGÉ
+          # avec d'autres projets de l'utilisateur (MailFlow, MINER et le
+          # service ollama qu'ils pilotent). Sans limites, tous les pods
+          # MurMetric étaient en QoS BestEffort et pouvaient réclamer les
+          # 4 cœurs — c'est aussi ce qui rendait `kubectl top nodes` (98 %)
+          # incohérent avec `kubectl top pods` et masquait la charge réelle.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 350m
+              memory: 256Mi
           env:
             - name: MQTT_BROKER
               valueFrom:

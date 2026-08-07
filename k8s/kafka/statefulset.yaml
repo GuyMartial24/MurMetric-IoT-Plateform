@@ -54,12 +54,16 @@ spec:
             # (observé : crash-loop "unable to register with controller quorum").
             - name: KAFKA_HEAP_OPTS
               value: "-Xmx512m -Xms512m"
+          # Abaissé le 07/08/2026 (était 500m/1 cœur) : avec la publication par
+          # lots, Kafka ne voit plus ~54 000 petits messages/s mais ~90 messages
+          # de ~17 ko/s — le travail par message s'effondre. Le CPU récupéré est
+          # rendu au nœud, partagé avec MailFlow/MINER/ollama.
           resources:
             requests:
-              cpu: 500m
+              cpu: 200m
               memory: 768Mi
             limits:
-              cpu: "1"
+              cpu: 600m
               memory: 1Gi
           volumeMounts:
             - name: kafka-data

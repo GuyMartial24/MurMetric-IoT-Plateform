@@ -61,10 +61,16 @@ spec:
                   name: murmetric-config
                   key: influx-bucket
           # Requis pour que le HPA (hpa.yaml) puisse calculer un % d'usage CPU.
+          # Le consumer déplie chaque message de lot en N points InfluxDB :
+          # c'est lui qui fabrique le line protocol, donc le poste CPU le plus
+          # sensible côté MurMetric. Request relevée (100m → 150m) pour qu'il
+          # ait un poids correct face aux autres cgroups du nœud, limite
+          # abaissée (500m → 400m) pour borner l'appétit total de MurMetric sur
+          # un nœud partagé avec MailFlow/MINER/ollama.
           resources:
             requests:
-              cpu: 100m
+              cpu: 150m
               memory: 128Mi
             limits:
-              cpu: 500m
+              cpu: 400m
               memory: 256Mi

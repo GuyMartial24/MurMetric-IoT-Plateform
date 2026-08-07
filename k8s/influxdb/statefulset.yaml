@@ -17,6 +17,17 @@ spec:
       containers:
         - name: influxdb
           image: influxdb:2.7
+          # Poste le plus gourmand de la chaîne pendant un import massif (c'est
+          # lui qui indexe et écrit les points), d'où le plafond le plus haut —
+          # mais plafond tout de même : le nœud 4 cœurs est partagé avec
+          # d'autres projets (MailFlow, MINER, ollama).
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 700m
+              memory: 1Gi
           ports:
             - containerPort: 8086
           env:

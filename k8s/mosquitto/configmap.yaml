@@ -11,11 +11,23 @@ data:
     # value", observé le 04/08/2026 sur le déploiement k8s).
     per_listener_settings true
 
+    # max_queued_messages/max_inflight_messages : défauts Mosquitto (1000 /
+    # 20) bien trop bas pour un import massif de fichiers .dxd historiques
+    # (des dizaines/centaines de milliers de messages QoS 1 d'affilée) —
+    # observé le 06/08/2026 : le broker se met à droguer des messages
+    # sortants ("Outgoing messages are being dropped for client...") dès que
+    # la file dépasse max_queued_messages, ce qui fait déconnecter/reconnecter
+    # le client en boucle et bascule l'ingestion sur son buffer SQLite local
+    # (lent : une connexion SQLite ouverte par message). Relevé par
+    # listener car per_listener_settings true l'exige (comme password_file
+    # ci-dessous).
     # 1883 : interne au cluster uniquement (bridge-mqtt-kafka, service
     # ClusterIP "mosquitto") — jamais exposé publiquement.
     listener 1883
     allow_anonymous false
     password_file /mosquitto/secrets/password.txt
+    max_queued_messages 500000
+    max_inflight_messages 1000
 
     # 8883 : accès distant (PC Amiens, Raspberry Pi) via le Service
     # LoadBalancer "mosquitto-external" — chiffré TLS, pas de nom de domaine
@@ -25,6 +37,17 @@ data:
     password_file /mosquitto/secrets/password.txt
     certfile /mosquitto/certs/tls.crt
     keyfile /mosquitto/certs/tls.key
+    max_queued_messages 500000
+    max_inflight_messages 1000
+
+    # Plafond de taille d'un message (07/08/2026). Le défaut est 0 = illimité ;
+    # depuis le passage à la publication par lots (600 échantillons ≈ 17 ko par
+    # message, cf. DXD_BATCH_SIZE dans ingestion_dewesoft_dxd.py) il vaut mieux
+    # une borne explicite qu'un « illimité » implicite. 1 Mio laisse ~60x de
+    # marge sur la taille réelle tout en restant aligné sur le max.message.bytes
+    # par défaut de Kafka (1 048 576) : un message accepté par Mosquitto ne peut
+    # donc pas être rejeté plus loin par Kafka.
+    message_size_limit 1048576
 
     persistence true
     persistence_location /mosquitto/data/

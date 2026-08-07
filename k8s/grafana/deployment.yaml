@@ -21,6 +21,14 @@ spec:
       containers:
         - name: grafana
           image: grafana/grafana-oss:11.1.0
+          # Consultation seulement : aucune raison de peser sur un nœud partagé.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
           ports:
             - containerPort: 3000
           env:

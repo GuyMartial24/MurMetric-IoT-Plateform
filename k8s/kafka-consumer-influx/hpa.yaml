@@ -21,7 +21,15 @@ spec:
     kind: Deployment
     name: kafka-consumer-influx
   minReplicas: 1
-  maxReplicas: 6
+  # Ramené de 6 à 2 le 07/08/2026. maxReplicas=6 avait été aligné sur les
+  # 6 partitions Kafka, en supposant que le consumer était un goulot
+  # d'étranglement — la mesure a montré que non (le plafond était côté Amiens,
+  # dans le coût par message MQTT). Avec la publication par lots, un message
+  # Kafka porte 600 échantillons : le nombre de messages à consommer chute d'un
+  # facteur ~600 et un seul consumer suffit très largement. On garde 2 comme
+  # marge de rafale, sans laisser MurMetric revendiquer tout un nœud 4 cœurs
+  # partagé avec MailFlow, MINER et ollama.
+  maxReplicas: 2
   metrics:
     - type: Resource
       resource:

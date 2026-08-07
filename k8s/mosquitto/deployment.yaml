@@ -16,6 +16,18 @@ spec:
       containers:
         - name: mosquitto
           image: eclipse-mosquitto:2.0
+          # Nœud 4 cœurs PARTAGÉ avec d'autres projets de l'utilisateur
+          # (MailFlow, MINER, et le service ollama qu'ils pilotent) : chaque
+          # charge MurMetric est plafonnée pour ne jamais pouvoir accaparer le
+          # nœud. Mosquitto est très économe (mesuré : 0,05 cœur pour
+          # 3 100 msg/s, 0,20 cœur pour 62 Mbit/s), 250m laisse une marge large.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
           ports:
             - containerPort: 1883
             - containerPort: 8883
