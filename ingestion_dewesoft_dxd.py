@@ -53,7 +53,8 @@ l'ingestion — il ne correspond PAS encore à un réglage ajustable en direct
 depuis l'application (ça demanderait de recalculer le filtre à la demande
 côté backend/API à partir de ``valeur`` brute, composant qui n'existe pas
 encore dans ce dépôt). En attendant, changer ce seuil impose de retraiter les
-fichiers .dxd sources (conservés dans DXD_PROCESSED_FOLDER, jamais supprimés)
+fichiers .dxd sources (jamais déplacés ni supprimés — il suffit d'effacer
+leur ligne du registre DXD_REGISTRE_FILE pour les rendre à nouveau éligibles)
 avec la nouvelle valeur.
 
 Usage :
@@ -71,9 +72,9 @@ Usage :
         MQTT_MAX_INFLIGHT    Messages QoS 1 simultanés en vol (défaut : 1000)
         MQTT_MAX_EN_ATTENTE  Plafond de messages QoS 1 non acquittés (défaut : 20000)
         MQTT_ATTENTE_TIMEOUT Attente max d'une place avant bascule SQLite, en s (défaut : 60)
-        DXD_WATCH_FOLDER     Dossier surveillé               (obligatoire)
-        DXD_PROCESSED_FOLDER Sous-dossier fichiers traités    (défaut : <watch>/traites)
-        DXD_ERROR_FOLDER     Sous-dossier fichiers en erreur  (défaut : <watch>/erreurs)
+        DXD_WATCH_FOLDER     Dossier surveillé, LECTURE SEULE (obligatoire)
+        DXD_REGISTRE_FILE    Registre SQLite des fichiers déjà traités
+                             (défaut : <dossier du script>/fichiers_traites.db)
         POLL_INTERVAL_DXD    Secondes entre deux scans        (défaut : 5)
         STABLE_CHECKS        Vérifications stables avant traitement (défaut : 3)
         SQLITE_RETENTION     Rétention du buffer local en jours (défaut : 7)
@@ -88,7 +89,6 @@ Usage :
 import ctypes
 import json
 import os
-import shutil
 import sqlite3
 import statistics
 import sys
@@ -98,6 +98,15 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import paho.mqtt.client as mqtt
+
+# NumPy accélère le filtre de Hampel et relâche le GIL pendant les calculs
+# lourds, ce qui évite d'étouffer le thread réseau de paho (cf.
+# _filtrer_hampel_numpy). Facultatif : repli automatique sur la version pure
+# Python si la bibliothèque est absente.
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover
+    np = None
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -147,6 +156,25 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 # de domaine sur le VPS) : MQTT_CA_CERT doit pointer vers ce même certificat,
 # qui sert alors de racine de confiance unique côté client.
 MQTT_TLS_ENABLED = os.getenv("MQTT_TLS_ENABLED", "").lower() in ("1", "true", "yes")
+
+# ---------------------------------------------------------------------------
+# Keepalive MQTT (09/08/2026).
+#
+# Mosquitto déconnecte un client resté muet pendant 1,5 × keepalive. Avec le
+# défaut de 60 s, le backfill du 07→09/08/2026 a subi 1 560 déconnexions
+# « has exceeded timeout, disconnecting » : chacune faisait basculer
+# l'extraction sur le buffer SQLite, qui a fini à 2,6 Go.
+#
+# La cause exacte du silence du client n'est PAS formellement établie : le
+# filtre de Hampel en pur Python monopolisait le CPU (corrigé, cf.
+# _filtrer_hampel_numpy), mais une saturation du socket TLS côté broker
+# (mosquitto est limité à 250m de CPU sur un nœud partagé) expliquerait tout
+# aussi bien l'absence de PINGREQ. Plutôt que de parier sur un diagnostic,
+# on élargit franchement la tolérance : 300 s de keepalive laissent 450 s de
+# silence avant déconnexion, sans rien coûter (une vraie coupure réseau reste
+# détectée immédiatement par l'erreur de socket, pas par le keepalive).
+# ---------------------------------------------------------------------------
+MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "300"))
 MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "")
 MQTT_TOPIC_DEWESOFT = os.getenv("MQTT_TOPIC_DEWESOFT", "frd/dewesoft/bruts")
 MQTT_TOPIC_ALERTES = os.getenv("MQTT_TOPIC_ALERTES", "frd/dewesoft/alertes")
@@ -214,14 +242,44 @@ CAPTEURS_RETRAIT_FILE = os.path.join(
 # Configuration de la surveillance du dossier .dxd.
 # ---------------------------------------------------------------------------
 DXD_WATCH_FOLDER = os.getenv("DXD_WATCH_FOLDER", "")
-DXD_PROCESSED_FOLDER = os.getenv(
-    "DXD_PROCESSED_FOLDER",
-    os.path.join(DXD_WATCH_FOLDER, "traites") if DXD_WATCH_FOLDER else "",
+
+# ---------------------------------------------------------------------------
+# RÈGLE ABSOLUE (09/08/2026) : le dossier surveillé est en LECTURE SEULE.
+#
+# Jusqu'ici, un fichier traité était DÉPLACÉ vers <watch>/traites (ou
+# <watch>/erreurs). Ce déplacement s'est révélé destructeur en production :
+# DeweSoftX possède ce dossier et continue de référencer les enregistrements
+# qu'il contient. Voir disparaître un .dxd déclenche chez lui une
+# régénération de segments de récupération « <nom>.lostNN.dxd » dans le même
+# dossier. Mesuré sur le backfill du 07→09/08/2026 : 1 226 fichiers .lost
+# créés pendant le run, corpus passé de 6,07 à 11,07 Gio, 352 fichiers
+# traités deux fois — le backfill ne pouvait plus converger, le dossier se
+# remplissait aussi vite qu'il se vidait.
+#
+# CORRECTIF : plus AUCUNE écriture, aucun déplacement, aucun renommage,
+# aucune suppression sous DXD_WATCH_FOLDER — pas même vers un sous-dossier.
+# L'état « déjà traité » vit désormais dans un registre SQLite EXTERNE au
+# dossier surveillé (DXD_REGISTRE_FILE ci-dessous). La boucle de surveillance
+# ignore tout fichier déjà inscrit au registre, ce qui reproduit exactement
+# l'ancien comportement (un fichier déplacé hors du dossier n'était plus vu)
+# sans toucher au disque de DeweSoftX.
+#
+# Reprise après redémarrage : c'est le REGISTRE, et non le contenu du
+# dossier, qui fait foi. Le registre est relu au démarrage.
+#
+# Retraitement d'un fichier (ex. changement de HAMPEL_SEUIL_K, cf. docstring
+# du module) : supprimer sa ligne du registre suffit à le rendre à nouveau
+# éligible au prochain scan. Aucun outil dédié n'est nécessaire.
+#   sqlite3 fichiers_traites.db "DELETE FROM fichiers_traites WHERE nom_fichier='X.dxd'"
+#
+# DXD_PROCESSED_FOLDER / DXD_ERROR_FOLDER ont été SUPPRIMÉS : ils n'ont plus
+# d'objet, et les conserver inviterait à réintroduire un déplacement.
+# ---------------------------------------------------------------------------
+DXD_REGISTRE_FILE = os.getenv(
+    "DXD_REGISTRE_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "fichiers_traites.db"),
 )
-DXD_ERROR_FOLDER = os.getenv(
-    "DXD_ERROR_FOLDER",
-    os.path.join(DXD_WATCH_FOLDER, "erreurs") if DXD_WATCH_FOLDER else "",
-)
+
 POLL_INTERVAL_DXD = float(os.getenv("POLL_INTERVAL_DXD", "5"))
 STABLE_CHECKS = int(os.getenv("STABLE_CHECKS", "3"))
 
@@ -294,8 +352,32 @@ SQLITE_BUFFER_FILE = os.path.join(
 )
 
 SQLITE_RETENTION_JOURS = int(os.getenv("SQLITE_RETENTION", "7"))
-SYNC_BATCH_SIZE = int(os.getenv("SYNC_BATCH_SIZE", "50"))
-SYNC_INTERVAL_SECONDES = int(os.getenv("SYNC_INTERVAL", "30"))
+
+# ---------------------------------------------------------------------------
+# Débit de vidange du buffer SQLite (09/08/2026).
+#
+# Anciennes valeurs : 50 messages toutes les 30 s, avec en plus un
+# time.sleep(0.05) ET un wait_for_publish() synchrone PAR message. Débit
+# plafond réel : ~1,7 message/s ≈ 1 000 échantillons/s — face à une
+# extraction qui en produit ~30 000/s. Mathématiquement, le buffer ne
+# pouvait JAMAIS rattraper son retard : une fois la bascule SQLite amorcée,
+# il ne faisait que grossir. Constaté le 09/08/2026 : 2,6 Go de buffer,
+# 101 592 messages en attente, puis des « database is locked » qui ont fait
+# échouer 349 fichiers.
+#
+# Nouvelles valeurs : 500 messages toutes les 5 s, publiés en rafale puis
+# acquittés en bloc sous échéance globale (cf. tache_sync_sqlite) — soit
+# ~100 messages/s ≈ 60 000 échantillons/s, largement au-dessus du débit
+# d'extraction (~30 000/s). Le buffer redevient ce qu'il doit être : un
+# tampon transitoire qui se vide dès que le lien MQTT revient.
+#
+# Pourquoi 500 et non 5 000 : les lots font ~17 ko, donc un fetchall() de
+# 5 000 lignes charge 85 Mo en mémoire — et le fait en tenant _verrou_sqlite,
+# ce qui bloque d'autant le thread d'extraction qui veut y écrire. 500 lignes
+# ≈ 8,5 Mo, sans effet mesurable sur le débit de vidange.
+# ---------------------------------------------------------------------------
+SYNC_BATCH_SIZE = int(os.getenv("SYNC_BATCH_SIZE", "500"))
+SYNC_INTERVAL_SECONDES = int(os.getenv("SYNC_INTERVAL", "5"))
 
 _mqtt_connecte: bool = False
 
@@ -318,10 +400,39 @@ _nb_bufferises: int = 0
 # Buffer SQLite local.
 # ===========================================================================
 
+# ---------------------------------------------------------------------------
+# UNE SEULE connexion SQLite, partagée (09/08/2026).
+#
+# Chaque fonction ouvrait auparavant sa propre connexion — donc un
+# sqlite3.connect() PAR MESSAGE bufferisé, et un autre par suppression lors
+# de la vidange. Sur un buffer devenu volumineux (2,6 Go le 09/08/2026),
+# ouvrir/fermer sans cesse un fichier de cette taille, chacun avec son propre
+# verrou, a fini par produire des « database is locked » qui ont fait échouer
+# 349 fichiers. Une connexion unique en mode WAL (lecteurs et écrivain
+# concurrents) avec un busy_timeout franc supprime les deux problèmes.
+#
+# check_same_thread=False : la connexion est utilisée par le thread
+# d'extraction ET par le thread de synchronisation ; tous les accès passent
+# par _verrou_sqlite.
+# ---------------------------------------------------------------------------
+_conn_sqlite: sqlite3.Connection | None = None
+_verrou_sqlite = threading.Lock()
+
+
 def initialiser_sqlite() -> None:
-    """Créer la table de buffer si elle n'existe pas."""
-    with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-        conn.execute("""
+    """Ouvrir la connexion partagée et créer la table de buffer."""
+    global _conn_sqlite
+    _conn_sqlite = sqlite3.connect(
+        SQLITE_BUFFER_FILE, check_same_thread=False, timeout=60.0)
+    with _verrou_sqlite:
+        # WAL : un écrivain n'empêche plus les lecteurs (et inversement).
+        _conn_sqlite.execute("PRAGMA journal_mode=WAL")
+        # 60 s d'attente d'un verrou plutôt qu'un échec immédiat.
+        _conn_sqlite.execute("PRAGMA busy_timeout=60000")
+        # NORMAL : pas de fsync à chaque transaction ; en WAL, la durabilité
+        # reste suffisante pour un buffer de secours.
+        _conn_sqlite.execute("PRAGMA synchronous=NORMAL")
+        _conn_sqlite.execute("""
             CREATE TABLE IF NOT EXISTS buffer_mqtt (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 topic       TEXT    NOT NULL,
@@ -330,18 +441,18 @@ def initialiser_sqlite() -> None:
                 tente_le    TEXT    DEFAULT NULL
             )
         """)
-        conn.commit()
+        _conn_sqlite.commit()
 
 
 def stocker_localement(topic: str, payload_json: str) -> None:
     """Persister un message MQTT dans le buffer SQLite local."""
     horodatage = datetime.now().isoformat()
-    with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-        conn.execute(
+    with _verrou_sqlite:
+        _conn_sqlite.execute(
             "INSERT INTO buffer_mqtt (topic, payload, horodatage) VALUES (?, ?, ?)",
             (topic, payload_json, horodatage),
         )
-        conn.commit()
+        _conn_sqlite.commit()
 
 
 def purger_buffer_expire() -> int:
@@ -351,16 +462,17 @@ def purger_buffer_expire() -> int:
         Nombre de messages supprimés.
     """
     limite = (datetime.now() - timedelta(days=SQLITE_RETENTION_JOURS)).isoformat()
-    with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-        cursor = conn.execute("DELETE FROM buffer_mqtt WHERE horodatage < ?", (limite,))
-        conn.commit()
+    with _verrou_sqlite:
+        cursor = _conn_sqlite.execute(
+            "DELETE FROM buffer_mqtt WHERE horodatage < ?", (limite,))
+        _conn_sqlite.commit()
         return cursor.rowcount
 
 
 def compter_messages_en_attente() -> int:
     """Retourner le nombre de messages SQLite non encore envoyés."""
-    with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-        (count,) = conn.execute("SELECT COUNT(*) FROM buffer_mqtt").fetchone()
+    with _verrou_sqlite:
+        (count,) = _conn_sqlite.execute("SELECT COUNT(*) FROM buffer_mqtt").fetchone()
         return count
 
 
@@ -645,15 +757,34 @@ def tache_sync_sqlite() -> None:
         envoyes = 0
         erreurs = 0
 
-        with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-            rows = conn.execute(
+        with _verrou_sqlite:
+            rows = _conn_sqlite.execute(
                 "SELECT id, topic, payload FROM buffer_mqtt ORDER BY horodatage ASC LIMIT ?",
                 (SYNC_BATCH_SIZE,),
             ).fetchall()
 
+        # Publication EN RAFALE puis acquittement en bloc, sous ÉCHÉANCE
+        # GLOBALE (09/08/2026).
+        #
+        # L'ancienne boucle attendait l'acquittement de chaque message
+        # (wait_for_publish) et faisait un time.sleep(0.05) entre deux, soit
+        # ~20 messages/s au mieux : le buffer ne se vidait jamais.
+        #
+        # Attention au piège corrigé le même jour : attendre DRAIN_TIMEOUT
+        # PAR message reste catastrophique si le broker cesse d'acquitter —
+        # 200 messages × 120 s = 6,6 h de thread de sync bloqué, buffer figé
+        # (observé en conditions réelles). L'attente est donc bornée par une
+        # échéance unique pour tout le lot : passé ce délai, on abandonne le
+        # reste du lot, on efface ce qui a été confirmé, et on rendra la main
+        # au cycle suivant. Rien n'est perdu : ce qui n'est pas confirmé
+        # reste en base.
+        echeance = time.monotonic() + DRAIN_TIMEOUT
+        en_vol: list[tuple[int, object]] = []
         for row_id, topic, payload in rows:
             if not _mqtt_connecte:
                 print("⚠️  Déconnexion pendant la sync — arrêt du batch.")
+                break
+            if time.monotonic() > echeance:
                 break
             # Réserver une place comme le fait publier_ou_stocker() : sinon
             # on_publish() libérerait une place jamais réservée et
@@ -666,16 +797,32 @@ def tache_sync_sqlite() -> None:
                     _liberer_place()
                     erreurs += 1
                     continue
-                result.wait_for_publish(timeout=5.0)
-                with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-                    conn.execute("DELETE FROM buffer_mqtt WHERE id = ?", (row_id,))
-                    conn.commit()
-                envoyes += 1
-                time.sleep(0.05)  # Pause légère pour ne pas saturer le broker.
+                en_vol.append((row_id, result))
             except Exception as exc:
                 _liberer_place()
                 print(f"⚠️  Erreur sync message {row_id} : {exc}")
                 erreurs += 1
+
+        # N'effacer du buffer que ce que le broker a réellement acquitté.
+        ids_confirmes = []
+        for row_id, result in en_vol:
+            reste = echeance - time.monotonic()
+            try:
+                if reste > 0:
+                    result.wait_for_publish(timeout=reste)
+                if result.is_published():
+                    ids_confirmes.append((row_id,))
+                else:
+                    erreurs += 1
+            except Exception:
+                erreurs += 1
+
+        if ids_confirmes:
+            with _verrou_sqlite:
+                _conn_sqlite.executemany(
+                    "DELETE FROM buffer_mqtt WHERE id = ?", ids_confirmes)
+                _conn_sqlite.commit()
+            envoyes = len(ids_confirmes)
 
         restants = compter_messages_en_attente()
         print(f"✅ Sync batch terminé : {envoyes} envoyés, {erreurs} erreurs, {restants} restants.")
@@ -689,17 +836,53 @@ def tache_sync_sqlite() -> None:
 # Détection de fichier stable (copie/écriture terminée).
 # ===========================================================================
 
-def fichier_est_verrouille(chemin: str) -> bool:
-    """Détecter si un processus tient encore le fichier ouvert en écriture.
+# Prototypes Win32 pour la sonde de verrou. restype/argtypes sont
+# OBLIGATOIRES : sans eux, ctypes suppose un retour c_int et TRONQUE le
+# handle 64 bits, si bien que la comparaison à INVALID_HANDLE_VALUE échoue
+# toujours et que la sonde répond « jamais verrouillé » (bug attrapé par
+# test_registre.py avant déploiement).
+_GENERIC_READ = 0x80000000
+_OPEN_EXISTING = 3
+_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
-    Astuce Windows : un renommage vers son propre nom échoue si un autre
-    processus a un descripteur ouvert sur le fichier.
+_CreateFileW = ctypes.windll.kernel32.CreateFileW
+_CreateFileW.restype = ctypes.c_void_p
+_CreateFileW.argtypes = [
+    ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+    ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+]
+_CloseHandle = ctypes.windll.kernel32.CloseHandle
+_CloseHandle.restype = ctypes.c_int
+_CloseHandle.argtypes = [ctypes.c_void_p]
+
+def fichier_est_verrouille(chemin: str) -> bool:
+    """Détecter si un processus tient encore le fichier ouvert (écriture en cours).
+
+    Sonde STRICTEMENT en lecture seule : on demande à Windows d'ouvrir le
+    fichier en lecture avec un partage NUL (dwShareMode=0). Si un autre
+    processus — typiquement DeweSoftX en train d'enregistrer — le tient
+    ouvert, l'appel échoue avec ERROR_SHARING_VIOLATION.
+
+    L'ancienne astuce ``os.rename(chemin, chemin)`` faisait le même travail
+    mais était une opération d'ÉCRITURE sur le dossier de DeweSoftX : elle
+    est proscrite depuis le 09/08/2026 (cf. DXD_REGISTRE_FILE — le moindre
+    remaniement sous DXD_WATCH_FOLDER déclenche la régénération de fichiers
+    .lostNN par DeweSoftX). Ouvrir en lecture ne modifie ni le contenu, ni le
+    nom, ni la taille du fichier.
     """
-    try:
-        os.rename(chemin, chemin)
-        return False
-    except OSError:
+    handle = _CreateFileW(
+        chemin,
+        _GENERIC_READ,
+        0,                  # aucun partage : détecte tout autre ouvreur
+        None,
+        _OPEN_EXISTING,
+        0,
+        None,
+    )
+    if handle is None or handle == _INVALID_HANDLE_VALUE:
         return True
+    _CloseHandle(handle)
+    return False
 
 
 def attendre_fichier_stable(chemin: str) -> bool:
@@ -776,7 +959,7 @@ def decouper_lot(timestamps, debut: int, fin_max: int) -> int:
     return fin_max
 
 
-def filtrer_hampel(
+def _filtrer_hampel_python(
     valeurs: list[float],
     demi_fenetre: int = HAMPEL_FENETRE,
     seuil_k: float = HAMPEL_SEUIL_K,
@@ -835,6 +1018,111 @@ def filtrer_hampel(
     return filtrees, aberrants
 
 
+def _filtrer_hampel_numpy(
+    valeurs: list[float],
+    demi_fenetre: int = HAMPEL_FENETRE,
+    seuil_k: float = HAMPEL_SEUIL_K,
+) -> tuple[list[float], set[int]]:
+    """Version vectorisée NumPy de :func:`_filtrer_hampel_python`.
+
+    Résultat strictement identique à la version pure Python (vérifié par
+    comparaison exhaustive, cf. ``test_hampel_equivalence.py``) — seule la
+    vitesse change.
+
+    POURQUOI (09/08/2026) : la version pure Python enchaîne ~2 appels à
+    ``statistics.median`` par échantillon, soit ~1,7 million d'appels pour un
+    canal de 432 000 points. Elle monopolise le GIL pendant des dizaines de
+    secondes d'affilée, ce qui empêche le thread réseau de paho d'émettre ses
+    PINGREQ : le broker déclare alors le client muet et le déconnecte
+    (« has exceeded timeout, disconnecting »). Mesuré sur le backfill du
+    07→09/08/2026 : 1 560 déconnexions MQTT, bascule massive vers le buffer
+    SQLite, puis 349 fichiers en échec sur « database is locked ».
+
+    NumPy effectue ces médianes dans ses boucles C, qui relâchent le GIL :
+    le thread réseau reprend la main régulièrement et le keepalive passe.
+
+    Les fenêtres sont TRONQUÉES aux bords (comme la version de référence) :
+    les ``demi_fenetre`` premiers et derniers indices n'ont pas de fenêtre
+    complète et sont donc calculés un par un, à l'identique. Le cœur du
+    signal, lui, est traité par blocs pour borner la mémoire.
+    """
+    n = len(valeurs)
+    v = np.asarray(valeurs, dtype=np.float64)
+    filtrees = v.copy()
+    aberrants: set[int] = set()
+    facteur_mad = 1.4826
+    largeur = 2 * demi_fenetre + 1
+
+    # --- Cœur du signal : fenêtres complètes, vectorisées par blocs --------
+    if n >= largeur:
+        vues = np.lib.stride_tricks.sliding_window_view(v, largeur)
+        # 65 536 fenêtres par bloc ≈ 11 Mo par tableau temporaire : les
+        # fichiers .lost peuvent dépasser 3 millions d'échantillons, tout
+        # traiter d'un coup demanderait plusieurs Go.
+        bloc = 65_536
+        for debut in range(0, vues.shape[0], bloc):
+            fen = vues[debut:debut + bloc]
+            mediane = np.median(fen, axis=1)
+            mad = np.median(np.abs(fen - mediane[:, None]), axis=1) * facteur_mad
+
+            diffs = np.diff(fen, axis=1)
+            mediane_diff = np.median(diffs, axis=1)
+            mad_diff = np.median(
+                np.abs(diffs - mediane_diff[:, None]), axis=1) * facteur_mad
+
+            mad_effectif = np.maximum(mad, mad_diff)
+            centre = v[debut + demi_fenetre:debut + demi_fenetre + fen.shape[0]]
+            masque = (mad_effectif > 0) & (
+                np.abs(centre - mediane) > seuil_k * mad_effectif)
+
+            positions = np.nonzero(masque)[0]
+            if positions.size:
+                indices = positions + debut + demi_fenetre
+                filtrees[indices] = mediane[positions]
+                aberrants.update(int(x) for x in indices)
+
+    # --- Bords : fenêtres tronquées, calculées exactement comme la référence
+    bords = set(range(0, min(demi_fenetre, n)))
+    bords |= set(range(max(0, n - demi_fenetre), n))
+    for i in sorted(bords):
+        lo = max(0, i - demi_fenetre)
+        hi = min(n, i + demi_fenetre + 1)
+        fenetre = valeurs[lo:hi]
+        mediane = statistics.median(fenetre)
+        mad = statistics.median([abs(x - mediane) for x in fenetre]) * facteur_mad
+
+        diffs_fenetre = [fenetre[k] - fenetre[k - 1] for k in range(1, len(fenetre))]
+        mad_diff = 0.0
+        if diffs_fenetre:
+            mediane_diff = statistics.median(diffs_fenetre)
+            mad_diff = statistics.median(
+                [abs(d - mediane_diff) for d in diffs_fenetre]) * facteur_mad
+
+        mad_effectif = max(mad, mad_diff)
+        if mad_effectif > 0 and abs(valeurs[i] - mediane) > seuil_k * mad_effectif:
+            aberrants.add(i)
+            filtrees[i] = mediane
+
+    # tolist() : indispensable, json.dumps() ne sait pas sérialiser np.float64.
+    return filtrees.tolist(), aberrants
+
+
+def filtrer_hampel(
+    valeurs: list[float],
+    demi_fenetre: int = HAMPEL_FENETRE,
+    seuil_k: float = HAMPEL_SEUIL_K,
+) -> tuple[list[float], set[int]]:
+    """Filtre de Hampel — vectorisé si NumPy est disponible, sinon pur Python.
+
+    Les deux implémentations produisent le même résultat ; NumPy est
+    nettement plus rapide et, surtout, relâche le GIL (cf.
+    :func:`_filtrer_hampel_numpy`).
+    """
+    if np is not None:
+        return _filtrer_hampel_numpy(valeurs, demi_fenetre, seuil_k)
+    return _filtrer_hampel_python(valeurs, demi_fenetre, seuil_k)
+
+
 # ===========================================================================
 # Extraction .dxd → publication MQTT.
 # ===========================================================================
@@ -862,7 +1150,24 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
     try:
         c_filename = ctypes.c_char_p(chemin.encode())
         file_info = DWFileInfo(0, 0, 0)
-        check_error(lib, lib.DWIOpenDataFile(reader, c_filename, ctypes.byref(file_info)))
+        # DWICloseDataFile doit être appelé même quand DWIOpenDataFile ÉCHOUE.
+        # Sur un .dxd corrompu (« Error 4: File is corrupted or has invalid
+        # format »), le SDK laisse malgré tout un handle Windows ouvert sur le
+        # fichier, et DWIDestroyReader ne le libère PAS. Le déplacement vers
+        # erreurs/ échouait alors avec WinError 32 (« fichier utilisé par un
+        # autre processus »), et cette seconde exception — levée depuis le
+        # gestionnaire d'erreur de boucle_surveillance() — tuait le processus.
+        # Constaté le 07/08/2026 : backfill mort au 10e fichier sur 949.
+        try:
+            check_error(
+                lib, lib.DWIOpenDataFile(reader, c_filename, ctypes.byref(file_info))
+            )
+        except Exception:
+            try:
+                lib.DWICloseDataFile(reader)
+            except Exception:
+                pass
+            raise
 
         try:
             mesure_info = DWMeasurementInfo(0, 0, 0, 0)
@@ -1074,18 +1379,57 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
 # Déplacement des fichiers traités / en erreur.
 # ===========================================================================
 
-def deplacer_sans_ecraser(chemin: str, dossier_cible: str) -> None:
-    """Déplacer un fichier vers un dossier, en évitant d'écraser un homonyme."""
-    os.makedirs(dossier_cible, exist_ok=True)
-    nom_fichier = os.path.basename(chemin)
-    destination = os.path.join(dossier_cible, nom_fichier)
+def initialiser_registre() -> None:
+    """Créer le registre des fichiers déjà traités (hors dossier surveillé).
 
-    if os.path.exists(destination):
-        base, ext = os.path.splitext(nom_fichier)
-        horodatage = datetime.now().strftime("%Y%m%d_%H%M%S")
-        destination = os.path.join(dossier_cible, f"{base}_{horodatage}{ext}")
+    Remplace l'ancien déplacement vers traites/ et erreurs/ : le dossier de
+    DeweSoftX ne doit plus être modifié du tout (cf. DXD_REGISTRE_FILE).
+    """
+    with sqlite3.connect(DXD_REGISTRE_FILE) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fichiers_traites (
+                nom_fichier TEXT PRIMARY KEY,
+                statut      TEXT    NOT NULL,
+                horodatage  TEXT    NOT NULL,
+                nb_canaux   INTEGER,
+                nb_mesures  INTEGER,
+                raison      TEXT
+            )
+        """)
+        conn.commit()
 
-    shutil.move(chemin, destination)
+
+def charger_registre() -> set[str]:
+    """Charger en mémoire les noms de fichiers déjà traités ou en erreur.
+
+    C'est ce jeu — et non le contenu du dossier — qui fait foi pour savoir
+    ce qui reste à faire, y compris après un redémarrage du processus.
+    """
+    with sqlite3.connect(DXD_REGISTRE_FILE) as conn:
+        return {nom for (nom,) in conn.execute(
+            "SELECT nom_fichier FROM fichiers_traites")}
+
+
+def enregistrer_fichier(
+    nom: str,
+    statut: str,
+    nb_canaux: int | None = None,
+    nb_mesures: int | None = None,
+    raison: str | None = None,
+) -> None:
+    """Inscrire un fichier au registre (statut ``traite`` ou ``erreur``).
+
+    Supprimer cette ligne suffit à rendre le fichier éligible à un
+    retraitement au prochain scan (ex. après changement de HAMPEL_SEUIL_K).
+    """
+    with sqlite3.connect(DXD_REGISTRE_FILE) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO fichiers_traites "
+            "(nom_fichier, statut, horodatage, nb_canaux, nb_mesures, raison) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (nom, statut, datetime.now().isoformat(), nb_canaux, nb_mesures, raison),
+        )
+        conn.commit()
 
 
 # ===========================================================================
@@ -1099,6 +1443,12 @@ def boucle_surveillance() -> None:
 
     deja_signales: set[str] = set()
 
+    # Source de vérité du « déjà fait » : le registre externe, pas le dossier
+    # (qu'on ne modifie plus du tout). Relu ici au démarrage pour que la
+    # reprise après redémarrage ne retraite rien.
+    deja_traites: set[str] = charger_registre()
+    print(f"📒 Registre : {len(deja_traites)} fichier(s) déjà traité(s) — ignorés.\n")
+
     while True:
         verifier_et_recharger_capteurs_retrait()
 
@@ -1111,6 +1461,10 @@ def boucle_surveillance() -> None:
 
         for nom in noms_fichiers:
             if not nom.lower().endswith(".dxd"):
+                continue
+            # Déjà traité (ou déjà en erreur définitive) : on l'ignore, sans
+            # toucher au fichier — il reste en place pour DeweSoftX.
+            if nom in deja_traites:
                 continue
             chemin = os.path.join(DXD_WATCH_FOLDER, nom)
             if not os.path.isfile(chemin):
@@ -1130,8 +1484,8 @@ def boucle_surveillance() -> None:
                 # publish() ne fait qu'empiler dans la file interne de paho :
                 # au retour d'extraire_et_publier(), une partie des messages
                 # n'est pas encore partie sur le réseau, et AUCUN n'est encore
-                # forcément acquitté par le broker. Déplacer le fichier dans
-                # "traites" à cet instant reviendrait à le déclarer traité
+                # forcément acquitté par le broker. Inscrire le fichier au
+                # registre à cet instant reviendrait à le déclarer traité
                 # alors qu'un arrêt du processus perdrait tout ce qui reste en
                 # file. Mesuré le 07/08/2026 : sur un import de 2 fichiers
                 # (11 520 messages de lot), 6 100 messages ont été perdus
@@ -1143,19 +1497,22 @@ def boucle_surveillance() -> None:
                 if restants:
                     print(
                         f"⚠️  {nom} : {restants} message(s) toujours non acquittés "
-                        f"après {DRAIN_TIMEOUT}s — fichier laissé en place pour "
-                        "être retenté au prochain passage."
+                        f"après {DRAIN_TIMEOUT}s — NON inscrit au registre, "
+                        "sera retenté au prochain passage."
                     )
                     continue
                 print(
                     f"✅ {nom} : {nb_canaux} canal(aux), {nb_mesures} mesure(s) "
-                    f"en {duree:.0f}s ({nb_mesures / duree:.0f} mesures/s) — "
+                    f"en {duree:.0f}s ({nb_mesures / max(duree, 1e-9):.0f} mesures/s) — "
                     f"{_nb_publies} publiées MQTT, {_nb_bufferises} bufferisées SQLite."
                 )
-                deplacer_sans_ecraser(chemin, DXD_PROCESSED_FOLDER)
+                # Le fichier reste EXACTEMENT où il est ; seul le registre bouge.
+                enregistrer_fichier(nom, "traite", nb_canaux, nb_mesures)
+                deja_traites.add(nom)
             except Exception as exc:
                 print(f"❌ Échec extraction {nom} : {exc}")
-                deplacer_sans_ecraser(chemin, DXD_ERROR_FOLDER)
+                enregistrer_fichier(nom, "erreur", raison=str(exc)[:500])
+                deja_traites.add(nom)
 
             deja_signales.discard(nom)
 
@@ -1177,11 +1534,17 @@ if __name__ == "__main__":
         print(r'   set DXD_WATCH_FOLDER=C:\Users\Public\Documents\Dewesoft\Data && python ingestion_dewesoft_dxd.py')
         sys.exit(1)
 
-    os.makedirs(DXD_WATCH_FOLDER, exist_ok=True)
-    os.makedirs(DXD_PROCESSED_FOLDER, exist_ok=True)
-    os.makedirs(DXD_ERROR_FOLDER, exist_ok=True)
+    # Aucun os.makedirs() ici : le dossier surveillé appartient à DeweSoftX et
+    # doit rester strictement intact (cf. DXD_REGISTRE_FILE). On se contente
+    # de vérifier qu'il existe.
+    if not os.path.isdir(DXD_WATCH_FOLDER):
+        print(f"❌ Dossier surveillé introuvable : {DXD_WATCH_FOLDER}")
+        sys.exit(1)
+    print(f"  Dossier surveillé (LECTURE SEULE) : {DXD_WATCH_FOLDER}")
+    print(f"  Registre des fichiers traités     : {DXD_REGISTRE_FILE}")
 
     initialiser_sqlite()
+    initialiser_registre()
     charger_capteurs_retrait_connus()
 
     mqtt_client = mqtt.Client()
@@ -1196,7 +1559,7 @@ if __name__ == "__main__":
     mqtt_client.max_inflight_messages_set(MQTT_MAX_INFLIGHT)
 
     try:
-        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
         mqtt_client.loop_start()
         print(f"⏳ Connexion MQTT cloud ({MQTT_BROKER})...")
     except Exception as exc:

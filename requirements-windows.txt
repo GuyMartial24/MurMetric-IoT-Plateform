@@ -5,6 +5,13 @@
 # Publication MQTT vers le broker cloud
 paho-mqtt>=2.1.0
 
+# Filtre de Hampel vectorisé (ingestion_dewesoft_dxd.py). Facultatif au sens
+# strict — le code retombe automatiquement sur une version pure Python — mais
+# fortement recommandé : la version NumPy est ~3x plus rapide et relâche le
+# GIL pendant les calculs lourds, ce qui évite d'étouffer le thread réseau de
+# paho sur les gros fichiers (cf. _filtrer_hampel_numpy).
+numpy>=1.26
+
 # SQLite (store-and-forward résilience cloud) — stdlib Python, pas d'install
 
 # Import de fichiers .dxd exportés/déposés (ingestion_dewesoft_dxd.py).
