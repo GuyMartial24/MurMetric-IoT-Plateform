@@ -11,10 +11,38 @@ Topics consommés (namespaced par tenant) :
     murmetric.{tenant}.dewesoft.bruts    → mesure : mesures_dewesoft
     murmetric.{tenant}.dewesoft.alertes  → mesure : alertes_ingestion
 
-Mode d'écriture InfluxDB :
-    Batch asynchrone — flush toutes les 1 s ou dès 500 points accumulés.
-    Adapté à l'ingestion continue à haute fréquence sans bloquer la
-    consommation Kafka entre deux écritures.
+Mode d'écriture InfluxDB : SYNCHRONE, avec validation Kafka manuelle
+    (08/08/2026 — cf. logique_projet.md).
+
+    Le mode batch ASYNCHRONE précédent perdait des points en silence. Trace
+    complète du 07/08/2026 sur un import réel : le point HA2 du
+    2025-11-21T14:14:19.447996Z était présent et bien formé dans Kafka (lot de
+    600 valeurs, k=305, valeur -0.01744562122183524), le lag du consumer était
+    nul, aucun rappel d'erreur ni de ré-essai ne s'est déclenché, InfluxDB n'a
+    journalisé aucun rejet — et le point n'existe pas dans le bucket. Une
+    seule ligne manquante au milieu d'un lot par ailleurs intégralement écrit :
+    ce n'est donc PAS la fenêtre « au plus une fois » de la validation
+    automatique des offsets (qui perdrait les 600 points du message), mais un
+    défaut du writer asynchrone lui-même.
+
+    Plutôt que de continuer à diagnostiquer ce writer, on rend la perte
+    structurellement impossible — ou à défaut BRUYANTE :
+
+      1. Écriture SYNCHRONE : write() ne rend la main qu'une fois InfluxDB
+         ayant accusé réception, et lève une exception en cas d'échec. Plus
+         aucun lot ne peut disparaître dans une file d'arrière-plan.
+      2. enable_auto_commit=False : l'offset Kafka n'est JAMAIS validé avant
+         que l'écriture correspondante ne soit confirmée. Un incident rejoue
+         les messages non validés au lieu de les perdre.
+
+    Garantie obtenue : « au moins une fois ». Les doublons éventuels d'un
+    rejeu sont inoffensifs car l'écriture est IDEMPOTENTE — un point .dxd est
+    identifié par (mesure, tags, horodatage) et son horodatage est reconstitué
+    de façon déterministe depuis le fichier source (t0_ns + k*dt_ns) : le
+    réécrire produit exactement le même point.
+
+    Coût : un aller-retour HTTP synchrone vers InfluxDB par message consommé.
+    Compromis assumé — la correction des données prime sur le débit.
 
 Pourquoi un consommateur séparé du bridge ?
     - Indépendance : un futur consommateur "alertes" peut lire les mêmes
@@ -44,7 +72,7 @@ import time
 from datetime import datetime, timezone
 
 from influxdb_client import InfluxDBClient, WritePrecision
-from influxdb_client.client.write_api import WriteOptions
+from influxdb_client.client.write_api import SYNCHRONOUS
 from kafka import KafkaConsumer
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -410,57 +438,56 @@ CONSTRUCTEURS = {
 print("⏳ Connexion à InfluxDB...")
 influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
 
-# Compteurs d'écritures perdues (cf. _on_echec_ecriture).
-_nb_lots_perdus = 0
-_nb_lots_reessayes = 0
+# Écriture SYNCHRONE : write() lève une exception si InfluxDB n'a pas accusé
+# réception. Aucun rappel d'erreur n'est nécessaire — il n'y a plus de file
+# d'arrière-plan dans laquelle un lot pourrait disparaître (cf. docstring).
+write_api = influx_client.write_api(write_options=SYNCHRONOUS)
+
+# Nombre de tentatives d'écriture avant d'abandonner le processus. On ne saute
+# JAMAIS un lot : si InfluxDB reste injoignable, on sort en erreur sans avoir
+# validé l'offset, et Kafka rejouera les messages au redémarrage du pod.
+ECRITURE_MAX_TENTATIVES = int(os.getenv("ECRITURE_MAX_TENTATIVES", "5"))
+ECRITURE_DELAI_BASE = float(os.getenv("ECRITURE_DELAI_BASE", "2"))
+
+_nb_reessais_ecriture = 0
 
 
-def _on_echec_ecriture(conf, data, exception):
-    """Signaler un lot d'écriture définitivement perdu.
+def ecrire_ou_mourir(lignes: list[str]) -> None:
+    """Écrire un lot dans InfluxDB, en réessayant, sans jamais l'abandonner.
 
-    IMPORTANT : en mode batch asynchrone, le SDK InfluxDB réessaie
-    max_retries fois puis ABANDONNE le lot. Sans ce rappel, l'abandon est
-    totalement SILENCIEUX — le consumer continue, Kafka est commité, et les
-    points n'existent nulle part. Un import de 6 912 000 points le 07/08/2026
-    en a perdu 3 918 sans qu'aucune ligne de journal ne le signale ; c'est ce
-    trou d'observabilité qui a rendu la cause si difficile à identifier.
+    Contrat : soit la fonction rend la main et les points SONT écrits, soit
+    elle lève — et l'appelant ne doit alors pas valider l'offset Kafka. C'est
+    exactement ce qui rend la perte silencieuse impossible.
     """
-    global _nb_lots_perdus
-    _nb_lots_perdus += 1
-    apercu = data[:200] if isinstance(data, (str, bytes)) else str(data)[:200]
-    print(f"❌ ÉCRITURE INFLUXDB PERDUE ({exception}) — lot abandonné, "
-          f"cumul {_nb_lots_perdus}. Début du lot : {apercu!r}", flush=True)
+    global _nb_reessais_ecriture
+    for tentative in range(1, ECRITURE_MAX_TENTATIVES + 1):
+        try:
+            write_api.write(
+                bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=lignes,
+                write_precision=WritePrecision.NS,
+            )
+            return
+        except Exception as exc:
+            _nb_reessais_ecriture += 1
+            apercu = lignes[0][:180] if lignes else ""
+            print(
+                f"⚠️  Échec d'écriture InfluxDB (tentative "
+                f"{tentative}/{ECRITURE_MAX_TENTATIVES}) : {exc} — "
+                f"{len(lignes)} point(s), début du lot : {apercu!r}",
+                flush=True,
+            )
+            if tentative == ECRITURE_MAX_TENTATIVES:
+                print(
+                    "❌ ABANDON : InfluxDB refuse toujours l'écriture. Arrêt du "
+                    "consumer SANS validation de l'offset Kafka — les messages "
+                    "seront rejoués au redémarrage, aucun point n'est perdu.",
+                    flush=True,
+                )
+                raise
+            time.sleep(ECRITURE_DELAI_BASE * (2 ** (tentative - 1)))
 
 
-def _on_reessai_ecriture(conf, data, exception):
-    """Signaler un ré-essai (le lot n'est pas encore perdu, mais ça coince)."""
-    global _nb_lots_reessayes
-    _nb_lots_reessayes += 1
-    if _nb_lots_reessayes <= 5 or _nb_lots_reessayes % 50 == 0:
-        print(f"⚠️  Ré-essai d'écriture InfluxDB ({exception}) — "
-              f"cumul {_nb_lots_reessayes}.", flush=True)
-
-
-write_api = influx_client.write_api(
-    error_callback=_on_echec_ecriture,
-    retry_callback=_on_reessai_ecriture,
-    write_options=WriteOptions(
-        # Flush dès 5000 points accumulés ou toutes les 1 s. Relevé de 500 à
-        # 5000 le 07/08/2026 : à débit élevé (import massif de .dxd
-        # historiques, cf. logique_projet.md), des batches plus gros
-        # réduisent le nombre d'allers-retours HTTP vers InfluxDB pour le
-        # même volume de points — sans effet sur le débit normal (capteurs
-        # BLE, 1 msg/s), qui reste dominé par flush_interval.
-        batch_size=5_000,
-        flush_interval=1_000,
-        jitter_interval=0,
-        retry_interval=5_000,
-        max_retries=3,
-        max_retry_delay=30_000,
-        exponential_base=2,
-    )
-)
-print(f"✅ InfluxDB prêt ({INFLUX_URL})")
+print(f"✅ InfluxDB prêt ({INFLUX_URL}) — écriture SYNCHRONE")
 
 # ---------------------------------------------------------------------------
 # Initialisation consommateur Kafka.
@@ -484,7 +511,12 @@ def _connecter_consommateur_kafka() -> KafkaConsumer:
                 # earliest : reprendre depuis le début si ce consumer group est nouveau.
                 # Garantit qu'aucun message historique Kafka n'est perdu au démarrage.
                 auto_offset_reset="earliest",
-                enable_auto_commit=True,
+                # Validation MANUELLE : un offset n'est validé qu'après
+                # confirmation de l'écriture InfluxDB correspondante (cf.
+                # docstring). Avec enable_auto_commit=True, un offset pouvait
+                # être validé avant que ses points ne soient réellement
+                # écrits — les messages n'étaient alors jamais rejoués.
+                enable_auto_commit=False,
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             )
         except Exception as exc:
@@ -505,6 +537,15 @@ nb_ecrits = 0
 nb_au_dernier_log = 0
 dernier_log = time.time()
 
+# Cadence de validation des offsets Kafka (cf. boucle ci-dessous). Un commit
+# tous les 200 messages ou toutes les 5 s : assez fréquent pour qu'un incident
+# ne rejoue qu'un volume modeste, assez rare pour ne pas doubler le coût
+# réseau de chaque lot.
+COMMIT_TOUS_LES_N = int(os.getenv("COMMIT_TOUS_LES_N", "200"))
+COMMIT_INTERVAL = float(os.getenv("COMMIT_INTERVAL", "5"))
+messages_non_valides = 0
+dernier_commit = time.time()
+
 try:
     for message in consommateur:
         topic = message.topic
@@ -518,15 +559,33 @@ try:
         if not lignes:
             continue
 
-        # Liste (et non chaîne jointe par "\n") : le write_api en mode batch
-        # compte alors chaque LIGNE comme un enregistrement et déclenche son
-        # flush à batch_size lignes. Une chaîne jointe ne compterait que pour
-        # un seul enregistrement, si bien qu'un lot de 600 échantillons ferait
-        # gonfler la requête HTTP à 600 × batch_size points.
-        write_api.write(
-            bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=lignes,
-            write_precision=WritePrecision.NS,
-        )
+        # Écriture SYNCHRONE : au retour, les points SONT dans InfluxDB. Toute
+        # défaillance lève (après ré-essais) au lieu de disparaître en
+        # silence — c'est le cœur du correctif du 08/08/2026.
+        #
+        # Liste (et non chaîne jointe par "\n") : chaque LIGNE est un
+        # enregistrement distinct pour le SDK.
+        ecrire_ou_mourir(lignes)
+
+        # Compte des POINTS écrits, pas des messages Kafka : un message de lot
+        # en porte jusqu'à DXD_BATCH_SIZE, sinon le débit affiché serait
+        # divisé par la taille du lot.
+        nb_ecrits += len(lignes)
+        messages_non_valides += 1
+
+        maintenant = time.time()
+
+        # Validation Kafka APRÈS écriture confirmée, et seulement
+        # périodiquement : un commit() par message coûterait un aller-retour
+        # réseau supplémentaire à chaque lot. Retarder la validation n'expose
+        # qu'à un REJEU (messages déjà écrits rejoués après un incident), sans
+        # danger puisque l'écriture est idempotente — alors que l'anticiper
+        # exposerait à une PERTE, ce qu'on refuse.
+        if (messages_non_valides >= COMMIT_TOUS_LES_N
+                or maintenant - dernier_commit >= COMMIT_INTERVAL):
+            consommateur.commit()
+            messages_non_valides = 0
+            dernier_commit = maintenant
 
         # Récapitulatif périodique — surtout PAS un print par message : les
         # images tournent avec "python -u", donc chaque print est un appel
@@ -534,41 +593,13 @@ try:
         # massif de .dxd historiques (10 Hz × 8 canaux/fichier), cela
         # bloquait la boucle de consommation Kafka. Même correction que dans
         # bridge_mqtt_to_kafka.py (cf. logique_projet.md, 06/08/2026).
-        # ---------------------------------------------------------------
-        # LIMITE CONNUE (07/08/2026) — livraison « au plus une fois ».
-        #
-        # enable_auto_commit=True valide les offsets Kafka périodiquement,
-        # tandis que write_api écrit dans InfluxDB de façon ASYNCHRONE. Un
-        # offset peut donc être commité avant que ses points ne soient
-        # réellement écrits : si le pod meurt (ou perd ses partitions lors
-        # d'un rééquilibrage de groupe, par ex. quand le HPA ajoute un
-        # replica) entre les deux, les points encore en tampon sont perdus
-        # sans être rejoués.
-        #
-        # Observé : un import de 2 fichiers (6 912 000 points) s'est terminé
-        # à 6 908 082 points, soit 3 918 manquants (0,057 %), alors que le
-        # bridge affichait 0 erreur et que le lag Kafka était nul. Le rejeu
-        # contrôlé d'UN fichier, consumer fraîchement redémarré, a en
-        # revanche donné 3 456 000/3 456 000 points, soit exactement
-        # 432 000 par canal — la cause exacte du premier écart n'est donc
-        # PAS établie. Le rappel d'erreur ci-dessus (_on_echec_ecriture)
-        # rendra visible toute perte d'écriture future.
-        #
-        # Correctif de fond si la garantie « au moins une fois » devient
-        # nécessaire : enable_auto_commit=False, puis write_api.flush()
-        # suivi d'un commit() explicite. Coût : un aller-retour synchrone
-        # vers InfluxDB par lot consommé.
-        # ---------------------------------------------------------------
-        # Compte des POINTS écrits, pas des messages Kafka : un message de lot
-        # en porte jusqu'à DXD_BATCH_SIZE, sinon le débit affiché serait
-        # divisé par la taille du lot.
-        nb_ecrits += len(lignes)
-        maintenant = time.time()
         if maintenant - dernier_log >= LOG_INTERVAL:
             delta = nb_ecrits - nb_au_dernier_log
             print(
                 f"💾 {delta} point(s) écrit(s) en {maintenant - dernier_log:.0f}s "
-                f"({delta / (maintenant - dernier_log):.0f}/s) — cumul {nb_ecrits}",
+                f"({delta / (maintenant - dernier_log):.0f}/s) — cumul {nb_ecrits}"
+                + (f" — {_nb_reessais_ecriture} ré-essai(s) d'écriture"
+                   if _nb_reessais_ecriture else ""),
                 flush=True,
             )
             dernier_log = maintenant
@@ -576,8 +607,22 @@ try:
 
 except KeyboardInterrupt:
     print("\n🛑 Arrêt demandé.")
+    # Arrêt propre : tout ce qui est écrit l'est réellement (mode synchrone),
+    # on peut donc valider les offsets correspondants sans risque.
+    try:
+        consommateur.commit()
+        print("✅ Offsets Kafka validés avant l'arrêt.")
+    except Exception as exc:
+        print(f"⚠️  Validation finale des offsets impossible ({exc}) — "
+              "les derniers messages seront rejoués (sans perte).")
 finally:
+    # Surtout PAS de commit() ici : ce bloc s'exécute aussi quand
+    # ecrire_ou_mourir() a levé. Valider à cet instant reviendrait à déclarer
+    # écrits des points qui ne le sont pas — précisément la perte qu'on
+    # cherche à rendre impossible. Sans validation, Kafka les rejouera.
     write_api.close()
     influx_client.close()
     consommateur.close()
-    print("👋 Consommateur Kafka → InfluxDB arrêté.")
+    print(f"👋 Consommateur Kafka → InfluxDB arrêté. "
+          f"{nb_ecrits} point(s) écrit(s), "
+          f"{_nb_reessais_ecriture} ré-essai(s) d'écriture.")
