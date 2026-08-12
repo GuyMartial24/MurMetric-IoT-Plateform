@@ -1889,6 +1889,229 @@ pour de vrais clients distants — probablement déjà fait pour 1883/3000/8086
 lors du déploiement docker-compose initial, mais 8883 est un port
 supplémentaire, pas automatiquement couvert.
 
+## 29. Backfill HR/T — import des exports historiques BlueMaestro (11/08/2026)
+
+Objectif : faire entrer en base l'historique des 59 capteurs BlueMaestro déjà
+embarqués dans les deux maquettes (`data_HR_T/T et HR/`, ~14 mois d'export,
+un dossier par relevé terrain), avant que le Raspberry Pi ne prenne le relais
+en continu (section 31). Contrairement au retrait (fichiers `.dxd` traités
+au fil de l'eau), ce backfill est un import ponctuel — script rejouable mais
+pas destiné à tourner en continu.
+
+### Source des données et pièges trouvés
+
+- **Format des exports** : deux variantes selon la date/l'exportateur — un
+  format ancien sans en-tête (24/12/2025 uniquement), et un format récent
+  avec en-tête (`Device MAC`, `Number of Logs`, `Start/End Date`...). Parmi
+  les exports récents, **un lot entier** (43 fichiers du 08/01/2026, exporté
+  par une personne différente — `achrafcharaka@gmail.com` vs
+  `bourbiasofiane@batlab.fr` dans les autres lots) utilise **`;` comme
+  séparateur et `,` comme décimale** (paramètres régionaux Excel FR) au lieu
+  du format standard — un `csv.reader` réglé sur `,` ignore silencieusement
+  tout le fichier (une seule "colonne" par ligne). Détection automatique du
+  délimiteur ajoutée (`backfill_hr_t.py`), sur la ligne d'en-tête de données
+  plutôt qu'un séparateur fixe.
+- **Exports cumulatifs, pas incrémentaux** : chaque prélèvement contient déjà
+  tout l'historique du logger depuis son `Start Date` d'origine — vérifié
+  empiriquement sur plusieurs capteurs (le `Number of Logs` grandit, le
+  `Start Date` ne bouge pas). Le backfill n'utilise donc que **le prélèvement
+  le plus récent disponible par capteur**, jamais un cumul de plusieurs
+  fichiers — le plus récent est un sur-ensemble strict des précédents pour ce
+  capteur.
+- **Historique antérieur à l'installation en paroi** : certains loggers
+  contiennent des mesures dès mai 2025 (test/calibration avant pose), bien
+  avant le début de campagne documenté (01/12/2025). Filtrées via
+  `HR_T_DATE_DEBUT` (01/12/2025 par défaut) — seuil global approximatif, pas
+  une date d'installation par position ; à affiner si une source plus
+  précise existe.
+- **Mapping capteur → mur/couche/position** : reconstruit depuis la feuille
+  "Répartition ds les 2 maquettes" du classeur `Identification des capteurs
+  bluemaestro.xlsx` (colonnes B/F, primaires — un numéro = une position, non
+  ambigu), **étendu aux capteurs 60-75** (positions ajoutées ~30/03/2026,
+  lignes 39-47 de la même feuille). Les colonnes A/E de cette feuille
+  (candidats de remplacement suite à pile déchargée) sont **volontairement
+  non résolues automatiquement** : plusieurs numéros y apparaissent comme
+  candidat pour plusieurs positions différentes selon la ligne, sans date de
+  bascule associée — un capteur de remplacement garde donc son mapping
+  primaire, jamais celui d'une position qu'il aurait pu remplacer
+  temporairement. Un futur repli sur ce mapping n'est envisageable qu'avec
+  une source de dates de remplacement fiable (la personne ayant tenu ce
+  classeur, ou reconstruction empirique par croisement des fenêtres de
+  collecte CSV).
+- **Nomenclature du mur** : le classeur "Répartition" nomme les deux
+  maquettes "Maquette 1"/"Maquette 2" (par taille de granulat), sans lien
+  direct visible avec les noms `SOCMA 1`/`SOCMA 2` du retrait
+  (`capteurs_retrait.json`). Résolu par recoupement des canaux DeweSoft sur
+  le schéma `Dessin des deux maquettes.pptx` : le bloc dessiné en premier
+  ("SOCMA 2" sur ce schéma) porte les canaux `VA1/VA2/HA1/HA2`, qui sont
+  formellement `SOCMA 1` dans `capteurs_retrait.json` — confirmation que
+  "Maquette 1" = `SOCMA 1`, "Maquette 2" = `SOCMA 2` (validé par
+  l'utilisateur). Retenu explicitement, pour permettre de croiser retrait et
+  HR/T sur `nom_mur` sans traduction supplémentaire.
+
+### Identité provisoire des capteurs
+
+Les 59 capteurs de maquette n'ont **jamais été vus par un scan BLE réel** —
+seuls les 4 premiers octets de leur MAC sont connus (hexID des exports
+BlueMaestro, ex. `EFF1F80F`), confirmés par un test physique (étiquette
+capteur + plateforme BlueMaestro) comme étant exactement les 4 premiers
+octets de la vraie MAC 6 octets, jamais les 2 derniers. `capteurs.json`
+accepte donc une **clé provisoire à 8 caractères hex, sans `:`** (regex
+dédiée, distincte du format MAC réel — aucune confusion possible), marquée
+`mac_complete_connue: false`. Chaque point InfluxDB backfillé porte en plus
+un field `mac_complete_connue=false` pour retrouver facilement, une fois le
+Raspberry Pi déployé (section 31), tout ce qui reste à réconcilier — les 4
+premiers octets étant déjà connus, la correspondance sera immédiate.
+
+**Conséquence assumée** : la clé provisoire devient le tag `adresse_mac` en
+InfluxDB. Réconcilier avec la vraie MAC plus tard ne corrigera pas
+automatiquement les points déjà écrits (les tags sont figés à l'écriture) —
+une migration ciblée (suppression par `adresse_mac=<hexID>` + réécriture)
+sera nécessaire à ce moment-là. Accepté : `nom_mur`/`nom_couche`/`position`
+(les tags qui comptent pour l'usage réel — Grafana, croisement avec le
+retrait) sont corrects dès l'écriture et ne dépendent pas de cette identité
+technique.
+
+### Schéma InfluxDB — `mesures_capteurs` enrichi
+
+Décision alignée sur le retrait : `mesures_capteurs` porte désormais
+`nom_mur`/`nom_couche`/`position`/`rd` **directement en tags**, comme
+`mesures_dewesoft`, plutôt que de n'avoir que `adresse_mac`/`emplacement`/
+`nom_capteur` et nécessiter une jointure sur `registre_capteurs`. Implique
+de propager ces champs depuis `capteurs.json` jusqu'au payload MQTT publié
+par `ingestion_capteurs_bluetooth.py` (pas seulement le backfill) —
+`construire_point_capteurs()` (`kafka_consumer_influx.py`) mis à jour en
+conséquence, pour que backfill et flux live du Raspberry Pi produisent des
+points strictement compatibles.
+
+### Exécution
+
+Écriture **directe** en InfluxDB (line protocol, réutilisant la même
+structure de tags que `construire_point_capteurs()`), **sans passer par
+MQTT/Kafka** : ~45 000 points contre 1,5 milliard pour le retrait, la
+chaîne de résilience MQTT→Kafka (pensée pour un flux continu distant et un
+volume massif) n'apporte rien pour un import ponctuel depuis des fichiers
+déjà sur disque. `backfill_hr_t.py` : dry-run par défaut (aperçu complet,
+rien n'est écrit), `--confirmer` pour l'écriture réelle. Contournement
+technique retenu pour l'écriture depuis un poste hors du cluster : le pod
+InfluxDB n'a pas `socat` (`kubectl port-forward` impossible) — génération du
+fichier line-protocol en local, transfert par `kubectl cp`, chargement via
+`influx write` exécuté dans le pod.
+
+**Résultat (11/08/2026)** : 45 132 lignes générées, 45 098 points uniques
+écrits (34 doublons exacts mesure+tags+timestamp déjà présents dans les CSV
+sources — comportement attendu d'InfluxDB, pas une perte). Fenêtre réelle
+01/12/2025 → 10/07/2026. Vérifié par relecture directe de plusieurs points
+(valeurs cohérentes avec l'aperçu pré-écriture) et par une lecture agrégée
+(températures moyennes plausibles par mur/position/couche, y compris un
+écart physique cohérent entre les deux maquettes à l'interface extérieure).
+
+## 30. Support multi-marques BLE — ELA Innovation (11/08/2026)
+
+Un second modèle de capteur température/humidité entre dans le parc, en plus
+du Blue Maestro Disc Maxi : **ELA Innovation Blue Puck RHT** (réf.
+IDF25242-CC, pile 3V, jusqu'à 18 ans d'autonomie annoncée, IP65). Protocole
+entièrement différent — nécessite un second décodeur, pas une simple
+variante du premier.
+
+### Protocole (source : ELA Innovation, "BLE Frame specifications" v12B)
+
+- **Company ID Bluetooth SIG : `0x0757`** (vs `0x0133` pour Blue Maestro).
+- **Deux modes d'annonce possibles**, tous deux gérés sans configuration NFC
+  préalable requise :
+  - **"Service Data"** (mode usine par défaut, confirmé par test physique
+    sur l'exemplaire réel) : deux blocs `service_data` distincts, sur les
+    UUID caractéristiques Bluetooth SIG standard température (`0x2A6E`,
+    int16 little-endian ×0,01°C signé) et humidité (`0x2A6F`, uint8 %).
+  - **"Manufacturer Specific Data"** (à activer explicitement via l'outil
+    NFC ELA) : après le company ID, un octet `RHT_DATA_ID` (`0x21`,
+    identifie une trame RHT — les autres formats ELA, ID/T seul/MAG/MOV...,
+    ont un octet différent et sont ignorés), l'humidité (1 octet %), un
+    octet `TEMP_DATA_ID` (`0x12`), puis la température (int16 LE ×0,01°C
+    signé).
+- Validé contre l'exemple officiel de la documentation ELA (27,44°C, 48% HR)
+  **et** contre le capteur physique réel (`ingestion_capteurs_bluetooth.py`
+  détecte "P RHT 9078CF" en mode Service Data, valeurs stables et
+  plausibles sur plusieurs lectures).
+
+### Intégration dans `ingestion_capteurs_bluetooth.py`
+
+Le callback BLE essaie les décodeurs dans l'ordre (Blue Maestro via
+`manufacturer_data[0x0133]`, puis ELA via `manufacturer_data[0x0757]`, puis
+ELA via `service_data`) ; le premier qui reconnaît le paquet gagne. Le reste
+du pipeline (`capteurs.json`, MQTT, Kafka, InfluxDB) ne change pas — un
+capteur ELA est traité comme n'importe quel autre une fois décodé.
+
+**Nouveau champ `famille_capteur`** (`"bluemaestro"`/`"ela"`, déterminé
+automatiquement à l'auto-enregistrement) : la tâche de reconfiguration GATT
+périodique (section 11) ne concerne que Blue Maestro (`setlog~`/`*lint`,
+protocole Nordic UART) — le Blue Puck RHT se configure par NFC, pas par
+GATT. Sans ce marquage, un capteur ELA apparaîtrait indéfiniment "non
+configuré" (`lint_configure` n'a pas de sens pour lui) et déclencherait un
+scan + pause de l'ingestion à chaque cycle (6h par défaut) pour rien. Absent
+sur une entrée existante = traité comme `"bluemaestro"` (rétrocompatible).
+
+**Bug latent corrigé au passage** : `capteurs.json` portait un BOM UTF-8
+(origine antérieure à cette session) — les 3 points de lecture du fichier
+dans `ingestion_capteurs_bluetooth.py` ouvraient en `utf-8` strict, qui
+plante sur un BOM (`JSONDecodeError`), invalidant silencieusement le
+hot-reload jusqu'à la prochaine écriture par le script lui-même. Lecture
+passée en `utf-8-sig` (tolère BOM et absence de BOM).
+
+## 31. Déploiement Raspberry Pi 5 — `murmetric_pi5` (12/08/2026)
+
+Premier déploiement réel d'un Raspberry Pi pour l'ingestion BLE, avant
+installation définitive à Amiens. Setup effectué à distance (le Pi restant
+sur HDMI/sans clavier physique) :
+
+- **Flashage headless** : carte micro-SD (connectée en USB, pas de lecteur
+  SD natif sur le poste de flashage) via Raspberry Pi Imager, OS
+  Customisation pré-configurée (hostname `murmetric-pi5`, Wi-Fi, SSH par mot
+  de passe activé) — le Pi démarre déjà joignable en SSH, sans jamais
+  brancher clavier/écran dessus.
+- **Tailscale installé**, rejoint le même tailnet que `pc-blaidoudi` (PC
+  Amiens) et le VPS — accès à distance conservé indépendamment du réseau
+  physique une fois le Pi déplacé à Amiens (IP Tailscale fixe,
+  `100.101.220.39`).
+- **Projet dans `/home/murmetric/murmetric_pi5/`** avec un `.venv` dédié
+  (`bleak`, `paho-mqtt`) — les scripts eux-mêmes restent versionnés à la
+  racine du dépôt (comme pour le PC Windows Amiens), ce dossier n'est qu'un
+  emplacement de déploiement, pas une restructuration du dépôt.
+- **Antenne BLE USB externe** (StarTech, portée mesurée nettement supérieure
+  au Bluetooth intégré du Pi5 — RSSI -22 à -28 dBm vs signal plus faible en
+  interne sur les mêmes capteurs) : détectée sous `hci1`, mais **RF-kill
+  logiciel actif par défaut** (`rfkill unblock` + `hciconfig hci1 up`
+  nécessaires). `BLE_ADAPTER` (nouvelle variable d'environnement,
+  `ingestion_capteurs_bluetooth.py` et `configure_capteurs.py`) cible `hci1`
+  en priorité, avec **repli automatique** sur l'adaptateur par défaut
+  (`demarrer_scanner_avec_repli()`) si l'antenne externe devient
+  indisponible — sans effet sur Windows où le paramètre est ignoré par le
+  backend WinRT.
+- **Identifiants MQTT réutilisés depuis le PC Amiens** (`lancer_ingestion_dewesoft.bat`,
+  même broker, même compte `murmetric`) plutôt que recréés — `lancer_ingestion_capteurs.sh`
+  (gitignored comme le `.bat`, un `.example` versionné à la place) exporte
+  les mêmes variables avant de lancer `start.py`.
+- **Point d'entrée** : `start.py` (déjà existant, section 10) plutôt qu'un
+  appel direct à `ingestion_capteurs_bluetooth.py` — préserve la phase 1
+  (configuration GATT initiale bloquante) déjà conçue pour ce script, non
+  utilisée si on avait démarré l'ingestion directement.
+- **Service systemd** (`murmetric-capteurs.service`) : `Restart=always`,
+  `StartLimitIntervalSec=0` (pas de limite de redémarrages, contrairement au
+  défaut systemd de 5 échecs/10s), activé au démarrage. Logs via
+  `journalctl -u murmetric-capteurs` — pas de fichier de log manuel
+  (contrairement à Windows, où Task Scheduler n'a pas d'équivalent à
+  journald). Un seul service suffit : la reconfiguration GATT périodique
+  (`configure_capteurs.py`) est déjà appelée en tâche de fond par
+  `ingestion_capteurs_bluetooth.py` lui-même (section 11), pas besoin d'une
+  unité séparée.
+- **Validé de bout en bout** : capteur ELA physique détecté et auto-enregistré
+  (`famille_capteur: "ela"` correctement appliqué), 2 capteurs Blue Maestro
+  déjà actifs décodés et publiés vers MQTT cloud → InfluxDB en conditions
+  réelles pendant les tests. Ces 2 capteurs de test (Ateliers Troyes/Amiens,
+  sans rapport avec les maquettes HR/T) désactivés (`ingestion: false`) et
+  leurs points de test supprimés d'InfluxDB une fois la validation terminée,
+  pour ne pas polluer la base avec du bruit de test.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
