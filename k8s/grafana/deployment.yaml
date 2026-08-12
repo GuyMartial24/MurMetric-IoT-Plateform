@@ -47,11 +47,27 @@ spec:
                 secretKeyRef:
                   name: murmetric-secrets
                   key: influx-token
+            # Embedding + accès anonyme lecture seule — nécessaires pour
+            # afficher un dashboard en iframe dans murmetric-webapp sans
+            # écran de connexion (décision utilisateur du 12/08/2026, cf.
+            # logique_projet.md section 32). Le rôle Viewer ne donne accès
+            # ni à l'admin ni aux identifiants de datasource, seulement aux
+            # panels des dashboards déjà provisionnés.
+            - name: GF_SECURITY_ALLOW_EMBEDDING
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
           volumeMounts:
             - name: grafana-data
               mountPath: /var/lib/grafana
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
       volumes:
         - name: grafana-data
           persistentVolumeClaim:
@@ -59,3 +75,9 @@ spec:
         - name: datasources
           configMap:
             name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
