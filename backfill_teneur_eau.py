@@ -136,7 +136,12 @@ def lire_mesures():
             v = ws.cell(row=r, column=c).value
             if v is None:
                 continue
-            yield dates[c], mur, couche, round(v * 100, 3)
+            # Valeurs brutes du classeur = résultat d'une formule (masse
+            # humide/sèche ou équivalent), longue traîne décimale sans sens
+            # physique au-delà de la précision réelle d'un relevé Protimeter.
+            # Arrondi à 2 décimales — même granularité que le format de
+            # saisie prévu pour l'appli (logique_projet.md section 16).
+            yield dates[c], mur, couche, round(v * 100, 2)
 
     if non_reconnues:
         print(f"  ⚠️  Lignes ignorées (libellé non reconnu) : {non_reconnues}")
