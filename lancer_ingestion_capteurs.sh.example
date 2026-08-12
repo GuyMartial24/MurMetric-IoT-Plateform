@@ -1,0 +1,31 @@
+#!/bin/bash
+# Lanceur d'ingestion capteurs BLE — Raspberry Pi, MurMetric/FRD-CODEM.
+#
+# Copier ce fichier en "lancer_ingestion_capteurs.sh" (sans .example) dans le
+# meme dossier que start.py, le rendre executable (chmod +x), puis completer
+# MQTT_BROKER, MQTT_USERNAME et MQTT_PASSWORD ci-dessous (memes valeurs que
+# lancer_ingestion_dewesoft.bat.example cote PC Windows Amiens — meme broker,
+# meme compte MQTT, recuperables via :
+#   ssh -i <chemin_cle> ubuntu@<IP_VPS_ORACLE> "grep MQTT_ ~/Projets_en_Production/murmetric/.env"
+# ). Le fichier rempli contient un mot de passe reel : ne jamais le partager
+# ni le versionner (deja exclu par .gitignore). murmetric_mosquitto_ca.pem
+# (a recuperer depuis le PC Amiens ou le secret k8s mosquitto-tls) doit etre
+# copie a cote de ce script.
+
+set -a
+MQTT_BROKER=<IP_VPS_ORACLE>
+MQTT_PORT=8883
+MQTT_TLS_ENABLED=true
+MQTT_CA_CERT="$(dirname "$0")/murmetric_mosquitto_ca.pem"
+
+MQTT_USERNAME=A_COMPLETER
+MQTT_PASSWORD=A_COMPLETER
+
+# hci1 = antenne USB externe (si presente), repli automatique sur hci0
+# (Bluetooth integre) si absente/indisponible — cf. demarrer_scanner_avec_repli()
+# dans ingestion_capteurs_bluetooth.py. Ajuster si la numerotation differe.
+BLE_ADAPTER=hci1
+set +a
+
+cd "$(dirname "$0")"
+exec python3 -u start.py

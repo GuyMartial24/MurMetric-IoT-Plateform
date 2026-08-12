@@ -27,6 +27,8 @@ certs/*.pem
 certs/*.key
 certs/*.crt
 lancer_ingestion_dewesoft.bat
+lancer_ingestion_capteurs.sh
+murmetric_mosquitto_ca.pem
 
 # Dossier virtuel Python
 .venv/
