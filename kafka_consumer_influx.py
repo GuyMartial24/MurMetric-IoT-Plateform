@@ -62,7 +62,7 @@ Usage :
         INFLUX_URL        URL InfluxDB               (défaut : http://localhost:8086)
         INFLUX_TOKEN      Token API InfluxDB
         INFLUX_ORG        Organisation InfluxDB      (défaut : FRD_CODEM)
-        INFLUX_BUCKET     Bucket de destination      (défaut : Capteurs)
+        INFLUX_BUCKET     Bucket de destination      (défaut : Test_Capteurs)
 """
 
 import json
@@ -90,7 +90,7 @@ TENANT_ID = os.getenv("TENANT_ID", "frd")
 INFLUX_URL = os.getenv("INFLUX_URL", "http://localhost:8086")
 INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "MON_TOKEN_API_GENERE_PAR_INFLUXDB")
 INFLUX_ORG = os.getenv("INFLUX_ORG", "FRD_CODEM")
-INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "Capteurs")
+INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "Test_Capteurs")
 
 # Période du récapitulatif d'écriture, en secondes (cf. boucle de consommation).
 LOG_INTERVAL = float(os.getenv("LOG_INTERVAL", "10"))

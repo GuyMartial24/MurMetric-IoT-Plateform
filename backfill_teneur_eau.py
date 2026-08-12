@@ -45,7 +45,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 INFLUX_URL = os.getenv("INFLUX_URL", "http://localhost:8086")
 INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "MON_TOKEN_API_GENERE_PAR_INFLUXDB")
 INFLUX_ORG = os.getenv("INFLUX_ORG", "FRD_CODEM")
-INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "Capteurs")
+INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "Test_Capteurs")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TENEUR_EAU_SOURCE = os.getenv(
