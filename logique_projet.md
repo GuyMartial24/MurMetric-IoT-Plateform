@@ -699,6 +699,36 @@ côté serveur depuis la session authentifiée, **jamais** acceptés tels quels
 depuis un champ du formulaire — sinon un utilisateur pourrait soumettre une
 mesure au nom d'un autre.
 
+### Correction d'une saisie existante (conception, 12/08/2026)
+
+Question posée : l'utilisateur doit pouvoir corriger une saisie déjà en
+base (erreur de frappe sur la valeur, mauvaise paroi/couche sélectionnée,
+mauvaise date). InfluxDB ne s'y prête pas de la même façon selon ce qui
+change :
+
+- **Corriger un field** (`teneur_eau_pourcent`, `commentaire`) : trivial —
+  réécrire un point avec exactement la même mesure/tags/timestamp mais une
+  valeur de field différente **remplace** l'ancienne (dernière écriture
+  gagne). Une simple écriture suffit, pas de suppression nécessaire.
+- **Corriger un tag** (`mur`, `couche`) **ou la date** (`date_mesure`,
+  devient `_time`) : un tag et le timestamp font partie de l'**identité**
+  du point — les changer ne "renomme" rien, ça **crée un point distinct**,
+  l'ancien reste orphelin à côté. Nécessite un **delete + réécriture**
+  (suppression par prédicat exact sur les anciens tags/timestamp, puis
+  écriture du point corrigé) — même mécanisme que la réconciliation MAC du
+  backfill HR/T (section 29), pas une UPDATE au sens SQL.
+
+**Conséquence pour le formulaire d'édition** : contrairement à une base
+relationnelle avec un ID auto-incrémenté, il n'existe pas d'identifiant
+unique de ligne dans InfluxDB. Le formulaire d'édition doit connaître le
+**triplet exact (mur, couche, date_mesure)** du point visé pour pouvoir le
+cibler précisément lors d'une correction de tag/date — ce triplet doit donc
+rester unique (pas deux saisies pour le même mur+couche+date_mesure) et
+être conservé côté frontend entre l'affichage et la soumission de la
+correction. Non implémenté à ce stade — conception uniquement, la saisie
+initiale (section précédente) reste la seule brique déjà spécifiée pour la
+production.
+
 ### Conséquence sur l'abaque 3D
 
 La teneur en eau est un flux **épars** (quelques points par mur), alors que
