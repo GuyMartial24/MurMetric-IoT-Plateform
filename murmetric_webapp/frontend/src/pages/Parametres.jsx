@@ -2,10 +2,17 @@ import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { auth } from "../auth.js";
 
+function joursRestants(dateISO) {
+  if (!dateISO) return null;
+  const diff = new Date(dateISO).getTime() - Date.now();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
 function ParametresGroq() {
   const [modele, setModele] = useState("");
   const [cleActuelle, setCleActuelle] = useState("");
   const [nouvelleCle, setNouvelleCle] = useState("");
+  const [expiration, setExpiration] = useState("");
   const [erreur, setErreur] = useState(null);
   const [message, setMessage] = useState(null);
   const [enCours, setEnCours] = useState(false);
@@ -15,6 +22,7 @@ function ParametresGroq() {
       const p = await api.lireParametres();
       setCleActuelle(p.groq_api_key_masque);
       setModele(p.groq_model);
+      setExpiration(p.groq_api_key_expiration || "");
     } catch (e) {
       setErreur(e.message);
     }
@@ -30,7 +38,11 @@ function ParametresGroq() {
     setErreur(null);
     setMessage(null);
     try {
-      await api.modifierParametres({ groq_api_key: nouvelleCle || null, groq_model: modele || null });
+      await api.modifierParametres({
+        groq_api_key: nouvelleCle || null,
+        groq_model: modele || null,
+        groq_api_key_expiration: expiration || null,
+      });
       setNouvelleCle("");
       setMessage("Paramètres enregistrés.");
       await charger();
@@ -41,9 +53,11 @@ function ParametresGroq() {
     }
   };
 
+  const restants = joursRestants(expiration);
+
   return (
     <div className="carte">
-      <h2>Assistant IA (Groq)</h2>
+      <h2>Identifiants API — Assistant IA (Groq)</h2>
       <form onSubmit={enregistrer}>
         <div className="champ">
           <label>Clé API actuelle</label>
@@ -57,6 +71,15 @@ function ParametresGroq() {
           <label>Modèle</label>
           <input value={modele} onChange={(e) => setModele(e.target.value)} placeholder="llama-3.3-70b-versatile" />
         </div>
+        <div className="champ">
+          <label>Date d'expiration de la clé (informative — saisie manuelle)</label>
+          <input type="date" value={expiration} onChange={(e) => setExpiration(e.target.value)} />
+        </div>
+        {restants != null && (
+          <p style={{ color: restants < 30 ? "#ff8080" : "#a0a6b5" }}>
+            {restants >= 0 ? `Expire dans ${restants} jour(s).` : `Expirée depuis ${-restants} jour(s) — pense à la renouveler.`}
+          </p>
+        )}
         {erreur && <p className="erreur">{erreur}</p>}
         {message && <p>{message}</p>}
         <button type="submit" disabled={enCours}>{enCours ? "Enregistrement..." : "Enregistrer"}</button>

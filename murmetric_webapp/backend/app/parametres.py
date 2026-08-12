@@ -33,13 +33,22 @@ def obtenir_modele_groq() -> str:
     return _lire().get("groq_model") or config.GROQ_MODEL
 
 
-def definir_parametres_groq(cle_api: str | None, modele: str | None) -> None:
+def obtenir_expiration_groq() -> str | None:
+    """Date d'expiration de la clé — informative seulement, InfluxDB/Groq
+    ne fournissent pas cette information via API, saisie manuelle par
+    l'utilisateur (ex. 11/08/2027 pour la clé fournie le 12/08/2026)."""
+    return _lire().get("groq_api_key_expiration")
+
+
+def definir_parametres_groq(cle_api: str | None, modele: str | None, expiration: str | None) -> None:
     with _verrou:
         parametres = _lire()
         if cle_api:
             parametres["groq_api_key"] = cle_api
         if modele:
             parametres["groq_model"] = modele
+        if expiration:
+            parametres["groq_api_key_expiration"] = expiration
         _ecrire(parametres)
 
 
