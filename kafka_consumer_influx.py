@@ -155,10 +155,20 @@ def construire_point_capteurs(data: dict) -> str | None:
     # Tags dans l'ordre alphabétique — le SDK Point() les triait ainsi ;
     # écrire l'ordre en dur ici ne coûte rien à l'exécution (pas de tri
     # réel) et évite au serveur InfluxDB ce travail à l'écriture.
+    #
+    # nom_couche/nom_mur/position/rd (07/08/2026, cf. backfill HR/T) : ajoutés
+    # directement sur mesures_capteurs, comme mesures_dewesoft — évite une
+    # jointure sur registre_capteurs pour savoir dans quel mur/couche/position
+    # se trouve un capteur BLE embarqué. Absents du payload (capteur BLE
+    # ambiant, non embarqué dans une paroi) : "Non défini", comme le retrait.
     tags = (
         f"adresse_mac={_echap_tag(str(data.get('mac', 'inconnu')))},"
         f"emplacement={_echap_tag(str(data.get('emplacement') or 'Non défini'))},"
-        f"nom_capteur={_echap_tag(str(data.get('capteur_id', 'Inconnu')))}"
+        f"nom_capteur={_echap_tag(str(data.get('capteur_id', 'Inconnu')))},"
+        f"nom_couche={_echap_tag(str(data.get('nom_couche') or 'Non défini'))},"
+        f"nom_mur={_echap_tag(str(data.get('nom_mur') or 'Non défini'))},"
+        f"position={_echap_tag(str(data.get('position') or 'Non défini'))},"
+        f"rd={_echap_tag(str(data.get('categorie R&D') or 'Non défini'))}"
     )
     fields = f"temperature={float(temperature)},humidite={float(humidite)}"
 
