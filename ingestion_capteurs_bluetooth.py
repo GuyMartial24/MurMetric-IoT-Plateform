@@ -1,8 +1,17 @@
 ﻿"""
-Ingestion continue des capteurs BLE Blue Maestro — MurMetric / FRD-CODEM.
+Ingestion continue des capteurs BLE — MurMetric / FRD-CODEM.
+
+Deux familles de capteurs reconnues (11/08/2026) :
+- Blue Maestro (Disc Maxi/Mini, company ID 0x0133).
+- ELA Innovation (Blue Puck RHT, company ID 0x0757) — modes "Manufacturer
+  Specific Data" et "Service Data" (défaut usine) tous deux gérés, cf.
+  _decoder_ela_manufacturer()/_decoder_ela_service() et logique_projet.md.
+Chaque paquet BLE est essayé contre les décodeurs de chaque famille tour à
+tour ; le reste du pipeline (capteurs.json, MQTT, Kafka, InfluxDB) est
+identique quelle que soit la marque du capteur physique.
 
 Ce module réalise quatre fonctions principales :
-1. Scanner en permanence les paquets BLE advertising des capteurs Blue Maestro.
+1. Scanner en permanence les paquets BLE advertising des capteurs reconnus.
 2. Décoder les mesures (température, humidité, point de rosée, batterie, RSSI,
    intervalle de log) et les publier sur le broker MQTT cloud (VPS).
 3. En cas d'indisponibilité du MQTT cloud (VPS down, service MQTT down, perte
@@ -121,6 +130,15 @@ _sync_event: asyncio.Event | None = None
 # du dict manufacturer_data — filtre automatique sans liste de MAC.
 BLUEMAESTRO_COMPANY_ID = 0x0133
 
+# Adaptateur BLE à utiliser en priorité (Linux/BlueZ uniquement — ignoré sur
+# Windows où bleak sélectionne l'unique radio disponible sans configuration).
+# Défaut "hci1" : sur le Raspberry Pi de déploiement, hci0 = Bluetooth intégré,
+# hci1 = antenne USB externe (portée nettement supérieure, mesurée). Repli
+# automatique sur l'adaptateur par défaut si hci1 est indisponible — cf.
+# demarrer_scanner_avec_repli(). Surchargeable via variable d'environnement
+# si la numérotation diffère sur une autre machine.
+BLE_ADAPTER = os.getenv("BLE_ADAPTER", "hci1")
+
 # Versions du protocole Blue Maestro supportées par ce script.
 VERSIONS_CONNUES = {13, 23, 27, 41, 42, 43}
 
@@ -130,6 +148,30 @@ VERSIONS_CONNUES = {13, 23, 27, 41, 42, 43}
 RSSI_MIN_VALIDE = -100
 
 # ---------------------------------------------------------------------------
+# Constantes protocole BLE ELA Innovation (Blue Puck RHT — 09/08/2026).
+#
+# Source : ELA Innovation, "BLE Frame specifications" v12B (elainnovation.com),
+# section 6.e "RHT format". Deux modes d'annonce possibles selon la
+# configuration NFC du capteur (Blue Puck RHT, réf. IDF25242) :
+#   - "Service Data" (mode usine par défaut, aucune configuration requise) :
+#     deux blocs Service Data distincts, sur les UUID caractéristiques
+#     Bluetooth SIG standard température (0x2A6E) et humidité (0x2A6F).
+#   - "Manufacturer Specific Data" (à activer explicitement via l'outil NFC
+#     ELA — "Mfr. Data Enable" = True) : company ID ELA suivi d'un octet
+#     RHT_DATA_ID, de l'humidité, d'un octet TEMP_DATA_ID, puis de la
+#     température.
+# Les deux sont gérés ici sans supposer laquelle est active sur un capteur
+# donné — aucune configuration NFC préalable n'est nécessaire pour ingérer.
+# ---------------------------------------------------------------------------
+ELA_COMPANY_ID = 0x0757
+ELA_RHT_DATA_ID = 0x21
+ELA_TEMP_DATA_ID = 0x12
+# UUID complets 128 bits tels qu'exposés par bleak dans advertising_data.service_data
+# (forme canonique des UUID 16 bits Bluetooth SIG 0x2A6E/0x2A6F).
+ELA_UUID_TEMPERATURE = "00002a6e-0000-1000-8000-00805f9b34fb"
+ELA_UUID_HUMIDITE = "00002a6f-0000-1000-8000-00805f9b34fb"
+
+# ---------------------------------------------------------------------------
 # Gestion du fichier capteurs.json.
 # ---------------------------------------------------------------------------
 
@@ -137,6 +179,14 @@ CAPTEURS_FILE = os.path.join(os.path.dirname(__file__), "capteurs.json")
 
 # Regex de validation du format d'adresse MAC BLE (XX:XX:XX:XX:XX:XX).
 MAC_REGEX = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", re.IGNORECASE)
+
+# Regex des clés provisoires (backfill HR/T, cf. logique_projet.md) : les 4
+# premiers octets d'une MAC BLE réelle, sans ':', tant que les 2 derniers
+# octets ne sont pas connus (pas capturés par un export BlueMaestro
+# historique — seul un scan BLE réel les révèle). Format délibérément
+# distinct d'une vraie MAC (pas de ':') pour qu'aucune confusion ne soit
+# possible entre "identité confirmée" et "en attente de réconciliation".
+MAC_PROVISOIRE_REGEX = re.compile(r"^[0-9A-F]{8}$", re.IGNORECASE)
 
 # Verrou threading protégeant toutes les lectures/écritures sur capteurs.json.
 _fichier_lock = threading.Lock()
@@ -432,7 +482,11 @@ def _lire_et_valider_fichier() -> dict | None:
         None  : si le JSON est malformé (conserver l'ancien dict).
     """
     try:
-        with open(CAPTEURS_FILE, "r", encoding="utf-8") as f:
+        # utf-8-sig : tolère un BOM éventuel (ex. fichier édité/sauvé par un
+        # outil qui en ajoute un) en plus de l'UTF-8 sans BOM — utf-8 strict
+        # plante sur un BOM (JSONDecodeError), ce qui invalidait silencieusement
+        # tout le hot-reload jusqu'à la prochaine écriture par ce script.
+        with open(CAPTEURS_FILE, "r", encoding="utf-8-sig") as f:
             donnees = json.load(f)
     except FileNotFoundError:
         print(
@@ -454,6 +508,14 @@ def _lire_et_valider_fichier() -> dict | None:
             continue
 
         mac_cle_upper = mac_cle.upper()
+
+        # Clé provisoire (backfill HR/T, cf. mac_complete_connue) : acceptée
+        # telle quelle, jamais recoupée avec une vraie MAC scannée en direct
+        # (device.address a toujours le format complet ':'), donc pas de
+        # risque qu'un capteur réel soit pris pour un provisoire ou l'inverse.
+        if MAC_PROVISOIRE_REGEX.match(mac_cle_upper):
+            resultat[mac_cle_upper] = infos
+            continue
 
         if not MAC_REGEX.match(mac_cle_upper):
             print(
@@ -514,8 +576,21 @@ def verifier_et_recharger_capteurs() -> None:
         _capteurs_mtime = mtime_actuel
 
 
-def enregistrer_capteur_si_inconnu(mac: str) -> None:
-    """Ajouter une nouvelle MAC dans capteurs.json avec ingestion: false par défaut."""
+def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
+    """Ajouter une nouvelle MAC dans capteurs.json avec ingestion: false par défaut.
+
+    Args:
+        mac:     Adresse MAC BLE (majuscules).
+        famille: "bluemaestro" ou "ela" — cf. champ famille_capteur, utilisé
+            par tache_reconfiguration_periodique() pour ne tenter la
+            reconfiguration GATT (setlog~/lint, spécifique Nordic UART) que
+            sur les capteurs qui la supportent réellement. Un capteur ELA
+            marqué "ela" est ignoré indéfiniment par cette tâche — sans ce
+            marquage, il apparaîtrait à tort comme "non configuré" à chaque
+            cycle (lint_configure n'a pas de sens pour ce protocole), ce qui
+            déclencherait un scan+pause GATT toutes les INTERVALLE_RECONF_SECONDES
+            (6h par défaut) pour rien.
+    """
     global CAPTEURS_CONNUS, _capteurs_mtime
 
     if mac in CAPTEURS_CONNUS:
@@ -524,7 +599,7 @@ def enregistrer_capteur_si_inconnu(mac: str) -> None:
     with _fichier_lock:
         try:
             if os.path.exists(CAPTEURS_FILE):
-                with open(CAPTEURS_FILE, "r", encoding="utf-8") as f:
+                with open(CAPTEURS_FILE, "r", encoding="utf-8-sig") as f:
                     donnees = json.load(f)
             else:
                 donnees = {}
@@ -537,6 +612,7 @@ def enregistrer_capteur_si_inconnu(mac: str) -> None:
 
         donnees[mac] = {
             "mac": mac,
+            "famille_capteur": famille,
             "nom": "",
             "emplacement": "",
             "nom_mur": "",
@@ -554,6 +630,7 @@ def enregistrer_capteur_si_inconnu(mac: str) -> None:
 
     CAPTEURS_CONNUS[mac] = {
         "mac": mac,
+        "famille_capteur": famille,
         "nom": "",
         "emplacement": "",
         "nom_mur": "",
@@ -564,7 +641,7 @@ def enregistrer_capteur_si_inconnu(mac: str) -> None:
         "ingestion": False,
     }
     print(
-        f"📝 Nouveau capteur enregistré : {mac} "
+        f"📝 Nouveau capteur enregistré : {mac} ({famille}) "
         "— définissez ingestion: true pour activer la publication MQTT"
     )
 
@@ -649,76 +726,27 @@ except Exception as exc:
 
 
 # ===========================================================================
-# Callback BLE — cœur de l'ingestion.
+# Décodeurs de payload par protocole/fabricant.
+#
+# Chacun retourne None si le paquet ne correspond pas à son protocole (permet
+# au callback d'essayer le suivant), sinon un dict {protocole, temperature,
+# humidite, batterie, intervalle_log_secondes} — batterie/intervalle_log_secondes
+# valent None si le protocole ne les transmet pas dans ce paquet.
 # ===========================================================================
 
-def callback(device, advertising_data) -> None:
-    """Traiter chaque paquet BLE advertising reçu par le scanner.
+def _decoder_bluemaestro(payload_bytes: list) -> dict | None:
+    """Décode une trame Blue Maestro (cf. section 5 logique_projet.md).
 
-    Filtre, décode et publie sur MQTT cloud (ou SQLite si cloud indisponible).
-
-    Args:
-        device:           Objet bleak BLEDevice.
-        advertising_data: Données advertising (manufacturer_data, RSSI, etc.).
+    Extrait tel quel de l'ancien corps de callback() — seul le regroupement
+    en fonction a changé, pas la logique. Ne retourne None que si l'octet
+    version n'est pas reconnu ; au-delà, retourne toujours un résultat (avec
+    au besoin temperature/humidite valant "Trame tronquée"/"Erreur index"),
+    comportement identique à avant.
     """
-    verifier_et_recharger_capteurs()
-
-    mac_adresse = device.address.upper()
-    rssi = advertising_data.rssi
-    raw_payload = advertising_data.manufacturer_data
-
-    # Filtre 1 — company ID Blue Maestro.
-    if BLUEMAESTRO_COMPANY_ID not in raw_payload:
-        return
-
-    payload_bytes = list(raw_payload[BLUEMAESTRO_COMPANY_ID])
     version = payload_bytes[0] if payload_bytes else None
-
-    # Filtre 2 — version reconnue.
     if version not in VERSIONS_CONNUES:
-        return
+        return None
 
-    # Filtre 3 — RSSI sentinelle (artefact cache Windows ~60 s).
-    if rssi is None or rssi <= RSSI_MIN_VALIDE:
-        return
-
-    enregistrer_capteur_si_inconnu(mac_adresse)
-
-    local_name = advertising_data.local_name
-    infos_capteur = CAPTEURS_CONNUS.get(mac_adresse, {})
-    capteur_id = (
-        infos_capteur.get("nom") or local_name or f"Inconnu_{mac_adresse}"
-    )
-    emplacement = infos_capteur.get("emplacement") or "Emplacement inconnu"
-
-    # Filtre 4 — ingestion désactivée (capteur hors-projet ou non validé).
-    if not infos_capteur.get("ingestion", False):
-        horodatage_bref = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        print(
-            f"🔕 [{horodatage_bref}] {capteur_id} ({mac_adresse}) "
-            "détecté — non ingéré (ingestion: false dans capteurs.json)"
-        )
-        return
-
-    maintenant = time.monotonic()
-    derniere_fois = dernieres_detections.get(mac_adresse)
-    dernieres_detections[mac_adresse] = maintenant
-    intervalle = (
-        f"{maintenant - derniere_fois:.2f}s"
-        if derniere_fois is not None
-        else "premier paquet"
-    )
-    horodatage = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-    print(
-        f"🎯 [{horodatage}] [{capteur_id} / {emplacement}] "
-        f"MAC: {mac_adresse} "
-        f"(RSSI: {rssi} dBm, intervalle : {intervalle})"
-    )
-
-    # ------------------------------------------------------------------
-    # Décodage du payload selon la version du protocole.
-    # ------------------------------------------------------------------
     intervalle_log_secondes = None
     try:
         if version in (41, 42, 43) and len(payload_bytes) >= 17:
@@ -766,12 +794,186 @@ def callback(device, advertising_data) -> None:
         temperature, humidite = "Erreur index", "Erreur index"
 
     batterie = payload_bytes[1] if len(payload_bytes) >= 2 else None
+
+    return {
+        "protocole": f"bluemaestro_v{version}",
+        "temperature": temperature,
+        "humidite": humidite,
+        "batterie": batterie,
+        "intervalle_log_secondes": intervalle_log_secondes,
+        "bruts": payload_bytes,
+    }
+
+
+def _decoder_ela_manufacturer(payload_bytes: list) -> dict | None:
+    """Décode une trame ELA Innovation en mode "Manufacturer Specific Data".
+
+    Structure (après retrait du company ID 0x0757 par bleak, qui l'expose
+    comme clé du dict manufacturer_data — même mécanisme que Blue Maestro) :
+        [0]    RHT_DATA_ID (0x21) — seul le format RHT (Blue Puck RHT) est
+               reconnu ici ; les autres formats ELA (ID, T seul, MAG, MOV...)
+               ont un octet[0] différent et sont donc ignorés (return None),
+               pas traités par erreur comme un RHT.
+        [1]    Humidité relative (%), uint8 direct, pas de facteur d'échelle.
+        [2]    TEMP_DATA_ID (0x12) — sous-identifiant du champ température.
+        [3:5]  Température, int16 little-endian, ×0,01 °C, signé.
+
+    Source : ELA Innovation "BLE Frame specifications" v12B, section 6.e.
+    """
+    if len(payload_bytes) < 5 or payload_bytes[0] != ELA_RHT_DATA_ID:
+        return None
+    if payload_bytes[2] != ELA_TEMP_DATA_ID:
+        return None
+
+    humidite = payload_bytes[1]
+    raw_temp = payload_bytes[3] + (payload_bytes[4] << 8)
+    if raw_temp > 32767:
+        raw_temp -= 65536
+    temperature = raw_temp / 100.0
+
+    return {
+        "protocole": "ela_rht_mfr",
+        "temperature": temperature,
+        "humidite": humidite,
+        # Transmise uniquement en "Scan Response" sous 15% (cf. doc ELA,
+        # section 5) — bleak/BleakScanner en mode passif ne la capte pas ici.
+        "batterie": None,
+        "intervalle_log_secondes": None,
+        "bruts": payload_bytes,
+    }
+
+
+def _decoder_ela_service(service_data: dict) -> dict | None:
+    """Décode une trame ELA Innovation en mode "Service Data" — le mode par
+    défaut usine du Blue Puck RHT, sans configuration NFC préalable requise.
+
+    Deux blocs Service Data distincts, sur les UUID caractéristiques
+    Bluetooth SIG standard :
+        0x2A6E (température) : int16 little-endian, ×0,01 °C, signé.
+        0x2A6F (humidité)    : uint8 (%), direct.
+
+    Args:
+        service_data: advertising_data.service_data (dict UUID -> bytes).
+
+    Source : ELA Innovation "BLE Frame specifications" v12B, section 6.e.
+    """
+    temp_bytes = service_data.get(ELA_UUID_TEMPERATURE)
+    hum_bytes = service_data.get(ELA_UUID_HUMIDITE)
+    if temp_bytes is None:
+        return None  # Sans temperature, rien d'exploitable a publier.
+
+    if len(temp_bytes) < 2:
+        return None
+    raw_temp = temp_bytes[0] + (temp_bytes[1] << 8)
+    if raw_temp > 32767:
+        raw_temp -= 65536
+    temperature = raw_temp / 100.0
+
+    humidite = hum_bytes[0] if hum_bytes else None
+
+    return {
+        "protocole": "ela_rht_service",
+        "temperature": temperature,
+        "humidite": humidite,
+        "batterie": None,
+        "intervalle_log_secondes": None,
+        "bruts": list(temp_bytes) + (list(hum_bytes) if hum_bytes else []),
+    }
+
+
+# ===========================================================================
+# Callback BLE — cœur de l'ingestion.
+# ===========================================================================
+
+def callback(device, advertising_data) -> None:
+    """Traiter chaque paquet BLE advertising reçu par le scanner.
+
+    Filtre, décode et publie sur MQTT cloud (ou SQLite si cloud indisponible).
+
+    Args:
+        device:           Objet bleak BLEDevice.
+        advertising_data: Données advertising (manufacturer_data, RSSI, etc.).
+    """
+    verifier_et_recharger_capteurs()
+
+    mac_adresse = device.address.upper()
+    rssi = advertising_data.rssi
+    raw_payload = advertising_data.manufacturer_data
+
+    # Filtres 1+2 — payload reconnu par un décodeur (Blue Maestro ou ELA,
+    # 09/08/2026). Le premier company ID/format qui correspond gagne ; les
+    # décodeurs suivants ne sont même pas appelés. Un paquet BLE totalement
+    # étranger (téléphone, autre objet) ne correspond à aucun des trois et
+    # est ignoré silencieusement ici, comme avant pour Blue Maestro seul.
+    resultat = None
+    if BLUEMAESTRO_COMPANY_ID in raw_payload:
+        resultat = _decoder_bluemaestro(list(raw_payload[BLUEMAESTRO_COMPANY_ID]))
+    if resultat is None and ELA_COMPANY_ID in raw_payload:
+        resultat = _decoder_ela_manufacturer(list(raw_payload[ELA_COMPANY_ID]))
+    if resultat is None:
+        resultat = _decoder_ela_service(advertising_data.service_data)
+    if resultat is None:
+        return
+
+    # Filtre 3 — RSSI sentinelle (artefact cache Windows ~60 s).
+    if rssi is None or rssi <= RSSI_MIN_VALIDE:
+        return
+
+    famille = "bluemaestro" if resultat["protocole"].startswith("bluemaestro_") else "ela"
+    enregistrer_capteur_si_inconnu(mac_adresse, famille)
+
+    local_name = advertising_data.local_name
+    infos_capteur = CAPTEURS_CONNUS.get(mac_adresse, {})
+    capteur_id = (
+        infos_capteur.get("nom") or local_name or f"Inconnu_{mac_adresse}"
+    )
+    emplacement = infos_capteur.get("emplacement") or "Emplacement inconnu"
+
+    # Filtre 4 — ingestion désactivée (capteur hors-projet ou non validé).
+    if not infos_capteur.get("ingestion", False):
+        horodatage_bref = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        print(
+            f"🔕 [{horodatage_bref}] {capteur_id} ({mac_adresse}) "
+            "détecté — non ingéré (ingestion: false dans capteurs.json)"
+        )
+        return
+
+    maintenant = time.monotonic()
+    derniere_fois = dernieres_detections.get(mac_adresse)
+    dernieres_detections[mac_adresse] = maintenant
+    intervalle = (
+        f"{maintenant - derniere_fois:.2f}s"
+        if derniere_fois is not None
+        else "premier paquet"
+    )
+    horodatage = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    print(
+        f"🎯 [{horodatage}] [{capteur_id} / {emplacement}] "
+        f"MAC: {mac_adresse} ({resultat['protocole']}) "
+        f"(RSSI: {rssi} dBm, intervalle : {intervalle})"
+    )
+
+    # Décodage déjà effectué par le décodeur qui a reconnu ce paquet
+    # (Blue Maestro ou ELA, cf. filtres 1+2 plus haut).
+    temperature = resultat["temperature"]
+    humidite = resultat["humidite"]
+    batterie = resultat["batterie"]
+    intervalle_log_secondes = resultat["intervalle_log_secondes"]
     point_de_rosee = calculer_point_de_rosee(temperature, humidite)
 
     payload_iot = {
         "capteur_id": capteur_id,
         "emplacement": emplacement,
         "mac": mac_adresse,
+        # Mur/couche/position/catégorie R&D (07/08/2026, cf. backfill HR/T
+        # dans logique_projet.md) : mêmes champs que capteurs_retrait.json,
+        # ajoutés ici pour que mesures_capteurs porte directement ces tags
+        # (comme mesures_dewesoft) sans jointure sur registre_capteurs.
+        "nom_mur": infos_capteur.get("nom_mur", ""),
+        "nom_couche": infos_capteur.get("nom_couche", ""),
+        "position": infos_capteur.get("position", ""),
+        "categorie R&D": infos_capteur.get("categorie R&D", ""),
         "horodatage": horodatage,
         "temperature_c": temperature,
         "humidite_percent": humidite,
@@ -779,7 +981,7 @@ def callback(device, advertising_data) -> None:
         "batterie_percent": batterie,
         "rssi_dbm": rssi,
         "intervalle_log_secondes": intervalle_log_secondes,
-        "liste_chiffres": payload_bytes,
+        "liste_chiffres": resultat["bruts"],
     }
 
     print(f"📊 [CAPTEUR DECODE] {payload_iot['capteur_id']} ({payload_iot['mac']})")
@@ -821,14 +1023,23 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
 
     while True:
         try:
-            with open(CAPTEURS_FILE, "r", encoding="utf-8") as f:
+            with open(CAPTEURS_FILE, "r", encoding="utf-8-sig") as f:
                 donnees = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             donnees = {}
 
+        # famille_capteur absent (entrées créées avant cette distinction,
+        # 11/08/2026) => considéré "bluemaestro" par défaut, comportement
+        # historique inchangé. Un "ela" explicite est en revanche exclu :
+        # lint_configure n'a pas de sens pour ce protocole (configuration
+        # par NFC, pas de commande GATT setlog~/lint) — sans cette exclusion,
+        # un capteur ELA apparaîtrait "non configuré" indéfiniment et
+        # déclencherait un scan+pause GATT à chaque cycle pour rien.
         non_configures = [
             m for m, i in donnees.items()
-            if not m.startswith("_") and not i.get("lint_configure")
+            if not m.startswith("_")
+            and not i.get("lint_configure")
+            and i.get("famille_capteur", "bluemaestro") == "bluemaestro"
         ]
 
         if non_configures:
@@ -872,6 +1083,45 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
 # Point d'entrée asyncio.
 # ===========================================================================
 
+async def demarrer_scanner_avec_repli(detection_callback) -> BleakScanner:
+    """Démarrer le scanner BLE sur BLE_ADAPTER, avec repli automatique.
+
+    Si l'adaptateur demandé (ex. "hci1", l'antenne USB externe) est
+    indisponible — non branchée, RF-kill, pilote non chargé — bleak lève une
+    exception au démarrage plutôt qu'au moment de la construction de l'objet.
+    Plutôt que de laisser le script planter (et rester silencieux tant que
+    personne n'a remarqué que le Pi n'ingère plus rien), on retente sans
+    adaptateur précisé : bleak choisit alors le premier disponible (en
+    pratique le Bluetooth intégré du Raspberry Pi). Sans effet sur Windows
+    (le kwarg "bluez" y est ignoré par le backend WinRT).
+
+    Args:
+        detection_callback: Callback appelé pour chaque paquet BLE reçu.
+
+    Returns:
+        Le scanner démarré (sur BLE_ADAPTER si possible, en repli sinon).
+    """
+    if BLE_ADAPTER:
+        try:
+            scanner = BleakScanner(
+                detection_callback=detection_callback,
+                bluez={"adapter": BLE_ADAPTER},
+            )
+            await scanner.start()
+            print(f"🔍 [MurMetric] Scan multi-capteurs démarré (adaptateur {BLE_ADAPTER}).")
+            return scanner
+        except Exception as exc:
+            print(
+                f"⚠️  Adaptateur {BLE_ADAPTER} indisponible ({exc}) — "
+                "repli sur l'adaptateur Bluetooth par défaut."
+            )
+
+    scanner = BleakScanner(detection_callback=detection_callback)
+    await scanner.start()
+    print("🔍 [MurMetric] Scan multi-capteurs démarré (adaptateur par défaut).")
+    return scanner
+
+
 async def main() -> None:
     """Démarrer le scanner BLE et les tâches de fond."""
     global _loop, _sync_event
@@ -880,12 +1130,7 @@ async def main() -> None:
     _loop = asyncio.get_running_loop()
     _sync_event = asyncio.Event()
 
-    print(
-        "🔍 [MurMetric] Scan multi-capteurs démarré. "
-        "Secoue ou approche tes capteurs..."
-    )
-    scanner = BleakScanner(detection_callback=callback)
-    await scanner.start()
+    scanner = await demarrer_scanner_avec_repli(callback)
 
     # Tâche de fond : sync SQLite → MQTT cloud (store-and-forward).
     asyncio.create_task(tache_sync_sqlite())

@@ -48,6 +48,30 @@ sys.stdout.reconfigure(encoding="utf-8")
 # Company ID Bluetooth SIG de Blue Maestro Limited.
 BLUEMAESTRO_COMPANY_ID = 0x0133
 
+# Adaptateur BLE à utiliser (Linux/BlueZ uniquement, cf. ingestion_capteurs_bluetooth.py
+# — même variable d'environnement et même défaut "hci1", pour cohérence
+# entre les deux scripts).
+BLE_ADAPTER = os.getenv("BLE_ADAPTER", "hci1")
+
+
+async def demarrer_scanner_avec_repli(detection_callback) -> BleakScanner:
+    """Démarrer le scanner sur BLE_ADAPTER, repli sur le défaut si indisponible.
+
+    Copie de la logique de ingestion_capteurs_bluetooth.py (pas d'import
+    croisé entre les deux scripts, pour rester indépendants)."""
+    if BLE_ADAPTER:
+        try:
+            scanner = BleakScanner(
+                detection_callback=detection_callback, bluez={"adapter": BLE_ADAPTER}
+            )
+            await scanner.start()
+            return scanner
+        except Exception as exc:
+            print(f"⚠️  Adaptateur {BLE_ADAPTER} indisponible ({exc}) — repli sur le défaut.")
+    scanner = BleakScanner(detection_callback=detection_callback)
+    await scanner.start()
+    return scanner
+
 # Versions du protocole Blue Maestro supportées.
 VERSIONS_CONNUES = {13, 23, 27, 41, 42, 43}
 
@@ -383,8 +407,7 @@ async def verifier_lint_apres_config(
         if lint is not None and not future_lint.done():
             future_lint.set_result(lint)
 
-    scanner = BleakScanner(detection_callback=cb_verif)
-    await scanner.start()
+    scanner = await demarrer_scanner_avec_repli(cb_verif)
     try:
         lint_confirme = await asyncio.wait_for(future_lint, timeout=timeout_s)
         print(
@@ -420,8 +443,7 @@ async def main() -> None:
 
     # Le scanner reste actif pendant Phase 2 pour garder les BLEDevice "frais"
     # dans le cache WinRT — indispensable pour les adresses BLE aléatoires.
-    scanner = BleakScanner(detection_callback=callback_scan)
-    await scanner.start()
+    scanner = await demarrer_scanner_avec_repli(callback_scan)
     await asyncio.sleep(DUREE_SCAN_INITIAL)
 
     if not capteurs_detectes:
