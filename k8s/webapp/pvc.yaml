@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: murmetric-webapp-data
+  namespace: murmetric
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # users.json seul — quelques Ko réels, 100Mi est déjà large.
+      storage: 100Mi

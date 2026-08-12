@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: murmetric-webapp
+  namespace: murmetric
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: murmetric-webapp
+  template:
+    metadata:
+      labels:
+        app: murmetric-webapp
+    spec:
+      containers:
+        - name: webapp
+          image: murmetric-webapp:latest
+          # IfNotPresent : image buildée localement sur le nœud (pas de
+          # registre), même convention que kafka-consumer-influx.
+          # Rebuild requis après modification de murmetric_webapp/** :
+          #   docker build -t murmetric-webapp:latest -f Dockerfile.webapp .
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: INFLUX_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: influx-url
+            - name: INFLUX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: influx-token
+            - name: INFLUX_ORG
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: influx-org
+            - name: INFLUX_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: influx-bucket
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: groq-api-key
+            - name: GROQ_MODEL
+              value: llama-3.3-70b-versatile
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: webapp-jwt-secret
+            - name: ADMIN_BOOTSTRAP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: webapp-admin-username
+            - name: ADMIN_BOOTSTRAP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: webapp-admin-password
+            # users.json doit survivre aux rebuilds d'image (contrairement à
+            # capteurs.json, copié dans l'image) — volume persistant dédié.
+            - name: USERS_DIR
+              value: /data
+          volumeMounts:
+            - name: webapp-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: webapp-data
+          persistentVolumeClaim:
+            claimName: murmetric-webapp-data

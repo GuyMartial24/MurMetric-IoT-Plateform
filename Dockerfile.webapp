@@ -1,0 +1,24 @@
+# Interface applicative unifiée (murmetric_webapp) — build multi-stage :
+# le frontend React est compilé puis servi statiquement par FastAPI (un seul
+# conteneur, cf. logique_projet.md section 32).
+#
+# Build (depuis la racine du dépôt, comme Dockerfile.kafka-consumer/.bridge) :
+#   docker build -t murmetric-webapp:latest -f Dockerfile.webapp .
+
+FROM node:22-slim AS frontend-build
+WORKDIR /frontend
+COPY murmetric_webapp/frontend/package*.json ./
+RUN npm ci
+COPY murmetric_webapp/frontend/ ./
+RUN npm run build
+
+FROM python:3.12-slim
+WORKDIR /app
+COPY murmetric_webapp/backend/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY murmetric_webapp/backend/app ./app
+COPY capteurs.json capteurs_retrait.json ./app/
+COPY --from=frontend-build /frontend/dist ./app/static
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

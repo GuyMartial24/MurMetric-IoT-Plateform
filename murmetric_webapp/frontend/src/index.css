@@ -1,0 +1,137 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #0f1117;
+  color: #e6e6e6;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0.75rem 1.5rem;
+  background: #171a23;
+  border-bottom: 1px solid #2a2e3a;
+}
+
+.app-header h1 {
+  font-size: 1.1rem;
+  margin: 0;
+  color: #7fd4ff;
+}
+
+.app-header nav {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.app-header nav a {
+  color: #a0a6b5;
+  text-decoration: none;
+  padding: 0.35rem 0;
+  border-bottom: 2px solid transparent;
+}
+
+.app-header nav a.active {
+  color: #fff;
+  border-bottom-color: #7fd4ff;
+}
+
+.app-main {
+  flex: 1;
+  padding: 1.5rem;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.carte {
+  background: #171a23;
+  border: 1px solid #2a2e3a;
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.champ {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.champ label {
+  font-size: 0.8rem;
+  color: #a0a6b5;
+}
+
+input, select, textarea, button {
+  font: inherit;
+  background: #0f1117;
+  color: #e6e6e6;
+  border: 1px solid #2a2e3a;
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+}
+
+button {
+  cursor: pointer;
+  background: #1f4e6e;
+  border-color: #2f6f96;
+}
+
+button:hover {
+  background: #2a638a;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #2a2e3a;
+}
+
+.erreur {
+  color: #ff8080;
+}
+
+.selection-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.chat-message {
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.chat-message.utilisateur {
+  background: #1f2938;
+}
+
+.chat-message.assistant {
+  background: #142a1f;
+}

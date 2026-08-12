@@ -10,6 +10,9 @@ build/
 .venv/
 venv/
 
+# Node (murmetric_webapp/frontend)
+node_modules/
+
 # Buffer SQLite local (données non encore synchronisées — ne pas versionner)
 murmetric_buffer.db
 
