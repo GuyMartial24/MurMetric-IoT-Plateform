@@ -1795,6 +1795,19 @@ traverse correctement mosquitto → bridge → Kafka → kafka-consumer → Infl
   temps sur le même VPS — mêmes noms de service/ports par défaut, collision
   vécue concrètement en local le 03/08/2026.
 - `.env.example` mis à jour avec toutes les nouvelles variables et leur rôle.
+- **Conséquence concrète confirmée le 12/08/2026** : la bascule vers k3s
+  (section 28) ayant rendu Kubernetes la **seule** pile réellement vivante
+  sur le VPS, le nom "Capteurs" du paragraphe ci-dessus n'a jamais existé
+  ailleurs que dans docker-compose (jamais déployé en prod). Vérifié en
+  direct (`influx bucket list` sur `influxdb-0`) : le bucket réel du VPS
+  s'appelle toujours **`Test_Capteurs`**, "Capteurs" n'existe pas. Les
+  valeurs par défaut `INFLUX_BUCKET` de `backfill_hr_t.py`,
+  `backfill_teneur_eau.py`, `kafka_consumer_influx.py` et du nouveau
+  `murmetric_webapp/backend` corrigées en conséquence (`Test_Capteurs`) —
+  elles pointaient toutes vers un nom qui trahissait l'intention
+  docker-compose plutôt que la réalité du bucket effectivement utilisé par
+  tous les backfills déjà exécutés (HR/T, teneur en eau) et par le pipeline
+  Kafka→InfluxDB live.
 
 ## 28. Bascule vers Kubernetes (k3s) avec TLS pour la scalabilité automatique (04/08/2026)
 
@@ -2141,6 +2154,415 @@ sur HDMI/sans clavier physique) :
   sans rapport avec les maquettes HR/T) désactivés (`ingestion: false`) et
   leurs points de test supprimés d'InfluxDB une fois la validation terminée,
   pour ne pas polluer la base avec du bruit de test.
+
+### Réseau à Amiens — Ethernet prioritaire + Wi-Fi de secours (12/08/2026)
+
+Anticipé avant le déménagement physique du Pi (le poste devient injoignable
+en manipulation directe une fois posé à Amiens — toute reconfiguration
+réseau doit être faite **avant**, pendant que l'accès Tailscale/SSH est
+encore garanti par le réseau actuel). Constat côté PC labo Amiens
+(`pc-blaidoudi`) : réseau **filaire actif** (Ethernet, deux cartes Realtek),
+`wlansvc` non démarré — pas de Wi-Fi actif sur ce poste. Le Wi-Fi du labo
+existe néanmoins comme réseau connu, nom **"Batlab_Wifi"**.
+
+Deux profils NetworkManager configurés sur le Pi (`nmcli`, persistés dans
+`/etc/NetworkManager/system-connections/`, indépendants des profils générés
+par netplan) :
+- `netplan-eth0` (Ethernet), `autoconnect-priority` relevée à 10 —
+  connexion automatique par DHCP dès qu'un câble est branché, aucune
+  configuration nécessaire sur place.
+- `Batlab_Wifi` (nouveau), `autoconnect-priority` 5 — bascule automatique si
+  aucun câble n'est disponible à l'emplacement final près des parois.
+
+Les deux coexistent sans conflit (interfaces physiques différentes,
+`eth0`/`wlan0`) : à l'arrivée à Amiens, le Pi rejoint automatiquement l'un
+ou l'autre selon ce qui est physiquement disponible, sans intervention sur
+site. Tailscale/SSH reviennent seuls dès qu'une des deux interfaces obtient
+une adresse.
+
+## 32. Interface applicative unifiée & assistant IA (conception, 12/08/2026)
+
+Jusqu'ici, les données (retrait, HR/T, teneur en eau) ne sont exploitables
+que via Grafana, des requêtes Flux manuelles ou des scripts — aucune
+application ne les rassemble pour l'utilisateur final. L'abaque 3D
+(section 18) est le seul artefact visuel existant, mais reste un **POC
+autonome** figé sur un jeu de données statique, jamais relié à InfluxDB en
+direct (section 15). Chantier démarré maintenant, en parallèle du
+déploiement du Pi à Amiens (section 31) — aucune dépendance entre les deux.
+
+### Type d'application et stack retenue
+
+**Application web**, pas desktop : cohérent avec une architecture déjà
+pensée à distance de bout en bout (VPS central, Grafana web, PC/Pi Amiens
+accessibles via Tailscale) — se déploie comme un service supplémentaire
+dans le namespace k3s `murmetric`, à côté de Mosquitto/Kafka/InfluxDB/
+Grafana, sans changer d'écosystème.
+
+- **Backend : FastAPI (Python)**, cohérent avec le reste du pipeline
+  (ingestion, `kafka_consumer_influx.py`, scripts de backfill — tous déjà en
+  Python), réutilise directement `influxdb_client`. Expose l'API de
+  requêtage pour le frontend, les endpoints de saisie/édition, et
+  l'endpoint de l'assistant IA.
+- **Frontend : portage du moteur de rendu de l'abaque POC, pas réécriture.**
+  `abaque-3d-hygrothermique.html` (2831 lignes, section 18) contient une
+  logique de rendu Canvas déjà validée et non triviale : axes gradués
+  (section 23), lecture de valeur par projection (section 24), graphiques
+  compagnons valeur/temps (section 25), cadre temporel englobant
+  (section 26), filtre de Hampel (section 17), fond personnalisable
+  (section 22). À extraire en composant réutilisable ; seule sa source de
+  données change — remplacer le JSON statique embarqué (généré depuis
+  l'Excel de simulation via `combiner_donnees_reelles*.py`) par des appels
+  à l'API backend, qui interroge InfluxDB en direct. Framework d'assemblage
+  proposé : React (embarque facilement le composant abaque, l'iframe
+  Grafana, les formulaires de saisie et le panneau de chat IA dans une
+  interface cohérente) — pas encore validé en détail (composants, state
+  management).
+- **À ne pas réutiliser** : les scripts d'extraction Excel
+  (`combiner_donnees_reelles*.py`, `extraire_*_reel.py`) — outillage
+  exclusivement POC pour simuler une base de données à partir d'un classeur,
+  obsolète dès que l'appli requête InfluxDB directement ; le nommage interne
+  "Mur 1/Mur 2" du POC (→ "SOCMA 1"/"SOCMA 2" en production, section 19).
+
+### Modules
+
+1. **Vue d'ensemble / abaque** — moteur du POC porté en lecture live sur
+   InfluxDB (cf. ci-dessus).
+2. **Grafana embarqué** (iframe, panels choisis par l'utilisateur) —
+   exigence produit déjà notée plus bas (point ouvert) : nécessite
+   `allow_embedding` côté Grafana + une auth d'iframe (accès anonyme lecture
+   seule sur dashboards partagés, ou proxy d'authentification). Non résolu
+   techniquement à ce stade, à traiter dans ce chantier.
+3. **Saisie/édition teneur en eau** — déjà entièrement conçu (section 16) :
+   formulaire mur/couche/valeur (2 décimales)/commentaire/date, écriture
+   directe InfluxDB sans Kafka, correction ultérieure via le triplet exact
+   (mur, couche, date_mesure).
+4. **Gestion des capteurs** — vue (lecture seule en V1) de ce qui est
+   aujourd'hui `capteurs.json`/`capteurs_retrait.json` (registre
+   d'étiquetage, section 19). Écriture depuis l'appli repoussée : suppose
+   une source de configuration persistante et concurrente-safe, qu'un
+   fichier JSON édité à la main par SSH ne garantit pas (cf. point ouvert
+   ci-dessous).
+5. **Assistant IA** — détaillé ci-dessous.
+
+### Assistant IA — architecture
+
+Le backend FastAPI expose un endpoint de chat qui appelle l'API Anthropic
+(Claude), avec **tool use** pour interroger InfluxDB à la demande
+(measurement, tags, période) plutôt que tout précharger dans le prompt.
+
+**Modèle local (Ollama sur le VPS) vs API publique (tranché, 12/08/2026) :
+API publique retenue.** Le VPS héberge déjà Ollama pour un autre usage
+(`qwen2.5:14b`, `llama3.1`) — options comparées avant de décider. Specs
+vérifiées : 4 vCPU, 23 Go RAM, **aucun GPU** ; ~13 Go déjà utilisés par les
+services existants (le VPS est déjà sous tension partagée, cf. commit
+`0ecaf9f` de redimensionnement des pods murmetric). Rejeté pour cet usage
+précis :
+- Inférence CPU-only sur un modèle ~14B = lente (dizaines de secondes à
+  quelques minutes par réponse), incompatible avec un usage interactif
+  ("expliquer une courbe" doit répondre vite).
+- L'architecture retenue s'appuie sur le modèle pour interroger InfluxDB à
+  la demande (tool use/function calling) — un modèle local de cette taille
+  est nettement moins fiable sur cet aspect qu'un modèle frontier.
+- Le brouillon de rapport d'instrumentation est un texte à usage
+  professionnel — la qualité rédactionnelle d'un 14B local reste en retrait.
+- Le coût token de l'API publique reste maîtrisable précisément grâce au
+  garde-fou ci-dessous (jamais de données brutes envoyées, uniquement des
+  stats pré-agrégées) : volume par requête faible et prévisible.
+Point resté à confirmer (pas bloquant, aucun signal contraire identifié) :
+absence de contrainte de confidentialité côté FRD-CODEM sur l'envoi de
+données de mesure agrégées (pas de données personnelles) à l'API Anthropic.
+
+Deux garde-fous jugés indispensables, pas optionnels :
+- **Jamais de points bruts envoyés au modèle.** Un capteur peut porter des
+  dizaines de milliers de points sur une campagne — le backend doit
+  pré-agréger (stats descriptives, tendance, détection d'anomalie simple,
+  via `aggregateWindow` Flux et/ou pandas côté Python) avant transmission.
+  Sans ce pré-traitement, coût de contexte et fiabilité des réponses ne
+  tiennent pas.
+- **Ancrage explicite sur la sélection affichée.** Le frontend doit
+  transmettre l'état courant (mur/couche/mesure/période affichée dans
+  l'abaque ou le panel Grafana actif) avec chaque prompt — pas de
+  déduction implicite côté serveur à partir du seul texte de la question.
+
+**Deux modes retenus pour la V1** (décidé le 12/08/2026, les deux ensemble
+plutôt qu'un seul en premier — même socle de pré-agrégation sert aux deux) :
+- **(a) Explication de la courbe/sélection affichée** — texte généré à
+  partir des statistiques pré-calculées + connaissances générales du
+  modèle.
+- **(b) Brouillon de rapport d'instrumentation** — génère un texte structuré
+  (rapport de campagne) à partir des données agrégées d'une période/d'un ou
+  plusieurs murs. Toujours un **brouillon à relire et corriger par
+  l'utilisateur avant usage réel**, jamais un rapport final émis sans
+  relecture humaine.
+
+### Non tranché à ce stade
+
+- ~~Mécanisme d'authentification exact~~ **Tranché et implémenté le
+  12/08/2026 : JWT interne, comptes dans `users.json`** (cf. plus bas) —
+  pas de SSO, échelle de l'outil ne le justifie pas pour l'instant.
+- Où stocker durablement la configuration des capteurs si le module 4
+  passe en écriture (rester sur fichiers JSON vs migrer vers une vraie
+  base) — un fichier édité à la main par SSH ne se prête pas à des écritures
+  concurrentes depuis une appli multi-utilisateurs.
+- Détail technique de l'embarquement Grafana (`allow_embedding`, stratégie
+  d'auth de l'iframe) — **et prérequis désormais plus fondamental** :
+  Grafana n'est même pas joignable depuis Internet actuellement (cf.
+  "Bloquant restant pour un accès public" ci-dessous), donc rien à
+  embarquer tant que ce point réseau n'est pas résolu.
+- Ouverture d'un port côté Security List Oracle Cloud pour l'accès public
+  (cf. ci-dessous) — action utilisateur, hors de portée SSH/kubectl.
+
+### Squelette de code (démarré, 12/08/2026)
+
+Première brique concrète, dans `murmetric_webapp/` (nouveau dossier à la
+racine du dépôt, même logique que `murmetric_pi5/` : un emplacement de
+déploiement/développement, pas une restructuration du reste du dépôt) :
+
+- **`murmetric_webapp/backend/`** (FastAPI) : `app/main.py` +
+  `app/routers/{mesures,teneur_eau,capteurs,assistant}.py`. Endpoints
+  fonctionnels et testés en local (health check, lecture `capteurs.json`/
+  `capteurs_retrait.json`, requêtage InfluxDB générique par
+  type/mur/couche/période, écriture/correction `mesures_teneur_eau` suivant
+  exactement la sémantique field-vs-tag de la section ci-dessus, chat IA
+  avec boucle tool-use Anthropic bornée à 4 itérations). Testé sans
+  connexion InfluxDB réelle disponible en local (erreurs proprement
+  renvoyées en 502, pas de 500 brut) — connexion réelle au bucket `Capteurs`
+  du VPS à valider à la prochaine session avec les vraies variables
+  d'environnement (`.env.example` fourni).
+- **`murmetric_webapp/frontend/`** (React + Vite, `react-router-dom`) :
+  4 pages (Vue d'ensemble, Teneur en eau, Capteurs, Assistant IA), build de
+  production et serveur de dev tous deux vérifiés, CORS backend↔frontend
+  validé. `SelecteurMesure` (composant partagé Vue d'ensemble/Assistant) et
+  `GraphiqueSVG` (tracé minimal en SVG pur, **provisoire** — remplace
+  temporairement le moteur Canvas de l'abaque POC, dont le portage réel
+  reste à faire, cf. ci-dessus). Page Capteurs en lecture seule (conforme à
+  la conception). Page Teneur en eau : saisie **et** correction déjà
+  câblées (édition inline par ligne, transmet le triplet original exact
+  au `PUT`, cf. conception section 16).
+
+**Non fait à ce stade** (à ne pas déduire comme implémenté) : portage réel
+du moteur Canvas de l'abaque, iframe Grafana, authentification (l'API
+écrit actuellement avec un utilisateur provisoire en dur,
+`UTILISATEUR_ID_PROVISOIRE`, **jamais** à utiliser tel quel en production).
+
+### Déployé sur le VPS, connecté aux vraies données (12/08/2026)
+
+`murmetric-webapp` tourne maintenant dans le namespace k3s `murmetric`,
+même pattern que `kafka-consumer-influx` (`k8s/webapp/deployment.yaml` +
+`service.yaml`, image `murmetric-webapp:latest` buildée localement sur le
+nœud via `Dockerfile.webapp` — un seul conteneur, FastAPI sert à la fois
+l'API et le build React statique, cf. `app/main.py`). Code déposé à plat
+dans `/home/ubuntu/Projets_en_Production/murmetric/murmetric_webapp/` (même
+convention que le reste : pas de clone git sur le VPS, fichiers transférés
+directement).
+
+**Connexion InfluxDB réelle validée en direct** (toutes les routes
+testées avec de vraies requêtes contre le bucket `Test_Capteurs`, pas de
+simulation) — trois bugs trouvés et corrigés au passage :
+- `_valider_bornes()` : le calcul de repli "~1 an en arrière" était
+  invalide (`fin_dt.replace(year=...)` ne soustrayait pas réellement un
+  an dans la majorité des cas) → `cannot query an empty range` côté
+  InfluxDB. Remplacé par un simple `timedelta(days=...)`.
+- `/api/mesures/valeurs-tags` : liste Python interpolée directement dans
+  la requête Flux (`group(columns: {tags})`) → syntaxe invalide (Flux
+  attend des guillemets doubles, pas le `repr()` Python). Corrigé par un
+  formatage explicite.
+- **Statistiques sur `mesures_dewesoft` (retrait) trop lentes** : ce
+  measurement pèse ~1,5 milliard de points (100 Hz). Un `aggregateWindow`
+  ou un `min()`/`max()`/`mean()`/`count()` séquentiel sur un an dépassait
+  systématiquement 30s, y compris en tentant un `reduce()` à passage
+  unique (plus lent qu'attendu : pas d'optimisation de stockage comme les
+  agrégats natifs). Deux correctifs cumulés : (1) les 4 agrégats natifs
+  sont maintenant lancés **en parallèle** (`ThreadPoolExecutor`, le temps
+  total tombe au niveau du plus lent des 4 plutôt que leur somme) ; (2) la
+  fenêtre par défaut sans `debut`/`fin` explicite passe de 365 à **30
+  jours pour "retrait" seulement** (`_FENETRE_DEFAUT_JOURS`) — hr_t et
+  teneur en eau restent à 365 jours, volumes négligeables. `/api/mesures/
+  valeurs-tags?type=retrait` ne requête même plus InfluxDB : il lit
+  directement `capteurs_retrait.json` (source de vérité déjà existante
+  pour le mapping canal→mur/couche/position, donc redondant d'interroger
+  la base pour la même info, et bien plus rapide).
+- Timeout du client InfluxDB relevé 10s → 30s (`app/influx.py`) pour
+  laisser la marge nécessaire aux agrégations sur mesures_dewesoft.
+
+**Découverte en creusant les vraies valeurs de tags** (`nom_couche` sur
+`mesures_capteurs`) : ce ne sont **pas** les noms canoniques snake_case
+documentés en section 16 (`carreau_ext`, `milieu_isolant`…) mais des
+phrases libres issues telles quelles du `capteurs.json` HR/T (ex.
+`"interface carreau et exterieur"`, `"interface isolant panneau
+contreventement"`), avec en plus une incohérence de casse déjà présente
+dans les vraies données (`"Milieu carreau"` et `"milieu carreau"`
+coexistent). Seule la teneur en eau (backfillée par un script qui applique
+un mapping explicite) utilise bien les noms canoniques. Le nouvel endpoint
+`/api/mesures/valeurs-tags` existe précisément pour ça : peupler des menus
+déroulants avec les valeurs qui existent vraiment plutôt que deviner un
+nom "propre" côté frontend.
+
+**Bloquant restant pour un accès public** (pas résolu, hors de portée
+SSH/kubectl) : seuls les ports **22** et **8883** sont ouverts au niveau
+de la **Security List Oracle Cloud** (pare-feu géré depuis la console
+Oracle Cloud, en dehors de la VM elle-même). Vérifié empiriquement le
+12/08/2026 : `curl` externe vers les ports 80, 443 et même 3000
+(Grafana, dont le `Service` k8s est pourtant de type `LoadBalancer` et
+fonctionne correctement en interne) **time out** — signature d'un
+paquet silencieusement abandonné en amont de la VM, pas d'un service
+absent (le port 8883/MQTT, lui, répond immédiatement). **Grafana n'a
+donc jamais été réellement accessible depuis Internet**, indépendamment
+du sujet "iframe/`allow_embedding`" déjà noté plus haut — un blocage plus
+fondamental et jusqu'ici non identifié. Aucun accès à la console/API
+Oracle Cloud disponible depuis cet environnement pour ouvrir un port
+soi-même (pas de CLI `oci` configuré sur le VPS, pas de clé API dans
+`F:\VPS_ORACLE_Ubuntu\`, seule la clé SSH y est stockée) — action à faire
+par l'utilisateur dans la console Oracle Cloud. `k8s/webapp/service.yaml`
+(port `8090`, LoadBalancer) est déjà prêt et fonctionnel dès que ce port
+sera ouvert côté Oracle Cloud, aucun changement k8s à refaire à ce
+moment-là.
+
+**Résolu le 12/08/2026** : l'utilisateur a ouvert le port 8090 dans la
+Security List Oracle Cloud. Vérifié depuis l'extérieur (pas seulement
+depuis le VPS) : `http://89.168.34.201:8090` sert l'application avec une
+vraie connexion InfluxDB (health check, frontend, requête statistiques
+réelle sur `mesures_teneur_eau` — tout confirmé accessible publiquement).
+
+### Grafana — dashboard, embedding, accès anonyme (12/08/2026)
+
+Suite logique de "Grafana embarqué" (exigence produit notée plus haut) :
+décision utilisateur explicite d'activer l'accès anonyme lecture seule
+(nécessaire pour afficher l'iframe sans écran de connexion Grafana à
+chaque visiteur — rôle Viewer uniquement, pas d'accès admin ni aux
+identifiants de datasource) et l'embedding, plutôt que de passer par un
+proxy same-origin via le backend (choix retenu pour l'instant : plus
+rapide à mettre en place, même geste que l'ouverture du port 8090 ; le
+proxy reste une amélioration possible plus tard).
+
+- **Constat avant travail** : aucun dashboard n'existait dans Grafana
+  (`GET /api/search` → `[]`) — l'exigence "Grafana embarqué" supposait
+  jusqu'ici qu'il y avait quelque chose à embarquer, ce qui n'était pas
+  le cas.
+- **`k8s/grafana/deployment.yaml`** : ajout de `GF_SECURITY_ALLOW_EMBEDDING=true`,
+  `GF_AUTH_ANONYMOUS_ENABLED=true`, `GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer`.
+  Vérifié : la réponse HTTP de `/d/<uid>` ne porte plus `X-Frame-Options`
+  (absent, alors que Grafana l'envoie à `deny` par défaut) et répond 200
+  sans authentification.
+- **Premier dashboard provisionné** (pas créé à la main dans l'UI — même
+  logique que la datasource, versionné et reproductible) :
+  `k8s/grafana/dashboards/hr-t-socma.json` (température + humidité,
+  couche "milieu isolant", groupé par `nom_mur` — cf. découverte sur les
+  vraies valeurs de tags ci-dessus) + `k8s/grafana/dashboards-configmap.yaml`
+  (deux ConfigMaps : `grafana-dashboard-provider` pour le fichier
+  provider Grafana, `grafana-dashboards` pour le JSON lui-même — montés à
+  des chemins différents, cf. commentaires dans le fichier). UID fixé en
+  dur (`murmetric-hrt-socma`) pour une URL stable. Plage temporelle par
+  défaut du dashboard : `now-1y` (pas `now-6h`) — la donnée HR/T est un
+  backfill historique, pas un flux live (le Pi n'est pas encore à
+  Amiens), une fenêtre récente serait vide par défaut.
+- **Iframe câblée côté frontend** (`murmetric_webapp/frontend/src/pages/Grafana.jsx`,
+  nouvel onglet "Grafana" dans la nav) — URL en dur vers l'IP publique du
+  VPS (`http://89.168.34.201:3000/d/murmetric-hrt-socma?kiosk&theme=dark`),
+  pas encore vers un chemin same-origin proxié.
+- **Point bloquant identique à la webapp, pas encore résolu** : le port
+  3000 (Grafana) doit être ouvert dans la Security List Oracle Cloud avant
+  que l'iframe ne fonctionne réellement pour un visiteur externe — testé
+  et validé uniquement en interne (depuis le VPS) à ce stade.
+
+### Groq (LLM), authentification, paramètres modifiables, nomogramme (12/08/2026)
+
+Suite de la même session — quatre chantiers tranchés/implémentés d'affilée,
+tous déployés et validés en conditions réelles sur le VPS.
+
+**Fournisseur LLM : Groq plutôt qu'Anthropic.** L'utilisateur a fourni des
+identifiants Groq (app "MurMetric_AI" sur sa console) — remplace
+l'intégration Anthropic initialement écrite. `murmetric_webapp/backend/app/routers/assistant.py`
+réécrit pour l'API Groq (OpenAI-compatible, `https://api.groq.com/openai/v1`,
+SDK `openai` plutôt que `anthropic`) : format de tool use différent
+(`tools`/`tool_calls` façon OpenAI au lieu des content blocks Anthropic),
+même boucle bornée à 4 itérations, mêmes garde-fous (jamais de points
+bruts, uniquement des stats pré-agrégées). Modèle par défaut :
+`llama-3.3-70b-versatile` (configurable). Ne change rien à la justification
+"API cloud plutôt que LLM local sur le VPS partagé" (section précédente) —
+Groq est aussi une API cloud externe, pas un modèle tournant sur le VPS ;
+seul le fournisseur change. Comparaison factuelle demandée par l'utilisateur
+entre les deux modèles Ollama déjà présents sur le VPS (pour une question
+distincte, "lequel serait le plus adapté si on restait en local") :
+`qwen2.5:14b` (14,8 milliards de paramètres, contexte 32k) jugé supérieur à
+`llama3.1:latest` (8,0 milliards, contexte 128k) pour cet usage — sans
+remettre en cause le choix Groq/cloud.
+Validé en direct : appel réel à `/api/assistant/chat` (mode "explain",
+sélection teneur en eau) → le modèle a appelé l'outil
+`interroger_statistiques_mesures`, obtenu les vraies stats InfluxDB
+(min 3,45 %, max 17,02 %, moyenne 8,07 %, 11 points), répondu correctement
+en français à partir de ces chiffres.
+
+**Authentification JWT implémentée** (`murmetric_webapp/backend/app/auth.py`
++ `routers/auth.py`) — comptes dans `users.json` (bcrypt), pas d'auto-
+inscription ouverte : le tout premier compte est créé au démarrage via
+`ADMIN_BOOTSTRAP_USERNAME`/`ADMIN_BOOTSTRAP_PASSWORD` (même logique que
+`GF_SECURITY_ADMIN_PASSWORD` pour Grafana), les comptes suivants par un
+utilisateur déjà connecté (`POST /api/auth/register`). `users.json` vit sur
+un nouveau volume persistant dédié (`k8s/webapp/pvc.yaml`,
+`murmetric-webapp-data`, monté sur `/data`) — **contrairement à**
+`capteurs.json`/`capteurs_retrait.json`, copiés dans l'image Docker à
+chaque build : les comptes doivent survivre à un rebuild, pas les données
+capteurs (source de vérité = dépôt). `POST /api/teneur_eau` et
+`PUT /api/teneur_eau` protégés (`Depends(utilisateur_courant)`), utilisent
+désormais le vrai `username`/`nom_affiche` du compte connecté comme
+`utilisateur_id`/`utilisateur_nom` — les constantes provisoires
+(`UTILISATEUR_ID_PROVISOIRE`) supprimées de `config.py`.
+**Compte modifiable depuis l'interface** (`PUT /api/auth/me`, page
+"Paramètres" → "Mon compte") : changer nom d'utilisateur, mot de passe,
+nom affiché, en confirmant le mot de passe actuel — répond à la question
+explicite de l'utilisateur sur `admin`/`admin` (identifiants de bootstrap,
+volontairement faibles, mais changeables en quelques clics).
+Bootstrap réel : `admin`/`admin`, testé (`POST /api/auth/login` → JWT
+valide → `GET /api/auth/me` → OK ; sans jeton → 401 sur une route
+protégée).
+
+**Clé API Groq modifiable depuis l'interface** (demande explicite de
+l'utilisateur — jusque là uniquement figée en variable d'environnement au
+déploiement) : nouveau module `app/parametres.py`
+(`parametres.json`, même volume persistant que `users.json`), route
+`GET`/`PUT /api/parametres` (authentifiée), page "Paramètres" → "Assistant
+IA (Groq)". La clé n'est jamais réaffichée en clair après saisie (seuls les
+4 derniers caractères, `obtenir_cle_groq()`/`masquer()`) — `GROQ_API_KEY`
+(variable d'environnement, k8s secret `groq-api-key`) ne sert plus que de
+valeur de repli initiale si rien n'a encore été défini depuis l'interface.
+
+**Nomogramme — portage scopé (pas la parité complète du POC).** Après
+inspection réelle du fichier POC (`abaque-3d-hygrothermique.html`, ~50
+fonctions, rendu 3D par projection perspective custom écrit à la main —
+`project()`/`render()` à eux seuls représentent plusieurs centaines de
+lignes fortement couplées au DOM de la démo), un portage fidèle intégral
+n'a pas été tenté dans cette session : risque de résultat bâclé plutôt
+qu'un portage complet et fiable. Le périmètre porté correspond à la
+comparaison POC/Grafana ci-dessus — uniquement ce que Grafana ne fait
+structurellement pas :
+- **Nouvel endpoint `GET /api/mesures/croisement`** (`mesures.py`) —
+  apparie deux champs de la **même mesure** au même horodatage (ex.
+  température vs humidité), via `aggregateWindow` + `pivot()` Flux.
+  Volontairement limité à hr_t/retrait (deux champs d'une même mesure) :
+  croiser avec la teneur en eau demanderait une jointure "au plus proche
+  dans le temps" (mesure distincte, éparse, cf. section 16) — non traité
+  dans ce premier périmètre.
+- **`murmetric_webapp/frontend/src/components/Nomogramme.jsx`** — canvas
+  2D pur (pas de dépendance de charting), sélection des deux grandeurs à
+  croiser, points colorés selon leur position temporelle (bleu→rouge), et
+  **lecture de valeur par projection au survol** (lignes pointillées vers
+  les deux axes + étiquette de valeur) — reprise fidèle de l'intention de
+  la section 24 du POC, dans le nouveau périmètre 2D.
+  Affiché dans l'onglet "Vue d'ensemble", sous la courbe valeur/temps
+  existante, pour les types hr_t/retrait uniquement.
+- **`SelecteurMesure.jsx` amélioré au passage** : mur/couche passent de
+  champs texte libres à des `<input list>` (autocomplete) peuplés par
+  `/api/mesures/valeurs-tags` — corrige un défaut resté faux jusqu'ici
+  (placeholder "carreau_ext", qui n'existe pas réellement en base, cf.
+  découverte de la section précédente) sans empêcher de saisir une valeur
+  pas encore vue.
+Validé en direct : 3658 points température/humidité réels renvoyés pour
+SOCMA 1 / "milieu isolant".
+
+**Non fait, explicitement hors de ce périmètre** : rotation 3D façon POC,
+graphiques compagnons (couverts par Grafana), croisement avec la teneur en
+eau (jointure au plus proche à implémenter séparément si besoin).
 
 ## Points ouverts / non implémentés
 
