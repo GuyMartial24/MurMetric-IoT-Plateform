@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import Logo from "./components/Logo.jsx";
 import Assistant from "./pages/Assistant.jsx";
 import Capteurs from "./pages/Capteurs.jsx";
 import Grafana from "./pages/Grafana.jsx";
@@ -41,7 +42,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>MurMetric</h1>
+        <Logo taille={30} />
         <nav>
           {ONGLETS.map((onglet) => (
             <NavLink key={onglet.chemin} to={onglet.chemin} end={onglet.chemin === "/"}>

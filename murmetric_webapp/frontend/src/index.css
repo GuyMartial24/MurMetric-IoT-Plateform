@@ -24,12 +24,6 @@ body {
   border-bottom: 1px solid #2a2e3a;
 }
 
-.app-header h1 {
-  font-size: 1.1rem;
-  margin: 0;
-  color: #7fd4ff;
-}
-
 .app-header nav {
   display: flex;
   gap: 1.25rem;

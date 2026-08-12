@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api.js";
 import { auth } from "../auth.js";
+import Logo from "../components/Logo.jsx";
 
 export default function Login({ onConnecte }) {
   const [username, setUsername] = useState("");
@@ -26,7 +27,9 @@ export default function Login({ onConnecte }) {
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
       <form onSubmit={soumettre} className="carte" style={{ width: "320px" }}>
-        <h2>MurMetric</h2>
+        <div style={{ marginBottom: "1.25rem" }}>
+          <Logo taille={40} centre />
+        </div>
         <div className="champ">
           <label>Utilisateur</label>
           <input required value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />

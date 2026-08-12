@@ -52,4 +52,12 @@ if _DIST_DIR.is_dir():
 
     @app.get("/{chemin_complet:path}")
     def servir_frontend(chemin_complet: str):
+        # Fichiers statiques à la racine du build (favicon.svg, etc.) —
+        # sans ce cas, la route générique interceptait tout et renvoyait
+        # index.html même pour /favicon.svg (bug trouvé le 12/08/2026).
+        # resolve() + vérification du parent : évite qu'un chemin_complet
+        # contenant ".." serve un fichier hors de dist/.
+        chemin_fichier = (_DIST_DIR / chemin_complet).resolve()
+        if chemin_complet and chemin_fichier.is_file() and chemin_fichier.is_relative_to(_DIST_DIR):
+            return FileResponse(chemin_fichier)
         return FileResponse(_DIST_DIR / "index.html")
