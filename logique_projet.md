@@ -2654,6 +2654,27 @@ choix d'unité (heures/jours/semaines/mois/années).
   absents) renvoie bien des points `{time, x}` sans erreur (56 points
   température testés sur une semaine réelle).
 
+### Catalogue d'axes unifié 2D/3D (13/08/2026)
+
+Demande explicite : le nomogramme 2D doit proposer exactement le même
+catalogue d'axes que le 3D (grandeurs HR/T + retrait mélangeables, axe
+Temps avec unité configurable), plutôt que sa propre liste limitée à une
+seule mesure.
+
+- **`murmetric_webapp/frontend/src/nomogrammeAxes.js`** (nouveau) —
+  catalogue d'axes, unités de temps et fonctions utilitaires
+  (`construireParamAxe`, `libelleGrandeur`) extraits en module partagé,
+  utilisé par `Nomogramme.jsx` (2D) **et** `Nomogramme3D.jsx` — évite la
+  duplication qui existait déjà à l'identique dans les deux fichiers.
+- **`Nomogramme.jsx` (2D) réécrit** pour utiliser `/api/mesures/croisement-libre`
+  (au lieu de l'ancien `/croisement`, resté disponible côté backend mais
+  plus appelé par le frontend) — même logique de séparation axes
+  réels/axe Temps que la version 3D, juste avec 2 rôles (`x`, `y`) au lieu
+  de 3. `VueEnsemble.jsx` simplifié en conséquence : les deux composants
+  ne prennent plus que `mur`/`couche` en props (le `type`/`position` de la
+  sélection HR/T-vs-retrait n'a plus de sens une fois les axes composables
+  librement entre les deux mesures).
+
 ### Date d'expiration de clé API trackée (12/08/2026)
 
 Demande explicite : les identifiants API du LLM doivent être modifiables

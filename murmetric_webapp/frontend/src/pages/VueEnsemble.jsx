@@ -55,13 +55,13 @@ export default function VueEnsemble() {
           </div>
           <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
             {mode3D
-              ? "Compose librement 3 grandeurs, même entre HR/T et retrait — glisse pour tourner, molette pour zoomer, survole un point pour lire ses valeurs."
-              : "Croise deux grandeurs de la même mesure l'une contre l'autre (pas contre le temps) — survole un point pour lire sa valeur par projection sur les axes."}
+              ? "Compose librement 3 grandeurs (HR/T, retrait, temps) — glisse pour tourner, molette pour zoomer, survole un point pour lire ses valeurs."
+              : "Compose librement 2 grandeurs (HR/T, retrait, temps) — survole un point pour lire sa valeur par projection sur les axes."}
           </p>
           {mode3D ? (
             <Nomogramme3D mur={selection.mur} couche={selection.couche} />
           ) : (
-            <Nomogramme type={selection.type} mur={selection.mur} couche={selection.couche} position={selection.position} />
+            <Nomogramme mur={selection.mur} couche={selection.couche} />
           )}
         </div>
       )}

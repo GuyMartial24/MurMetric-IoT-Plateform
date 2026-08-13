@@ -1,30 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
+import { AXES_DISPONIBLES, AXES_GRANDEURS, CANAUX_RETRAIT, UNITES_TEMPS, construireParamAxe } from "../nomogrammeAxes.js";
 
 // Nomogramme 3D — composition libre d'axes entre HR/T et retrait, y compris
 // le TEMPS comme axe à part entière (demandes explicites du 13/08/2026) +
-// options de vue façon POC (rotation auto, vues préréglées). Projection en
+// options de vue façon POC (rotation auto, vues préréglées). Catalogue
+// d'axes partagé avec le nomogramme 2D (nomogrammeAxes.js — même liste
+// dans les deux, demande explicite du 13/08/2026). Projection en
 // perspective classique (rotation yaw/pitch puis division perspective) —
 // même principe mathématique générique que le POC, réécrit proprement
 // (cf. logique_projet.md section 32 : le POC lui-même, ~50 fonctions très
 // couplées à son propre DOM, n'a pas été repris tel quel).
-const AXES_GRANDEURS = [
-  { valeur: "hr_t:temperature", label: "Température (°C)" },
-  { valeur: "hr_t:humidite", label: "Humidité (%)" },
-  { valeur: "hr_t:point_de_rosee", label: "Point de rosée (°C)" },
-  { valeur: "retrait:valeur_filtree", label: "Retrait filtré" },
-  { valeur: "retrait:valeur", label: "Retrait brut" },
-];
-const AXES_DISPONIBLES = [{ valeur: "temps", label: "Temps" }, ...AXES_GRANDEURS];
-const CANAUX_RETRAIT = ["HA1", "HA2", "VA1", "VA2", "HB1", "HB2", "VB1", "VB2"];
-
-const UNITES_TEMPS = {
-  heure: { diviseur: 3_600_000, label: "heures" },
-  jour: { diviseur: 86_400_000, label: "jours" },
-  semaine: { diviseur: 7 * 86_400_000, label: "semaines" },
-  mois: { diviseur: 30.44 * 86_400_000, label: "mois" },
-  annee: { diviseur: 365.25 * 86_400_000, label: "années" },
-};
 
 const VUES_PREREGLEES = {
   face: { yaw: 0, pitch: 0 },
@@ -79,7 +65,6 @@ export default function Nomogramme3D({ mur, couche }) {
   const choixParRole = { x: axeX, y: axeY, z: axeZ };
   const necessiteCanal = ROLES.some((r) => choixParRole[r].startsWith("retrait"));
   const necessiteUniteTemps = ROLES.some((r) => choixParRole[r] === "temps");
-  const construireParamAxe = (axe) => (axe.startsWith("retrait") ? `${axe}:${canal}` : axe);
 
   function libelleAxe(role) {
     if (choixParRole[role] === "temps") return `Temps (${UNITES_TEMPS[uniteTemps].label})`;
@@ -98,7 +83,7 @@ export default function Nomogramme3D({ mur, couche }) {
     try {
       const params = { mur, couche };
       rolesReels.forEach((role, i) => {
-        params[CLES_BACKEND[i]] = construireParamAxe(choixParRole[role]);
+        params[CLES_BACKEND[i]] = construireParamAxe(choixParRole[role], canal);
       });
       Object.keys(params).forEach((k) => (params[k] == null || params[k] === "") && delete params[k]);
 

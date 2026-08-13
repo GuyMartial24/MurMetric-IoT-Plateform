@@ -1,26 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
+import { AXES_DISPONIBLES, CANAUX_RETRAIT, UNITES_TEMPS, construireParamAxe, libelleGrandeur } from "../nomogrammeAxes.js";
 
 // Portage scopé du "nomogramme" de l'ancien POC (data_reel_compile/
 // abaque-3d-hygrothermique.html, cf. logique_projet.md section 32) : le
-// cœur unique (croiser deux grandeurs physiques l'une contre l'autre,
-// pas contre le temps — ce que Grafana ne fait pas nativement) et la
-// lecture de valeur par projection (lignes pointillées vers les axes au
-// survol). Le reste des fonctionnalités du POC (graphiques compagnons,
-// navigation temporelle, agrégation, axes gradués sur vue temps/valeur
-// classique) est couvert par l'onglet Grafana, volontairement pas
-// reconstruit ici.
-const CHAMPS_PAR_TYPE = {
-  hr_t: [
-    { valeur: "temperature", label: "Température (°C)" },
-    { valeur: "humidite", label: "Humidité (%)" },
-    { valeur: "point_de_rosee", label: "Point de rosée (°C)" },
-  ],
-  retrait: [
-    { valeur: "valeur", label: "Valeur brute" },
-    { valeur: "valeur_filtree", label: "Valeur filtrée (Hampel)" },
-  ],
-};
+// cœur unique (croiser deux grandeurs l'une contre l'autre, pas contre le
+// temps par défaut — ce que Grafana ne fait pas nativement, sauf à choisir
+// "Temps" comme axe) et la lecture de valeur par projection (lignes
+// pointillées vers les axes au survol). Même catalogue d'axes que le
+// nomogramme 3D (nomogrammeAxes.js, demande explicite du 13/08/2026) :
+// grandeurs HR/T et retrait mélangeables, plus l'axe "Temps" avec unité
+// configurable.
+const ROLES = ["x", "y"];
+const CLES_BACKEND = ["axe_x", "axe_y"];
 
 function graduations(min, max, cible = 5) {
   if (min === max) return [min];
@@ -34,31 +26,59 @@ function graduations(min, max, cible = 5) {
   return valeurs;
 }
 
-export default function Nomogramme({ type, mur, couche, position }) {
-  const champs = CHAMPS_PAR_TYPE[type] ?? [];
-  const [champX, setChampX] = useState(champs[0]?.valeur);
-  const [champY, setChampY] = useState(champs[1]?.valeur ?? champs[0]?.valeur);
+export default function Nomogramme({ mur, couche }) {
+  const [axeX, setAxeX] = useState("hr_t:temperature");
+  const [axeY, setAxeY] = useState("hr_t:humidite");
+  const [canal, setCanal] = useState("HA1");
+  const [uniteTemps, setUniteTemps] = useState("jour");
   const [points, setPoints] = useState([]);
   const [survol, setSurvol] = useState(null);
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
   const canvasRef = useRef(null);
 
-  useEffect(() => {
-    if (champs.length && !champs.some((c) => c.valeur === champX)) setChampX(champs[0].valeur);
-    if (champs.length && !champs.some((c) => c.valeur === champY)) setChampY(champs[Math.min(1, champs.length - 1)].valeur);
-  }, [type]); // eslint-disable-line react-hooks/exhaustive-deps
+  const choixParRole = { x: axeX, y: axeY };
+  const necessiteCanal = ROLES.some((r) => choixParRole[r].startsWith("retrait"));
+  const necessiteUniteTemps = ROLES.some((r) => choixParRole[r] === "temps");
+
+  function libelleAxe(role) {
+    if (choixParRole[role] === "temps") return `Temps (${UNITES_TEMPS[uniteTemps].label})`;
+    return libelleGrandeur(choixParRole[role]);
+  }
 
   const charger = async () => {
-    if (!champX || !champY) return;
+    const rolesReels = ROLES.filter((r) => choixParRole[r] !== "temps");
+    if (rolesReels.length === 0) {
+      setErreur("Choisis au moins une grandeur réelle en plus du temps.");
+      setPoints([]);
+      return;
+    }
     setEnCours(true);
     setErreur(null);
     try {
-      const params = Object.fromEntries(
-        Object.entries({ type, mur, couche, position, champ_x: champX, champ_y: champY }).filter(([, v]) => v),
-      );
-      const resultat = await api.croisement(params);
-      setPoints((resultat?.points ?? []).filter((p) => p.x != null && p.y != null));
+      const params = { mur, couche };
+      rolesReels.forEach((role, i) => {
+        params[CLES_BACKEND[i]] = construireParamAxe(choixParRole[role], canal);
+      });
+      Object.keys(params).forEach((k) => (params[k] == null || params[k] === "") && delete params[k]);
+
+      const resultat = await api.croisementLibre(params);
+      const bruts = resultat?.points ?? [];
+      const tempsMs = bruts.map((p) => new Date(p.time).getTime());
+      const tMinMs = tempsMs.length ? Math.min(...tempsMs) : 0;
+      const diviseur = UNITES_TEMPS[uniteTemps].diviseur;
+
+      const finaux = bruts.map((p, i) => {
+        const valeurs = {};
+        rolesReels.forEach((role, idx) => {
+          valeurs[role] = p[["x", "y"][idx]];
+        });
+        ROLES.forEach((role) => {
+          if (choixParRole[role] === "temps") valeurs[role] = (tempsMs[i] - tMinMs) / diviseur;
+        });
+        return { time: p.time, x: valeurs.x, y: valeurs.y };
+      });
+      setPoints(finaux.filter((p) => p.x != null && p.y != null));
     } catch (e) {
       setErreur(e.message);
     } finally {
@@ -68,7 +88,7 @@ export default function Nomogramme({ type, mur, couche, position }) {
 
   useEffect(() => {
     charger();
-  }, [type, mur, couche, position, champX, champY]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mur, couche, axeX, axeY, canal, uniteTemps]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const bornes = useMemo(() => {
     if (points.length === 0) return null;
@@ -114,6 +134,12 @@ export default function Nomogramme({ type, mur, couche, position }) {
       ctx.stroke();
       ctx.fillText(gy.toString(), 8, y(gy) + 4);
     }
+    ctx.fillText(libelleAxe("x"), w - 90, h - marge + 30);
+    ctx.save();
+    ctx.translate(14, marge - 4);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(libelleAxe("y"), 0, 0);
+    ctx.restore();
 
     // Points, couleur = position temporelle (bleu = ancien, rouge = récent).
     const temps = points.map((p) => new Date(p.time).getTime());
@@ -145,14 +171,14 @@ export default function Nomogramme({ type, mur, couche, position }) {
       ctx.arc(px, py, 4, 0, 2 * Math.PI);
       ctx.fill();
       ctx.fillStyle = "#0f1117";
-      ctx.fillRect(px + 8, py - 28, 130, 34);
+      ctx.fillRect(px + 8, py - 28, 150, 34);
       ctx.strokeStyle = "#7fd4ff";
-      ctx.strokeRect(px + 8, py - 28, 130, 34);
+      ctx.strokeRect(px + 8, py - 28, 150, 34);
       ctx.fillStyle = "#e6e6e6";
-      ctx.fillText(`x = ${survol.x.toFixed(2)}`, px + 14, py - 14);
-      ctx.fillText(`y = ${survol.y.toFixed(2)}`, px + 14, py - 2);
+      ctx.fillText(`${libelleAxe("x")} = ${survol.x.toFixed(2)}`, px + 14, py - 14);
+      ctx.fillText(`${libelleAxe("y")} = ${survol.y.toFixed(2)}`, px + 14, py - 2);
     }
-  }, [points, bornes, survol]);
+  }, [points, bornes, survol, axeX, axeY, uniteTemps]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const survolerCanvas = (e) => {
     if (points.length === 0 || !bornes) return;
@@ -180,23 +206,41 @@ export default function Nomogramme({ type, mur, couche, position }) {
     setSurvol(distanceMin < 400 ? plusProche : null);
   };
 
-  if (champs.length === 0) return null;
-
   return (
     <div>
       <div className="selection-form" style={{ marginBottom: "0.75rem" }}>
         <div className="champ">
           <label>Axe X</label>
-          <select value={champX} onChange={(e) => setChampX(e.target.value)}>
-            {champs.map((c) => <option key={c.valeur} value={c.valeur}>{c.label}</option>)}
+          <select value={axeX} onChange={(e) => setAxeX(e.target.value)}>
+            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
           </select>
         </div>
         <div className="champ">
           <label>Axe Y</label>
-          <select value={champY} onChange={(e) => setChampY(e.target.value)}>
-            {champs.map((c) => <option key={c.valeur} value={c.valeur}>{c.label}</option>)}
+          <select value={axeY} onChange={(e) => setAxeY(e.target.value)}>
+            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
           </select>
         </div>
+        {necessiteUniteTemps && (
+          <div className="champ">
+            <label>Unité de temps</label>
+            <select value={uniteTemps} onChange={(e) => setUniteTemps(e.target.value)}>
+              <option value="heure">Heures</option>
+              <option value="jour">Jours</option>
+              <option value="semaine">Semaines</option>
+              <option value="mois">Mois</option>
+              <option value="annee">Années</option>
+            </select>
+          </div>
+        )}
+        {necessiteCanal && (
+          <div className="champ">
+            <label>Canal retrait</label>
+            <select value={canal} onChange={(e) => setCanal(e.target.value)}>
+              {CANAUX_RETRAIT.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        )}
       </div>
       {erreur && <p className="erreur">{erreur}</p>}
       {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
