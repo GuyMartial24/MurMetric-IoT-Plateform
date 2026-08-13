@@ -21,13 +21,24 @@ spec:
           # lui qui indexe et écrit les points), d'où le plafond le plus haut —
           # mais plafond tout de même : le nœud 4 cœurs est partagé avec
           # d'autres projets (MailFlow, MINER, ollama).
+          #
+          # Mémoire relevée 256Mi/1Gi -> 512Mi/4Gi le 13/08/2026 : la limite de
+          # 1Gi, fixée tôt dans le projet, est devenue trop basse par rapport
+          # au volume réel de mesures_dewesoft (retrait) une fois le backfill
+          # complet fait — 15 Go sur disque, ~1,5 milliard de points. Constaté
+          # en direct : le pod se faisait OOM-kill (exit 137) sur des requêtes
+          # Grafana pourtant raisonnables (un seul canal, 7 jours), confirmé
+          # par `kubectl top` juste avant le kill (~1022Mi, au ras du plafond).
+          # Un premier passage à 3Gi suffisait tout juste (dashboard retrait
+          # SOCMA à ~3067Mi, à quelques Mio du kill) — remonté à 4Gi pour une
+          # marge réelle plutôt qu'une configuration à la limite.
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               cpu: 700m
-              memory: 1Gi
+              memory: 4Gi
           ports:
             - containerPort: 8086
           env:

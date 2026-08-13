@@ -26,42 +26,107 @@ data:
   hr-t-socma.json: |
     {
       "uid": "murmetric-hrt-socma",
-      "title": "MurMetric — Température / Humidité (SOCMA 1 & 2)",
+      "title": "MurMetric — Vue d'ensemble (SOCMA 1 & 2)",
       "timezone": "browser",
       "schemaVersion": 39,
-      "version": 1,
+      "version": 3,
       "editable": true,
       "time": { "from": "now-1y", "to": "now" },
       "panels": [
         {
           "id": 1,
           "type": "timeseries",
-          "title": "Température (°C) — couche \"milieu isolant\"",
-          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+          "title": "Température (°C) — SOCMA 1, par couche",
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
           "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
           "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
-          "targets": [
-            {
-              "refId": "A",
-              "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
-              "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_capteurs\")\n  |> filter(fn: (r) => r._field == \"temperature\")\n  |> filter(fn: (r) => r.nom_couche == \"milieu isolant\")\n  |> keep(columns: [\"_time\", \"_value\", \"_field\", \"nom_mur\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> group(columns: [\"nom_mur\"])"
-            }
-          ]
+          "targets": [{
+            "refId": "A",
+            "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+            "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_capteurs\")\n  |> filter(fn: (r) => r._field == \"temperature\")\n  |> filter(fn: (r) => r.nom_mur == \"SOCMA 1\")\n  |> keep(columns: [\"_time\", \"_value\", \"_field\", \"nom_couche\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> group(columns: [\"nom_couche\"])"
+          }]
         },
         {
           "id": 2,
           "type": "timeseries",
-          "title": "Humidité (%) — couche \"milieu isolant\"",
-          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+          "title": "Température (°C) — SOCMA 2, par couche",
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+          "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+          "targets": [{
+            "refId": "A",
+            "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+            "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_capteurs\")\n  |> filter(fn: (r) => r._field == \"temperature\")\n  |> filter(fn: (r) => r.nom_mur == \"SOCMA 2\")\n  |> keep(columns: [\"_time\", \"_value\", \"_field\", \"nom_couche\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> group(columns: [\"nom_couche\"])"
+          }]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Humidité (%) — SOCMA 1, par couche",
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
           "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
           "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] },
+          "targets": [{
+            "refId": "A",
+            "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+            "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_capteurs\")\n  |> filter(fn: (r) => r._field == \"humidite\")\n  |> filter(fn: (r) => r.nom_mur == \"SOCMA 1\")\n  |> keep(columns: [\"_time\", \"_value\", \"_field\", \"nom_couche\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> group(columns: [\"nom_couche\"])"
+          }]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "Humidité (%) — SOCMA 2, par couche",
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+          "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+          "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] },
+          "targets": [{
+            "refId": "A",
+            "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+            "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_capteurs\")\n  |> filter(fn: (r) => r._field == \"humidite\")\n  |> filter(fn: (r) => r.nom_mur == \"SOCMA 2\")\n  |> keep(columns: [\"_time\", \"_value\", \"_field\", \"nom_couche\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> group(columns: [\"nom_couche\"])"
+          }]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Retrait filtré — SOCMA 1 (HA1/HA2/VA1/VA2, 90 derniers jours)",
+          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 18 },
+          "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+          "fieldConfig": { "defaults": {}, "overrides": [] },
+          "timeFrom": "90d",
           "targets": [
-            {
-              "refId": "A",
-              "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
-              "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_capteurs\")\n  |> filter(fn: (r) => r._field == \"humidite\")\n  |> filter(fn: (r) => r.nom_couche == \"milieu isolant\")\n  |> keep(columns: [\"_time\", \"_value\", \"_field\", \"nom_mur\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> group(columns: [\"nom_mur\"])"
-            }
+            { "refId": "A", "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" }, "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_dewesoft\")\n  |> filter(fn: (r) => r._field == \"valeur_filtree\")\n  |> filter(fn: (r) => r.canal_nom == \"HA1\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)" },
+            { "refId": "B", "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" }, "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_dewesoft\")\n  |> filter(fn: (r) => r._field == \"valeur_filtree\")\n  |> filter(fn: (r) => r.canal_nom == \"HA2\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)" },
+            { "refId": "C", "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" }, "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_dewesoft\")\n  |> filter(fn: (r) => r._field == \"valeur_filtree\")\n  |> filter(fn: (r) => r.canal_nom == \"VA1\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)" },
+            { "refId": "D", "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" }, "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_dewesoft\")\n  |> filter(fn: (r) => r._field == \"valeur_filtree\")\n  |> filter(fn: (r) => r.canal_nom == \"VA2\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)" }
           ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Retrait filtré — SOCMA 2 (HB1/HB2/VB1/VB2, 90 derniers jours)",
+          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
+          "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+          "fieldConfig": { "defaults": {}, "overrides": [] },
+          "timeFrom": "90d",
+          "targets": [
+            { "refId": "A", "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" }, "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_dewesoft\")\n  |> filter(fn: (r) => r._field == \"valeur_filtree\")\n  |> filter(fn: (r) => r.canal_nom == \"HB1\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)" },
+            { "refId": "B", "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" }, "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_dewesoft\")\n  |> filter(fn: (r) => r._field == \"valeur_filtree\")\n  |> filter(fn: (r) => r.canal_nom == \"HB2\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)" },
+            { "refId": "C", "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" }, "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_dewesoft\")\n  |> filter(fn: (r) => r._field == \"valeur_filtree\")\n  |> filter(fn: (r) => r.canal_nom == \"VB1\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)" },
+            { "refId": "D", "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" }, "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_dewesoft\")\n  |> filter(fn: (r) => r._field == \"valeur_filtree\")\n  |> filter(fn: (r) => r.canal_nom == \"VB2\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)" }
+          ]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "Teneur en eau (%) — tous murs/couches (relevés ponctuels)",
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 27 },
+          "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+          "fieldConfig": { "defaults": { "unit": "percent", "custom": { "drawStyle": "points", "pointSize": 6 } }, "overrides": [] },
+          "targets": [{
+            "refId": "A",
+            "datasource": { "type": "influxdb", "uid": "PC5EC3278A1593207" },
+            "query": "from(bucket: \"Test_Capteurs\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mesures_teneur_eau\")\n  |> filter(fn: (r) => r._field == \"teneur_eau_pourcent\")\n  |> keep(columns: [\"_time\", \"_value\", \"_field\", \"mur\", \"couche\"])\n  |> group(columns: [\"mur\", \"couche\"])\n  |> sort(columns: [\"_time\"])"
+          }]
         }
       ]
     }
