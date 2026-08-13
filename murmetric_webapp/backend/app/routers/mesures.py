@@ -264,27 +264,30 @@ def lister_mesures(
 
 @router.get("/croisement")
 def croisement(
-    type: TypeMesure = Query(..., description="hr_t | retrait — deux champs de la même mesure uniquement (ex. temperature/humidite)"),
+    type: TypeMesure = Query(..., description="hr_t | retrait — champs de la même mesure uniquement (ex. temperature/humidite/point_de_rosee)"),
     mur: str | None = None,
     couche: str | None = None,
     position: str | None = None,
     champ_x: str = Query(...),
     champ_y: str = Query(...),
+    champ_z: str | None = Query(None, description="Optionnel — 3e grandeur pour un nomogramme 3D (ex. hr_t : temperature/humidite/point_de_rosee)"),
     debut: str | None = None,
     fin: str | None = None,
     fenetre: str | None = Query("10m", description="Fenêtre d'agrégation avant croisement — évite des milliers de points bruts non alignés dans le temps"),
 ) -> dict:
-    """Points appariés (x, y) au même horodatage — nomogramme (section 32 :
-    portage scopé au croisement de deux champs d'une même mesure, ex.
-    température vs humidité ; le croisement avec la teneur en eau, mesure
-    distincte et éparse nécessitant une jointure "au plus proche dans le
-    temps" cf. section 16, n'est pas dans ce premier périmètre)."""
-    if type == "teneur_eau" or champ_x not in _CHAMPS_PAR_TYPE[type] or champ_y not in _CHAMPS_PAR_TYPE[type]:
-        raise HTTPException(status_code=400, detail="champ_x/champ_y doivent appartenir à la même mesure (hr_t ou retrait).")
+    """Points appariés (x, y[, z]) au même horodatage — nomogramme
+    (section 32 : portage scopé au croisement de champs d'une même mesure,
+    ex. température/humidité/point de rosée ; le croisement avec la
+    teneur en eau, mesure distincte et éparse nécessitant une jointure "au
+    plus proche dans le temps" cf. section 16, n'est pas dans ce périmètre)."""
+    champs_demandes = [champ_x, champ_y] + ([champ_z] if champ_z else [])
+    if type == "teneur_eau" or any(c not in _CHAMPS_PAR_TYPE[type] for c in champs_demandes):
+        raise HTTPException(status_code=400, detail="champ_x/champ_y/champ_z doivent appartenir à la même mesure (hr_t ou retrait).")
 
     debut_iso, fin_iso = _valider_bornes(debut, fin, type)
     mesure = _MESURE_PAR_TYPE[type]
-    filtres = [f'r._measurement == "{mesure}"', f'(r._field == "{champ_x}" or r._field == "{champ_y}")']
+    clause_champs = " or ".join(f'r._field == "{c}"' for c in champs_demandes)
+    filtres = [f'r._measurement == "{mesure}"', f"({clause_champs})"]
     if mur:
         filtres.append(f'r.nom_mur == "{flux_escape(mur)}"')
     if couche:
@@ -292,6 +295,7 @@ def croisement(
     if position:
         filtres.append(f'r.position == "{flux_escape(position)}"')
     clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    clause_exists = " and ".join(f"exists r.{c}" for c in champs_demandes)
 
     flux = (
         f'from(bucket: "{config.INFLUX_BUCKET}")\n'
@@ -299,7 +303,7 @@ def croisement(
         f"{clause_filtre}\n"
         f"  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)\n"
         f'  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")\n'
-        f'  |> filter(fn: (r) => exists r.{champ_x} and exists r.{champ_y})\n'
+        f"  |> filter(fn: (r) => {clause_exists})\n"
         f'  |> sort(columns: ["_time"])'
     )
     try:
@@ -311,5 +315,8 @@ def croisement(
     for table in tables:
         for record in table.records:
             valeurs = record.values
-            points.append({"time": record.get_time().isoformat(), "x": valeurs.get(champ_x), "y": valeurs.get(champ_y)})
-    return {"champ_x": champ_x, "champ_y": champ_y, "points": points}
+            point = {"time": record.get_time().isoformat(), "x": valeurs.get(champ_x), "y": valeurs.get(champ_y)}
+            if champ_z:
+                point["z"] = valeurs.get(champ_z)
+            points.append(point)
+    return {"champ_x": champ_x, "champ_y": champ_y, "champ_z": champ_z, "points": points}

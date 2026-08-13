@@ -2560,11 +2560,38 @@ structurellement pas :
 Validé en direct : 3658 points température/humidité réels renvoyés pour
 SOCMA 1 / "milieu isolant".
 
-**Non fait, explicitement hors de ce périmètre** : rotation 3D façon POC
-(prévue pour une prochaine session dédiée — décision explicite de
-l'utilisateur de ne pas la faire à la va-vite en fin de session),
-graphiques compagnons (couverts par Grafana), croisement avec la teneur en
-eau (jointure au plus proche à implémenter séparément si besoin).
+**Non fait dans ce premier périmètre** : graphiques compagnons (couverts
+par Grafana), croisement avec la teneur en eau (jointure au plus proche à
+implémenter séparément si besoin).
+
+### Nomogramme 3D (13/08/2026)
+
+Rotation 3D implémentée le lendemain comme prévu (report explicite de
+l'utilisateur le 12/08, cf. entrée précédente — pas fait à la va-vite en
+fin de session). Réécrit proprement plutôt que porté ligne à ligne depuis
+le POC (dont le rendu 3D reste ~50 fonctions très couplées à son propre
+DOM, jugé trop risqué à reprendre tel quel) — seule la formule de
+projection en perspective (rotation yaw/pitch puis division perspective)
+est reprise, c'est une technique 3D générique, pas du code spécifique au
+POC.
+
+- **Backend** : `GET /api/mesures/croisement` accepte désormais un
+  `champ_z` optionnel (rétrocompatible — absent, comportement 2D inchangé).
+  Avec 3 champs, le `pivot()` Flux renvoie des triplets (x, y, z) au même
+  horodatage plutôt que des paires.
+- **Frontend** : `murmetric_webapp/frontend/src/components/Nomogramme3D.jsx`
+  — cadre en fil de fer (cube, repère spatial), points colorés selon leur
+  position temporelle (même logique que la version 2D), triés par
+  profondeur avant tracé (algorithme du peintre, pour une occlusion
+  correcte), rotation à la souris (glisser = yaw/pitch), zoom à la molette,
+  survol = lecture des 3 valeurs exactes du point le plus proche à l'écran.
+  Bouton "Réinitialiser la vue".
+- **Intégration** : bascule 2D/3D dans l'onglet "Vue d'ensemble", visible
+  uniquement pour le type HR/T (3 grandeurs disponibles — température,
+  humidité, point de rosée — condition nécessaire pour un vrai axe Z ;
+  le retrait n'a que 2 champs, valeur brute/filtrée, pas de 3D proposée).
+- Validé avec de vraies données : 3658 triplets température/humidité/point
+  de rosée récupérés pour SOCMA 1 / milieu isolant.
 
 ### Date d'expiration de clé API trackée (12/08/2026)
 

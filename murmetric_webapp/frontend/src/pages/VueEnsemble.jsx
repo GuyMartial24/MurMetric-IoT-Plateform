@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api.js";
 import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import Nomogramme from "../components/Nomogramme.jsx";
+import Nomogramme3D from "../components/Nomogramme3D.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
 
 const CHAMP_PRINCIPAL = { hr_t: "temperature", retrait: "valeur_filtree", teneur_eau: "teneur_eau_pourcent" };
@@ -11,6 +12,7 @@ export default function VueEnsemble() {
   const [points, setPoints] = useState([]);
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
+  const [mode3D, setMode3D] = useState(false);
 
   const charger = async () => {
     setEnCours(true);
@@ -44,11 +46,25 @@ export default function VueEnsemble() {
       )}
       {(selection.type === "hr_t" || selection.type === "retrait") && (
         <div className="carte">
-          <h3 style={{ marginTop: 0 }}>Nomogramme — grandeurs croisées</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>Nomogramme — grandeurs croisées</h3>
+            {selection.type === "hr_t" && (
+              <div>
+                <button onClick={() => setMode3D(false)} disabled={!mode3D} style={{ marginRight: "0.5rem" }}>2D</button>
+                <button onClick={() => setMode3D(true)} disabled={mode3D}>3D</button>
+              </div>
+            )}
+          </div>
           <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
-            Croise deux grandeurs l'une contre l'autre (pas contre le temps) — survole un point pour lire sa valeur par projection sur les axes.
+            {mode3D
+              ? "Croise trois grandeurs dans un même espace — glisse pour tourner, molette pour zoomer, survole un point pour lire ses valeurs."
+              : "Croise deux grandeurs l'une contre l'autre (pas contre le temps) — survole un point pour lire sa valeur par projection sur les axes."}
           </p>
-          <Nomogramme type={selection.type} mur={selection.mur} couche={selection.couche} position={selection.position} />
+          {mode3D && selection.type === "hr_t" ? (
+            <Nomogramme3D type={selection.type} mur={selection.mur} couche={selection.couche} position={selection.position} />
+          ) : (
+            <Nomogramme type={selection.type} mur={selection.mur} couche={selection.couche} position={selection.position} />
+          )}
         </div>
       )}
     </div>
