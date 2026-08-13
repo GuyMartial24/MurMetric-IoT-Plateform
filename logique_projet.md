@@ -2893,6 +2893,26 @@ les insérer dans un rapport.
   pas de certificat TLS — pas traité ici, sujet à part (nécessiterait
   Let's Encrypt/cert-manager ou un reverse proxy TLS devant le service k3s).
 
+### Axe Y des panels retrait borné (13/08/2026)
+
+Suite directe de l'anomalie découverte précédemment (pic +5898mm non
+filtré sur HA1) : l'utilisateur a signalé que le panel "Retrait filtré —
+SOCMA 1" semblait plat. Vérifié sur données réelles — **ce n'est pas la
+donnée qui est plate** : HA2/VA1/VA2 sont dans une plage tout à fait
+normale (-16,3 à +2,9 mm, comparable à SOCMA 2), seul HA1 porte encore le
+pic non corrigé (min -10,85 / max 5897,95 mm). Grafana règle l'axe Y du
+panel pour que les 4 courbes superposées y tiennent — le pic de HA1 étire
+l'échelle jusqu'à 300+, écrasant visuellement les 3 autres courbes
+légitimes en une ligne plate près de zéro.
+
+**Corrigé** (option choisie par l'utilisateur — pas de modification des
+données stockées) : `fieldConfig.defaults.min/max` fixés à **-50/+50 mm**
+sur les 4 panels retrait (filtré et brut, SOCMA 1 & 2) — plage
+physiquement large par rapport à toute variation réelle de retrait
+observée, mais bien en dessous des artefacts confirmés (±2000-6000mm).
+Un artefact futur pousserait désormais la courbe en butée haute/basse du
+graphique au lieu de rendre les autres courbes illisibles.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
