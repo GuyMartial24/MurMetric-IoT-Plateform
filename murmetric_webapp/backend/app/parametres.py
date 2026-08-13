@@ -52,6 +52,24 @@ def definir_parametres_groq(cle_api: str | None, modele: str | None, expiration:
         _ecrire(parametres)
 
 
+def obtenir_cle_gemini() -> str:
+    return _lire().get("gemini_api_key") or config.GEMINI_API_KEY
+
+
+def obtenir_modele_gemini() -> str:
+    return _lire().get("gemini_model") or config.GEMINI_MODEL
+
+
+def definir_parametres_gemini(cle_api: str | None, modele: str | None) -> None:
+    with _verrou:
+        parametres = _lire()
+        if cle_api:
+            parametres["gemini_api_key"] = cle_api
+        if modele:
+            parametres["gemini_model"] = modele
+        _ecrire(parametres)
+
+
 def masquer(valeur: str) -> str:
     if not valeur:
         return ""

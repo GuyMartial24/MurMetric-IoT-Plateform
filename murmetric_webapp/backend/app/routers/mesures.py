@@ -102,6 +102,126 @@ def executer_requete(flux: str) -> list[dict]:
     return resultats
 
 
+_AGREGATS_NATIFS = (
+    ("minimum", "min"), ("maximum", "max"), ("moyenne", "mean"), ("mediane", "median"), ("nombre_points", "count"),
+)
+
+
+def _construire_filtres_communs(type_mesure: TypeMesure, mur, couche, position, canal_nom) -> list[str]:
+    filtres = []
+    if mur:
+        filtres.append(f'r.nom_mur == "{flux_escape(mur)}"' if type_mesure != "teneur_eau" else f'r.mur == "{flux_escape(mur)}"')
+    if couche:
+        filtres.append(f'r.nom_couche == "{flux_escape(couche)}"' if type_mesure != "teneur_eau" else f'r.couche == "{flux_escape(couche)}"')
+    if position and type_mesure in ("hr_t", "retrait"):
+        filtres.append(f'r.position == "{flux_escape(position)}"')
+    if canal_nom and type_mesure == "retrait":
+        filtres.append(f'r.canal_nom == "{flux_escape(canal_nom)}"')
+    return filtres
+
+
+def _valeur_agregat(mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str, nom_fonction: str):
+    """Un agrégat natif InfluxDB (min/max/mean/median/count) — nettement
+    plus rapide qu'un reduce() générique passé par la VM Flux point par
+    point, testé en conditions réelles le 12/08/2026 sur mesures_dewesoft/
+    retrait (~1,5 milliard de points) : le reduce() dépassait encore le
+    timeout là où ces agrégats natifs passent."""
+    filtres = [f'r._measurement == "{mesure}"', f'r._field == "{champ}"', *filtres_communs]
+    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    # group() sans argument : fusionne toutes les tables restantes en une
+    # seule avant l'agrégat. Bug trouvé le 13/08/2026 en déboguant
+    # amplitude_jour_nuit : sans lui, une sélection mur+couche qui recoupe
+    # plusieurs capteurs (differents "position"/adresse_mac non précisés
+    # dans la sélection — ex. "SOCMA 1" + "interface carreau et exterieur"
+    # recoupe 2 capteurs à des positions différentes) produit une table par
+    # capteur ; l'ancien code ne lisait que la PREMIÈRE table rencontrée,
+    # donc une "moyenne" (ou min/max/count) silencieusement calculée sur un
+    # seul capteur sur N — jamais détecté avant faute de sélection testée
+    # avec plusieurs capteurs sur le même mur+couche. executer_requete()
+    # (courbe affichée) n'a jamais eu ce problème : il itère déjà toutes
+    # les tables.
+    flux = (
+        f'from(bucket: "{config.INFLUX_BUCKET}")\n'
+        f"  |> range(start: {debut}, stop: {fin})"
+        f"{clause_filtre}\n"
+        f"  |> group()\n"
+        f"  |> {nom_fonction}()"
+    )
+    tables = query_api().query(flux, org=config.INFLUX_ORG)
+    for table in tables:
+        for record in table.records:
+            return record.get_value()
+    return None
+
+
+def _tendance(mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str) -> dict | None:
+    """Moyenne de la première moitié vs deuxième moitié de la période —
+    indicateur de tendance simple (pas une vraie régression linéaire,
+    volontairement : reste une comparaison de 2 agrégats natifs, pas un
+    rapatriement de série temporelle + calcul en Python)."""
+    debut_dt = datetime.fromisoformat(debut)
+    fin_dt = datetime.fromisoformat(fin)
+    milieu = (debut_dt + (fin_dt - debut_dt) / 2).isoformat()
+    premiere = _valeur_agregat(mesure, champ, filtres_communs, debut, milieu, "mean")
+    seconde = _valeur_agregat(mesure, champ, filtres_communs, milieu, fin, "mean")
+    if premiere is None or seconde is None:
+        return None
+    return {"premiere_moitie": premiere, "deuxieme_moitie": seconde, "delta": seconde - premiere}
+
+
+def _amplitude_jour_nuit(mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str) -> dict | None:
+    """Moyenne "jour" (8h-19h) vs "nuit" (20h-7h) — approximé en heures
+    UTC (pas de conversion de fuseau horaire : décalage de 1-2h selon
+    l'heure d'été/hiver par rapport à l'heure locale d'Amiens, acceptable
+    pour un indicateur d'amplitude, pas une donnée horaire précise). Les
+    deux bornes de hourSelection() sont INCLUSIVES et son "stop" doit
+    rester entre 0 et 23 (24 rejeté par InfluxDB) : jour = [8,19] (12h),
+    nuit = [20,23] ∪ [0,7] (12h) — bornes choisies pour ne se chevaucher
+    nulle part plutôt que de compter une heure sur les deux périodes.
+    "Nuit" = union de deux plages : hourSelection() ne boucle pas
+    nativement à travers minuit."""
+    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(
+        [f'r._measurement == "{mesure}"', f'r._field == "{champ}"', *filtres_communs]
+    ) + ")"
+    # group() avant chaque mean() : même correctif que _valeur_agregat
+    # (fusionner toutes les tables — un capteur par "position"/adresse_mac
+    # différente — avant l'agrégat, pas seulement lire la première).
+    flux = f'''
+jour = from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: {debut}, stop: {fin})
+  {clause_filtre}
+  |> hourSelection(start: 8, stop: 19)
+  |> group()
+  |> mean()
+  |> set(key: "periode", value: "jour")
+
+nuit1 = from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: {debut}, stop: {fin})
+  {clause_filtre}
+  |> hourSelection(start: 20, stop: 23)
+
+nuit2 = from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: {debut}, stop: {fin})
+  {clause_filtre}
+  |> hourSelection(start: 0, stop: 7)
+
+nuit = union(tables: [nuit1, nuit2])
+  |> group()
+  |> mean()
+  |> set(key: "periode", value: "nuit")
+
+union(tables: [jour, nuit])
+'''
+    valeurs: dict = {}
+    tables = query_api().query(flux, org=config.INFLUX_ORG)
+    for table in tables:
+        for record in table.records:
+            valeurs[record.values.get("periode")] = record.get_value()
+    if "jour" not in valeurs or "nuit" not in valeurs:
+        return None
+    return {"moyenne_jour": valeurs["jour"], "moyenne_nuit": valeurs["nuit"], "amplitude": abs(valeurs["jour"] - valeurs["nuit"])}
+
+
 def calculer_statistiques(
     type_mesure: TypeMesure,
     mur: str | None,
@@ -111,69 +231,112 @@ def calculer_statistiques(
     debut: str,
     fin: str,
 ) -> dict:
-    """Stats pré-agrégées (min/max/mean/count) — jamais de points bruts
-    envoyés à l'assistant IA, cf. section 32 (garde-fou coût/fiabilité).
+    """Stats pré-agrégées — jamais de points bruts envoyés à l'assistant
+    IA, cf. section 32 (garde-fou coût/fiabilité).
 
     Un champ par grandeur du type (ex. hr_t → temperature/humidite/
     point_de_rosee), pas seulement la première — bug trouvé le 13/08/2026 :
     l'assistant ne calculait que sur `_CHAMPS_PAR_TYPE[type][0]`
     (toujours "temperature" pour hr_t), donc ne pouvait littéralement pas
     répondre sur l'humidité ou le point de rosée quel que soit le contenu
-    de la sélection ou de la question posée. Coût négligeable : hr_t/
-    teneur_eau sont des volumes instantanés (cf. _FENETRE_DEFAUT_JOURS),
-    retrait n'a que 2 champs — toutes les requêtes restent lancées en
-    parallèle.
+    de la sélection ou de la question posée.
+
+    Par champ : minimum/maximum/moyenne/mediane/nombre_points (agrégats
+    natifs), tendance (1ère vs 2e moitié de la période), et pour hr_t
+    uniquement amplitude_jour_nuit — enrichissements du 13/08/2026, tous
+    calculés côté InfluxDB (jamais de série temporelle rapatriée en
+    Python). Coût négligeable : hr_t/teneur_eau sont des volumes
+    instantanés (cf. _FENETRE_DEFAUT_JOURS), retrait n'a que 2 champs —
+    toutes les requêtes (par champ × par enrichissement) partent en
+    parallèle sur un seul pool de threads.
     """
     champs = _CHAMPS_PAR_TYPE[type_mesure]
     mesure = _MESURE_PAR_TYPE[type_mesure]
-
-    filtres_communs = []
-    if mur:
-        filtres_communs.append(f'r.nom_mur == "{flux_escape(mur)}"' if type_mesure != "teneur_eau" else f'r.mur == "{flux_escape(mur)}"')
-    if couche:
-        filtres_communs.append(f'r.nom_couche == "{flux_escape(couche)}"' if type_mesure != "teneur_eau" else f'r.couche == "{flux_escape(couche)}"')
-    if position and type_mesure in ("hr_t", "retrait"):
-        filtres_communs.append(f'r.position == "{flux_escape(position)}"')
-    if canal_nom and type_mesure == "retrait":
-        filtres_communs.append(f'r.canal_nom == "{flux_escape(canal_nom)}"')
-
-    # Les 4 agrégats natifs (min/max/mean/count, optimisés par InfluxDB —
-    # nettement plus rapides qu'un reduce() générique passé par la VM Flux
-    # point par point, testé en conditions réelles le 12/08/2026 sur
-    # mesures_dewesoft/retrait, ~1,5 milliard de points : le reduce() dépassait
-    # encore le timeout là où min()/max()/mean()/count() natifs passent) sont
-    # lancés en parallèle plutôt qu'en séquence — le temps total tombe alors
-    # au niveau du plus lent des 4, pas de leur somme. Idem entre champs :
-    # toutes les requêtes (champs × agrégats) partent ensemble.
-    def _executer(champ: str, nom_fonction: str) -> tuple | None:
-        filtres = [f'r._measurement == "{mesure}"', f'r._field == "{champ}"', *filtres_communs]
-        clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
-        flux = (
-            f'from(bucket: "{config.INFLUX_BUCKET}")\n'
-            f"  |> range(start: {debut}, stop: {fin})"
-            f"{clause_filtre}\n"
-            f"  |> {nom_fonction}()"
-        )
-        tables = query_api().query(flux, org=config.INFLUX_ORG)
-        for table in tables:
-            for record in table.records:
-                return record.get_value()
-        return None
+    filtres_communs = _construire_filtres_communs(type_mesure, mur, couche, position, canal_nom)
 
     stats_par_champ: dict = {champ: {} for champ in champs}
     try:
-        with ThreadPoolExecutor(max_workers=4 * len(champs)) as executor:
-            futurs = {
-                (champ, nom): executor.submit(_executer, champ, fn)
+        with ThreadPoolExecutor(max_workers=8 * len(champs)) as executor:
+            futurs_agregats = {
+                (champ, nom): executor.submit(_valeur_agregat, mesure, champ, filtres_communs, debut, fin, fn)
                 for champ in champs
-                for nom, fn in (("minimum", "min"), ("maximum", "max"), ("moyenne", "mean"), ("nombre_points", "count"))
+                for nom, fn in _AGREGATS_NATIFS
             }
-            for (champ, nom), futur in futurs.items():
+            futurs_tendance = {champ: executor.submit(_tendance, mesure, champ, filtres_communs, debut, fin) for champ in champs}
+            futurs_amplitude = (
+                {champ: executor.submit(_amplitude_jour_nuit, mesure, champ, filtres_communs, debut, fin) for champ in champs}
+                if type_mesure == "hr_t" else {}
+            )
+
+            for (champ, nom), futur in futurs_agregats.items():
                 stats_par_champ[champ][nom] = futur.result()
+            for champ, futur in futurs_tendance.items():
+                stats_par_champ[champ]["tendance"] = futur.result()
+            for champ, futur in futurs_amplitude.items():
+                stats_par_champ[champ]["amplitude_jour_nuit"] = futur.result()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Requête statistique échouée : {exc}") from exc
 
     return {"champs": stats_par_champ, "mur": mur, "couche": couche, "debut": debut, "fin": fin}
+
+
+def comparer_periodes(
+    type_mesure: TypeMesure,
+    mur: str | None,
+    couche: str | None,
+    position: str | None,
+    canal_nom: str | None,
+    debut1: str,
+    fin1: str,
+    debut2: str,
+    fin2: str,
+) -> dict:
+    """Comparer deux périodes explicites — outil séparé (section 32,
+    13/08/2026) appelé par l'assistant IA à la demande, pas calculé
+    systématiquement dans calculer_statistiques() (deux fenêtres complètes
+    = deux fois plus de requêtes, pas justifié tant que la question posée
+    ne porte pas sur une comparaison)."""
+    periode1 = calculer_statistiques(type_mesure, mur, couche, position, canal_nom, debut1, fin1)
+    periode2 = calculer_statistiques(type_mesure, mur, couche, position, canal_nom, debut2, fin2)
+    deltas_moyenne = {}
+    for champ in _CHAMPS_PAR_TYPE[type_mesure]:
+        m1 = periode1["champs"][champ].get("moyenne")
+        m2 = periode2["champs"][champ].get("moyenne")
+        deltas_moyenne[champ] = (m2 - m1) if (m1 is not None and m2 is not None) else None
+    return {"periode_1": periode1, "periode_2": periode2, "delta_moyenne_periode2_moins_periode1": deltas_moyenne}
+
+
+def ecart_brut_filtre(canal_nom: str | None, debut: str, fin: str) -> dict:
+    """Écart moyen absolu entre retrait brut et filtré (mesures_dewesoft
+    uniquement) — proxy peu coûteux à ce que donnerait un recalcul Hampel
+    complet sur une longue période (hors de portée : l'outil Hampel
+    ajustable est plafonné à 2h côté ingestion 100 Hz, cf. section 32,
+    "Filtre de Hampel ajustable à la volée" — les fenêtres habituelles de
+    l'assistant vont jusqu'à 30 jours pour le retrait). Calcul entièrement
+    côté InfluxDB (pivot + map + mean) : aucun point brut ne traverse le
+    réseau vers le process Python."""
+    if not canal_nom:
+        return {"erreur": "canal_nom requis (retrait uniquement, un seul canal à la fois)."}
+    flux = f'''
+import "math"
+
+from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: {debut}, stop: {fin})
+  |> filter(fn: (r) => r._measurement == "{MESURE_DEWESOFT}")
+  |> filter(fn: (r) => r._field == "valeur" or r._field == "valeur_filtree")
+  |> filter(fn: (r) => r.canal_nom == "{flux_escape(canal_nom)}")
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> map(fn: (r) => ({{_time: r._time, _value: math.abs(x: r.valeur - r.valeur_filtree)}}))
+  |> mean()
+'''
+    try:
+        tables = query_api().query(flux, org=config.INFLUX_ORG)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Requête écart brut/filtré échouée : {exc}") from exc
+    for table in tables:
+        for record in table.records:
+            return {"canal_nom": canal_nom, "ecart_moyen_absolu": record.get_value(), "debut": debut, "fin": fin}
+    return {"canal_nom": canal_nom, "ecart_moyen_absolu": None, "debut": debut, "fin": fin}
 
 
 _TAGS_PAR_TYPE = {

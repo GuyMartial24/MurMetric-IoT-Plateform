@@ -23,6 +23,22 @@ INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "Test_Capteurs")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
+# Gemini (API OpenAI-compatible de Google AI Studio) — ajouté le 13/08/2026
+# pour la vision (analyse d'image de graphique), indisponible sur Groq
+# (aucun modèle vision actif sur ce compte au 13/08/2026 : les anciens
+# llama-3.2-*-vision-preview sont décommissionnés côté Groq — vérifié en
+# direct par appel API, pas juste absence de la liste des modèles).
+# Devient le fournisseur PRIMAIRE pour le texte aussi (demande explicite de
+# l'utilisateur), avec repli automatique sur Groq en cas d'échec — jamais
+# l'inverse pour la vision, structurellement impossible côté Groq.
+# "gemini-flash-latest" : alias toujours à jour maintenu par Google, pas un
+# nom de modèle figé — 3 des 4 noms de modèles Gemini testés en direct ce
+# jour-là étaient déjà obsolètes (404/décommissionnés), cf. logique_projet.md
+# section 32.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
 # Authentification JWT (section 32, "Non tranché à ce stade" -> implémenté
 # le 12/08/2026). Secret de signature — à définir via JWT_SECRET_KEY en
 # production (k8s secret) ; le défaut ci-dessous n'est là que pour le dev

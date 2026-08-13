@@ -51,6 +51,16 @@ spec:
                   key: groq-api-key
             - name: GROQ_MODEL
               value: llama-3.3-70b-versatile
+            # Gemini (Google AI Studio) — fournisseur primaire de l'assistant
+            # depuis le 13/08/2026 (texte + vision), Groq passant en repli
+            # texte uniquement. Clé fournie par l'utilisateur ce jour-là.
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: webapp-gemini-api-key
+            - name: GEMINI_MODEL
+              value: gemini-flash-latest
             - name: JWT_SECRET_KEY
               valueFrom:
                 secretKeyRef:

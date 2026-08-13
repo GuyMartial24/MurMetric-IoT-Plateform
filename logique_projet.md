@@ -3231,6 +3231,146 @@ des valeurs cohérentes (871 points chacun) ; question posée à l'assistant
 sur l'humidité (jamais accessible avant ce correctif) → réponse
 `71.51331802525837`, identique au chiffre réel renvoyé par l'API.
 
+### Assistant IA — Gemini (vision) + agrégats enrichis + nouveaux outils (13/08/2026, même jour)
+
+**Origine.** Suite au correctif ci-dessus, l'utilisateur a demandé (1) si la
+liste déroulante "Type de mesure" de l'assistant devrait être alignée sur
+le catalogue d'axes du nomogramme, et (2) pourquoi seul l'agrégé est
+envoyé au LLM + quelle approche innovante améliorerait l'interprétation.
+Trois pistes proposées : agrégats enrichis (médiane/tendance/comparaison/
+amplitude), vision (image du graphique), nouveaux outils pilotés par le
+modèle. Vision d'abord écartée : **aucun modèle vision disponible sur ce
+compte Groq**, vérifié par appel direct (les `llama-3.2-*-vision-preview`
+répondent explicitement "has been decommissioned"). L'utilisateur a alors
+fourni une clé Google AI Studio (Gemini) avec consigne : Gemini en
+fournisseur primaire (texte + vision), repli automatique sur Groq pour le
+texte si Gemini échoue.
+
+**Validation technique avant implémentation** (même exigence "vérifier sur
+de vraies données" que tout le reste de la session) : testé en direct
+depuis le pod webapp, via le SDK `openai` déjà en place (Gemini expose une
+couche de compatibilité OpenAI : `https://generativelanguage.googleapis.com/v1beta/openai/`) :
+- Liste des modèles réels du compte : catalogue très différent de ce que
+  je connaissais (gemini-3.x/3.5/3.6/3.7 existent déjà) — `gemini-2.5-flash`,
+  `gemini-2.0-flash`, `gemini-1.5-flash` tous 404/dépréciés. `gemini-flash-latest`
+  (alias toujours à jour maintenu par Google) fonctionne — retenu plutôt
+  qu'un nom de version figé, justement pour éviter de reproduire l'erreur.
+- Tool-calling (function calling) : fonctionne via la couche de
+  compatibilité OpenAI, testé avec un outil factice (`finish_reason:
+  tool_calls`, arguments correctement parsés).
+- Vision : accepte un `image_url` en data URI dans le contenu du message,
+  répond à une vraie question sur l'image (premier test avec une image
+  PNG mal construite à la main donnait une réponse incohérente — refait
+  proprement avec un PNG généré par code, réponse correcte).
+
+**Architecture retenue :**
+- `config.py` : `GEMINI_API_KEY`/`GEMINI_MODEL` (défaut `gemini-flash-latest`)/`GEMINI_BASE_URL`.
+- `parametres.py`/`routers/parametres.py` : clé/modèle Gemini éditables
+  depuis "Paramètres → Assistant IA" (même mécanisme que Groq : env var de
+  secours, valeur persistée sur le volume prioritaire, jamais réaffichée
+  en clair). Page Paramètres montre maintenant Gemini (primaire) ET Groq
+  (repli) avec une note explicite sur l'ordre.
+- `assistant.py` : `_completer_avec_outils(client, modele, messages)`
+  factorise la boucle tool-use (bornée à 4 itérations, inchangée) —
+  réutilisée pour Gemini ET Groq. `POST /api/assistant/chat` essaie
+  Gemini d'abord (fil de messages neuf), et **seulement en cas
+  d'exception** reconstruit un fil neuf et retente avec Groq — jamais de
+  fil mixte entre fournisseurs (les messages assistant Gemini portent des
+  champs propres, ex. `thought_signature`, potentiellement incompatibles
+  avec Groq). Réponse inclut désormais `"fournisseur": "gemini"|"groq"`.
+  Si aucun des deux n'est configuré ou que les deux échouent, message
+  d'erreur listant les deux causes.
+- `POST /api/assistant/chat-image` (nouveau) : Gemini exclusivement, pas
+  de repli possible. Accepte `image_data_uri` + `prompt` + `selection`
+  optionnelle (si fournie, les statistiques précises de cette sélection
+  sont ajoutées en texte à côté de l'image, pour ancrer l'interprétation
+  visuelle sur de vrais chiffres plutôt que la seule impression visuelle).
+- Deux nouveaux outils exposés au modèle (option 3) : `comparer_deux_periodes`
+  (deux fenêtres explicites, delta de moyenne) et `ecart_brut_filtre_retrait`
+  (écart moyen absolu brut/filtré, calculé entièrement côté InfluxDB via
+  `pivot()`+`map()`+`mean()`, jamais de recalcul Hampel sur une longue
+  période — plafonné à 2h par ailleurs, cf. section Hampel ajustable).
+- **Décision sur la liste déroulante (réponse à la question initiale)** :
+  gardée coarse (hr_t/retrait/teneur_eau), pas alignée sur le catalogue du
+  nomogramme — l'assistant voit maintenant TOUTES les grandeurs du type en
+  un seul appel (cf. correctif précédent), un sélecteur de grandeur
+  individuelle serait redondant.
+
+**Agrégats enrichis (`calculer_statistiques()`)** — par champ, en plus de
+min/max/moyenne/nombre_points déjà présents :
+- `mediane` (agrégat natif InfluxDB `median()`).
+- `tendance` : moyenne 1ère vs 2e moitié de la période (pas une régression
+  linéaire — comparaison volontairement simple de 2 agrégats natifs, pas
+  de rapatriement de série + calcul Python).
+- `amplitude_jour_nuit` (hr_t uniquement) : moyenne "jour" (8h-19h UTC) vs
+  "nuit" (20h-7h UTC, union de deux `hourSelection()` car pas de bouclage
+  natif à travers minuit) — approximé en heures UTC, pas de conversion de
+  fuseau (décalage 1-2h selon saison par rapport à l'heure locale
+  d'Amiens, acceptable pour un indicateur, pas une donnée précise).
+Toutes les requêtes (par champ × par enrichissement) parallélisées sur un
+seul pool de threads, comme l'existant.
+
+**Deux bugs trouvés et corrigés PENDANT la vérification en direct** (même
+rigueur "vérifier sur de vraies données" que tout le reste de la
+session) :
+1. `hourSelection(stop: 24)` rejeté par InfluxDB ("stop must be between 0
+   and 23") — bornes ajustées à jour=[8,19]/nuit=[20,23]∪[0,7] (12h/12h,
+   sans chevauchement).
+2. **Bug de fond, plus important, découvert en déboguant l'amplitude
+   jour/nuit** : une valeur "moyenne_jour" de temperature à 0,16°C (sous
+   le minimum documenté de 7,7°C — physiquement impossible) a révélé que
+   `_valeur_agregat()` (donc TOUS les agrégats de `calculer_statistiques()`
+   — min/max/moyenne/médiane/count, pas seulement l'amplitude jour/nuit)
+   ne lisait que la PREMIÈRE table renvoyée par InfluxDB et ignorait
+   silencieusement les suivantes. Or une sélection mur+couche sans
+   `position` peut recouper plusieurs capteurs physiques distincts (ex.
+   "SOCMA 1"+"interface carreau et exterieur" recoupe 2 capteurs à des
+   positions différentes, vérifié en direct : comptages 435 et 889 sur des
+   tables séparées) — les stats de l'assistant étaient donc silencieusement
+   calculées sur UN SEUL capteur arbitraire sur N dès que la sélection
+   n'était pas assez précise, **bug préexistant à cette session**, jamais
+   détecté faute de sélection testée avec plusieurs capteurs partageant
+   mur+couche. `executer_requete()` (courbe affichée dans l'appli) n'a
+   jamais eu ce problème : elle itère déjà toutes les tables.
+   **Corrigé** : `|> group()` ajouté avant chaque agrégat (fusionne
+   toutes les tables restantes en une seule avant min/max/mean/median/
+   count), dans `_valeur_agregat()` et dans `_amplitude_jour_nuit()`.
+   **Effet secondaire découvert en revérifiant** : `nombre_points` pour la
+   sélection de test passe de 871 (un seul capteur) à 2647 (les deux
+   combinés) et révèle une **température minimale de -38,6°C** sur le
+   second capteur — implausible physiquement, signature probable d'un
+   artefact de mesure du même type que le pic +5898mm trouvé sur HA1
+   (retrait) plus tôt dans la session. **Non corrigé à ce stade** (juste
+   documenté ici) — à traiter si l'utilisateur le demande, même logique
+   que pour l'anomalie HA1.
+
+**Vérifié réel de bout en bout (VPS, 13/08/2026)** :
+- Stats enrichies : médiane/tendance/amplitude_jour_nuit peuplées avec des
+  valeurs cohérentes après les deux correctifs ci-dessus.
+- Chat texte via Gemini : question sur la médiane → réponse exacte
+  (`12,9 °C`), `"fournisseur":"gemini"` confirmé dans la réponse.
+- `comparer_deux_periodes` : comparaison juin/juillet 2026 → moyennes et
+  delta cohérents (juillet plus chaud, plausible saisonnièrement).
+- `ecart_brut_filtre_retrait` : testé sur une fenêtre sans donnée récente
+  (3 dernières heures — le pipeline retrait attend alors le fichier .dxd
+  du jour, cf. section Monitoring) → requête réellement rapide (0,355s en
+  direct sur InfluxDB) mais LLM qui insiste/retente sur un résultat vide,
+  d'où un délai HTTP trompeur ; retesté sur une fenêtre avec données
+  réelles (12/08/2026 08h-10h UTC) → réponse cohérente (écart quasi nul,
+  cohérent avec l'investigation "retrait brut/filtré quasi identiques" de
+  la veille).
+- Repli Groq : déclenché une fois par un vrai 503 Gemini ("high demand")
+  pendant les tests — confirme que le mécanisme fonctionne. Dans ce essai
+  précis, Groq a lui-même échoué sur `ecart_brut_filtre_retrait`
+  spécifiquement (le modèle a mal formé son propre appel d'outil,
+  `tool_use_failed` côté Groq) — limite connue de certains modèles Llama
+  sur des schémas d'outils plus récents/complexes, hors de mon contrôle ;
+  le message d'erreur combiné (Gemini + Groq) a été retourné proprement,
+  pas de crash silencieux.
+- Vision : testé avec un PNG 40×40 rouge généré par code (le tout premier
+  essai avec un PNG construit à la main en hex était mal formé, réponse
+  incohérente — refait proprement) → réponse "Rouge" correcte.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

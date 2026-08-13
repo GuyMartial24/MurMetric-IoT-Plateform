@@ -8,11 +8,14 @@ function joursRestants(dateISO) {
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
-function ParametresGroq() {
-  const [modele, setModele] = useState("");
-  const [cleActuelle, setCleActuelle] = useState("");
-  const [nouvelleCle, setNouvelleCle] = useState("");
+function ParametresIA() {
+  const [modeleGroq, setModeleGroq] = useState("");
+  const [cleGroqActuelle, setCleGroqActuelle] = useState("");
+  const [nouvelleCleGroq, setNouvelleCleGroq] = useState("");
   const [expiration, setExpiration] = useState("");
+  const [modeleGemini, setModeleGemini] = useState("");
+  const [cleGeminiActuelle, setCleGeminiActuelle] = useState("");
+  const [nouvelleCleGemini, setNouvelleCleGemini] = useState("");
   const [erreur, setErreur] = useState(null);
   const [message, setMessage] = useState(null);
   const [enCours, setEnCours] = useState(false);
@@ -20,9 +23,11 @@ function ParametresGroq() {
   const charger = async () => {
     try {
       const p = await api.lireParametres();
-      setCleActuelle(p.groq_api_key_masque);
-      setModele(p.groq_model);
+      setCleGroqActuelle(p.groq_api_key_masque);
+      setModeleGroq(p.groq_model);
       setExpiration(p.groq_api_key_expiration || "");
+      setCleGeminiActuelle(p.gemini_api_key_masque);
+      setModeleGemini(p.gemini_model);
     } catch (e) {
       setErreur(e.message);
     }
@@ -39,11 +44,14 @@ function ParametresGroq() {
     setMessage(null);
     try {
       await api.modifierParametres({
-        groq_api_key: nouvelleCle || null,
-        groq_model: modele || null,
+        groq_api_key: nouvelleCleGroq || null,
+        groq_model: modeleGroq || null,
         groq_api_key_expiration: expiration || null,
+        gemini_api_key: nouvelleCleGemini || null,
+        gemini_model: modeleGemini || null,
       });
-      setNouvelleCle("");
+      setNouvelleCleGroq("");
+      setNouvelleCleGemini("");
       setMessage("Paramètres enregistrés.");
       await charger();
     } catch (e) {
@@ -57,22 +65,42 @@ function ParametresGroq() {
 
   return (
     <div className="carte">
-      <h2>Identifiants API — Assistant IA (Groq)</h2>
+      <h2>Identifiants API — Assistant IA</h2>
+      <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
+        Gemini est le fournisseur principal (texte + analyse d'image de graphique) — Groq prend le relais
+        automatiquement si Gemini est indisponible pour une question textuelle (pas possible pour l'analyse
+        d'image, propre à Gemini).
+      </p>
       <form onSubmit={enregistrer}>
+        <h3>Gemini (Google AI Studio)</h3>
         <div className="champ">
           <label>Clé API actuelle</label>
-          <input value={cleActuelle} disabled />
+          <input value={cleGeminiActuelle} disabled />
         </div>
         <div className="champ">
           <label>Nouvelle clé API (laisser vide pour ne pas changer)</label>
-          <input value={nouvelleCle} onChange={(e) => setNouvelleCle(e.target.value)} placeholder="gsk_..." />
+          <input value={nouvelleCleGemini} onChange={(e) => setNouvelleCleGemini(e.target.value)} placeholder="AQ...." />
         </div>
         <div className="champ">
           <label>Modèle</label>
-          <input value={modele} onChange={(e) => setModele(e.target.value)} placeholder="llama-3.3-70b-versatile" />
+          <input value={modeleGemini} onChange={(e) => setModeleGemini(e.target.value)} placeholder="gemini-flash-latest" />
+        </div>
+
+        <h3 style={{ marginTop: "1rem" }}>Groq (repli texte)</h3>
+        <div className="champ">
+          <label>Clé API actuelle</label>
+          <input value={cleGroqActuelle} disabled />
         </div>
         <div className="champ">
-          <label>Date d'expiration de la clé (informative — saisie manuelle)</label>
+          <label>Nouvelle clé API (laisser vide pour ne pas changer)</label>
+          <input value={nouvelleCleGroq} onChange={(e) => setNouvelleCleGroq(e.target.value)} placeholder="gsk_..." />
+        </div>
+        <div className="champ">
+          <label>Modèle</label>
+          <input value={modeleGroq} onChange={(e) => setModeleGroq(e.target.value)} placeholder="llama-3.3-70b-versatile" />
+        </div>
+        <div className="champ">
+          <label>Date d'expiration de la clé Groq (informative — saisie manuelle)</label>
           <input type="date" value={expiration} onChange={(e) => setExpiration(e.target.value)} />
         </div>
         {restants != null && (
@@ -154,7 +182,7 @@ export default function Parametres() {
   return (
     <div>
       <MonCompte />
-      <ParametresGroq />
+      <ParametresIA />
     </div>
   );
 }

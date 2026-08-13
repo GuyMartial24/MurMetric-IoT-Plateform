@@ -1,12 +1,17 @@
-import { useRef } from "react";
+import { forwardRef, useImperativeHandle, useRef } from "react";
 import BoutonsExport from "./BoutonsExport.jsx";
 
 // Tracé minimal en SVG pur (pas de dépendance de charting) — représentation
 // provisoire en attendant le portage du moteur Canvas de l'abaque POC
 // (data_reel_compile/abaque-3d-hygrothermique.html, cf. logique_projet.md
 // section 32) en composant React.
-export default function GraphiqueSVG({ points, champ }) {
+//
+// forwardRef expose l'élément <svg> au parent (cf. Assistant.jsx, capture
+// de l'image pour l'analyse vision) — indépendant de BoutonsExport, qui
+// garde son propre accès interne au même svgRef.
+const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ }, ref) {
   const svgRef = useRef(null);
+  useImperativeHandle(ref, () => svgRef.current);
   const valeurs = points.filter((p) => p.field === champ);
   if (valeurs.length === 0) {
     return <p>Aucun point pour ce champ sur la période sélectionnée.</p>;
@@ -36,4 +41,6 @@ export default function GraphiqueSVG({ points, champ }) {
       <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier={`courbe-${champ}`} />
     </div>
   );
-}
+});
+
+export default GraphiqueSVG;
