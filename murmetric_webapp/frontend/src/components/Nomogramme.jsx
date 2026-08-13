@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
-import { AXES_DISPONIBLES, CANAUX_RETRAIT, UNITES_TEMPS, construireParamAxe, libelleGrandeur } from "../nomogrammeAxes.js";
+import { AXES_DISPONIBLES, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe, libelleGrandeur } from "../nomogrammeAxes.js";
 
 // Portage scopé du "nomogramme" de l'ancien POC (data_reel_compile/
 // abaque-3d-hygrothermique.html, cf. logique_projet.md section 32) : le
@@ -31,6 +31,7 @@ export default function Nomogramme({ mur, couche }) {
   const [axeY, setAxeY] = useState("hr_t:humidite");
   const [canal, setCanal] = useState("HA1");
   const [uniteTemps, setUniteTemps] = useState("jour");
+  const [typeTrace, setTypeTrace] = useState("nuage");
   const [points, setPoints] = useState([]);
   const [survol, setSurvol] = useState(null);
   const [erreur, setErreur] = useState(null);
@@ -141,17 +142,33 @@ export default function Nomogramme({ mur, couche }) {
     ctx.fillText(libelleAxe("y"), 0, 0);
     ctx.restore();
 
-    // Points, couleur = position temporelle (bleu = ancien, rouge = récent).
+    // Couleur = position temporelle (bleu = ancien, rouge = récent), pour
+    // le trait comme pour les points.
     const temps = points.map((p) => new Date(p.time).getTime());
     const [tMin, tMax] = [Math.min(...temps), Math.max(...temps)];
-    points.forEach((p, i) => {
-      const frac = tMax > tMin ? (temps[i] - tMin) / (tMax - tMin) : 0;
-      const hue = 220 - frac * 220; // 220 (bleu) -> 0 (rouge)
-      ctx.fillStyle = `hsl(${hue}, 80%, 60%)`;
-      ctx.beginPath();
-      ctx.arc(x(p.x), y(p.y), 3, 0, 2 * Math.PI);
-      ctx.fill();
-    });
+    const teinte = (i) => 220 - (tMax > tMin ? (temps[i] - tMin) / (tMax - tMin) : 0) * 220;
+
+    // Trait fin : relie les points dans l'ordre chronologique (déjà l'ordre
+    // renvoyé par le backend) — dessiné avant les points pour qu'il reste
+    // "dessous" en mode nuage + trait.
+    if (typeTrace !== "nuage" && points.length > 1) {
+      ctx.lineWidth = 1;
+      for (let i = 0; i < points.length - 1; i++) {
+        ctx.strokeStyle = `hsl(${teinte(i)}, 70%, 55%)`;
+        ctx.beginPath();
+        ctx.moveTo(x(points[i].x), y(points[i].y));
+        ctx.lineTo(x(points[i + 1].x), y(points[i + 1].y));
+        ctx.stroke();
+      }
+    }
+    if (typeTrace !== "trait") {
+      points.forEach((p, i) => {
+        ctx.fillStyle = `hsl(${teinte(i)}, 80%, 60%)`;
+        ctx.beginPath();
+        ctx.arc(x(p.x), y(p.y), 3, 0, 2 * Math.PI);
+        ctx.fill();
+      });
+    }
 
     // Lecture par projection au survol : lignes pointillées vers les axes.
     if (survol) {
@@ -178,7 +195,7 @@ export default function Nomogramme({ mur, couche }) {
       ctx.fillText(`${libelleAxe("x")} = ${survol.x.toFixed(2)}`, px + 14, py - 14);
       ctx.fillText(`${libelleAxe("y")} = ${survol.y.toFixed(2)}`, px + 14, py - 2);
     }
-  }, [points, bornes, survol, axeX, axeY, uniteTemps]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [points, bornes, survol, axeX, axeY, uniteTemps, typeTrace]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const survolerCanvas = (e) => {
     if (points.length === 0 || !bornes) return;
@@ -241,6 +258,12 @@ export default function Nomogramme({ mur, couche }) {
             </select>
           </div>
         )}
+        <div className="champ">
+          <label>Type de tracé</label>
+          <select value={typeTrace} onChange={(e) => setTypeTrace(e.target.value)}>
+            {TYPES_TRACE.map((t) => <option key={t.valeur} value={t.valeur}>{t.label}</option>)}
+          </select>
+        </div>
       </div>
       {erreur && <p className="erreur">{erreur}</p>}
       {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}

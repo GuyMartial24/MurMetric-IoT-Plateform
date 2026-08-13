@@ -2675,6 +2675,24 @@ seule mesure.
   sélection HR/T-vs-retrait n'a plus de sens une fois les axes composables
   librement entre les deux mesures).
 
+### Type de tracé (nuage/trait) — 2D et 3D (13/08/2026)
+
+Demande explicite, façon POC : choisir entre nuage de points (comportement
+d'origine) et trait fin reliant les points dans l'ordre chronologique
+(trajectoire dans l'espace des grandeurs), ou les deux ensemble.
+
+- `TYPES_TRACE` ajouté à `nomogrammeAxes.js` (`nuage` / `trait` /
+  `nuage_trait`), sélecteur dans les deux composants.
+- **2D** : le trait relie les points consécutifs dans l'ordre déjà renvoyé
+  par le backend (trié par `_time`), chaque segment coloré selon la
+  position temporelle de son point de départ (même dégradé que les points).
+- **3D** : point d'attention — le trait suit l'ordre **chronologique**
+  (ordre d'arrivée), alors que les points restent triés par **profondeur**
+  pour une occlusion correcte (algorithme du peintre) : ce sont deux
+  ordres différents, calculés séparément à partir des mêmes coordonnées
+  projetées. En mode "trait" seul (sans nuage), un marqueur reste affiché
+  au survol pour ne pas perdre la lecture de valeur.
+
 ### Date d'expiration de clé API trackée (12/08/2026)
 
 Demande explicite : les identifiants API du LLM doivent être modifiables

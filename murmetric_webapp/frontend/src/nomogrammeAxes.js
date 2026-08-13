@@ -13,6 +13,16 @@ export const AXES_GRANDEURS = [
 export const AXES_DISPONIBLES = [{ valeur: "temps", label: "Temps" }, ...AXES_GRANDEURS];
 export const CANAUX_RETRAIT = ["HA1", "HA2", "VA1", "VA2", "HB1", "HB2", "VB1", "VB2"];
 
+// Type de tracé (façon POC : nuage de points, ou trait reliant les points
+// dans l'ordre chronologique — utile pour suivre une trajectoire dans
+// l'espace des grandeurs plutôt qu'un simple nuage) — demande explicite
+// du 13/08/2026, partagé entre 2D et 3D.
+export const TYPES_TRACE = [
+  { valeur: "nuage", label: "Nuage de points" },
+  { valeur: "trait", label: "Trait fin" },
+  { valeur: "nuage_trait", label: "Nuage + trait" },
+];
+
 export const UNITES_TEMPS = {
   heure: { diviseur: 3_600_000, label: "heures" },
   jour: { diviseur: 86_400_000, label: "jours" },

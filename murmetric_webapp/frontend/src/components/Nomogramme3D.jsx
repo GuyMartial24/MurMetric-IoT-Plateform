@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
-import { AXES_DISPONIBLES, AXES_GRANDEURS, CANAUX_RETRAIT, UNITES_TEMPS, construireParamAxe } from "../nomogrammeAxes.js";
+import { AXES_DISPONIBLES, AXES_GRANDEURS, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe } from "../nomogrammeAxes.js";
 
 // Nomogramme 3D — composition libre d'axes entre HR/T et retrait, y compris
 // le TEMPS comme axe à part entière (demandes explicites du 13/08/2026) +
@@ -50,6 +50,7 @@ export default function Nomogramme3D({ mur, couche }) {
   const [axeZ, setAxeZ] = useState("hr_t:humidite");
   const [canal, setCanal] = useState("HA1");
   const [uniteTemps, setUniteTemps] = useState("jour");
+  const [typeTrace, setTypeTrace] = useState("nuage");
   const [points, setPoints] = useState([]);
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
@@ -182,14 +183,44 @@ export default function Nomogramme3D({ mur, couche }) {
       const [nx, ny, nz] = normaliser(p, bornes);
       return { ...proj(nx, ny, nz), point: p, frac: tMax > tMin ? (temps[i] - tMin) / (tMax - tMin) : 0 };
     });
-    projetes.sort((a, b) => a.profondeur - b.profondeur);
-    for (const pp of projetes) {
-      const hue = 220 - pp.frac * 220;
-      const estSurvole = survol && survol.point === pp.point;
-      ctx.fillStyle = estSurvole ? "#ffffff" : `hsl(${hue}, 80%, 60%)`;
-      ctx.beginPath();
-      ctx.arc(pp.x, pp.y, estSurvole ? 5 : 3, 0, 2 * Math.PI);
-      ctx.fill();
+
+    // Trait fin : relie les points dans l'ordre chronologique (ordre
+    // d'arrivée, PAS l'ordre trié par profondeur ci-dessous — la
+    // trajectoire suit le temps, pas l'occlusion).
+    if (typeTrace !== "nuage" && projetes.length > 1) {
+      ctx.lineWidth = 1;
+      for (let i = 0; i < projetes.length - 1; i++) {
+        ctx.strokeStyle = `hsl(${220 - projetes[i].frac * 220}, 70%, 55%)`;
+        ctx.beginPath();
+        ctx.moveTo(projetes[i].x, projetes[i].y);
+        ctx.lineTo(projetes[i + 1].x, projetes[i + 1].y);
+        ctx.stroke();
+      }
+    }
+
+    // Points, triés par profondeur pour une occlusion correcte (algorithme
+    // du peintre) — inutile pour le trait, qui suit sa propre logique
+    // temporelle ci-dessus.
+    if (typeTrace !== "trait") {
+      const parProfondeur = [...projetes].sort((a, b) => a.profondeur - b.profondeur);
+      for (const pp of parProfondeur) {
+        const hue = 220 - pp.frac * 220;
+        const estSurvole = survol && survol.point === pp.point;
+        ctx.fillStyle = estSurvole ? "#ffffff" : `hsl(${hue}, 80%, 60%)`;
+        ctx.beginPath();
+        ctx.arc(pp.x, pp.y, estSurvole ? 5 : 3, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    } else if (survol) {
+      // Mode "trait" seul : pas de points dessinés, mais on garde un
+      // marqueur au survol pour la lecture de valeur.
+      const pp = projetes.find((p) => p.point === survol.point);
+      if (pp) {
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(pp.x, pp.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
     }
 
     if (survol) {
@@ -203,7 +234,7 @@ export default function Nomogramme3D({ mur, couche }) {
       ctx.fillText(`${libelleAxe("y")} = ${p.y.toFixed(2)}`, survol.x + 14, survol.y - 16);
       ctx.fillText(`${libelleAxe("z")} = ${p.z.toFixed(2)}`, survol.x + 14, survol.y - 4);
     }
-  }, [points, bornes, yaw, pitch, zoom, survol, axeX, axeY, axeZ, uniteTemps]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [points, bornes, yaw, pitch, zoom, survol, axeX, axeY, axeZ, uniteTemps, typeTrace]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const surSourisBas = (e) => {
     setRotationAuto(false);
@@ -289,6 +320,12 @@ export default function Nomogramme3D({ mur, couche }) {
             </select>
           </div>
         )}
+        <div className="champ">
+          <label>Type de tracé</label>
+          <select value={typeTrace} onChange={(e) => setTypeTrace(e.target.value)}>
+            {TYPES_TRACE.map((t) => <option key={t.valeur} value={t.valeur}>{t.label}</option>)}
+          </select>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.5rem" }}>
