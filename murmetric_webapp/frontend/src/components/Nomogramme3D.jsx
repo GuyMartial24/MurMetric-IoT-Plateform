@@ -1,22 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 
-// Nomogramme 3D — composition libre d'axes entre HR/T et retrait (demande
-// explicite du 13/08/2026 : ne plus limiter les axes à une seule mesure) +
-// options de vue façon POC (rotation auto, vues préréglées) en plus de la
-// rotation à la souris déjà en place. Projection en perspective classique
-// (rotation yaw/pitch puis division perspective) — même principe
-// mathématique générique que le POC, réécrit proprement (cf. logique_projet.md
-// section 32 : le POC lui-même, ~50 fonctions très couplées à son propre
-// DOM, n'a pas été repris tel quel).
-const AXES_DISPONIBLES = [
+// Nomogramme 3D — composition libre d'axes entre HR/T et retrait, y compris
+// le TEMPS comme axe à part entière (demandes explicites du 13/08/2026) +
+// options de vue façon POC (rotation auto, vues préréglées). Projection en
+// perspective classique (rotation yaw/pitch puis division perspective) —
+// même principe mathématique générique que le POC, réécrit proprement
+// (cf. logique_projet.md section 32 : le POC lui-même, ~50 fonctions très
+// couplées à son propre DOM, n'a pas été repris tel quel).
+const AXES_GRANDEURS = [
   { valeur: "hr_t:temperature", label: "Température (°C)" },
   { valeur: "hr_t:humidite", label: "Humidité (%)" },
   { valeur: "hr_t:point_de_rosee", label: "Point de rosée (°C)" },
   { valeur: "retrait:valeur_filtree", label: "Retrait filtré" },
   { valeur: "retrait:valeur", label: "Retrait brut" },
 ];
+const AXES_DISPONIBLES = [{ valeur: "temps", label: "Temps" }, ...AXES_GRANDEURS];
 const CANAUX_RETRAIT = ["HA1", "HA2", "VA1", "VA2", "HB1", "HB2", "VB1", "VB2"];
+
+const UNITES_TEMPS = {
+  heure: { diviseur: 3_600_000, label: "heures" },
+  jour: { diviseur: 86_400_000, label: "jours" },
+  semaine: { diviseur: 7 * 86_400_000, label: "semaines" },
+  mois: { diviseur: 30.44 * 86_400_000, label: "mois" },
+  annee: { diviseur: 365.25 * 86_400_000, label: "années" },
+};
 
 const VUES_PREREGLEES = {
   face: { yaw: 0, pitch: 0 },
@@ -47,15 +55,15 @@ const ARETES_CUBE = [
   [5, 1], [5, 4], [5, 7], [6, 2], [6, 4], [6, 7],
 ];
 
-function libelleAxe(valeur) {
-  return AXES_DISPONIBLES.find((a) => a.valeur === valeur)?.label ?? valeur;
-}
+const ROLES = ["x", "y", "z"];
+const CLES_BACKEND = ["axe_x", "axe_y", "axe_z"];
 
 export default function Nomogramme3D({ mur, couche }) {
-  const [axeX, setAxeX] = useState("hr_t:temperature");
-  const [axeY, setAxeY] = useState("hr_t:humidite");
-  const [axeZ, setAxeZ] = useState("hr_t:point_de_rosee");
+  const [axeX, setAxeX] = useState("temps");
+  const [axeY, setAxeY] = useState("hr_t:temperature");
+  const [axeZ, setAxeZ] = useState("hr_t:humidite");
   const [canal, setCanal] = useState("HA1");
+  const [uniteTemps, setUniteTemps] = useState("jour");
   const [points, setPoints] = useState([]);
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
@@ -68,23 +76,49 @@ export default function Nomogramme3D({ mur, couche }) {
   const canvasRef = useRef(null);
   const glisseRef = useRef(null);
 
-  const necessiteCanal = [axeX, axeY, axeZ].some((a) => a.startsWith("retrait"));
+  const choixParRole = { x: axeX, y: axeY, z: axeZ };
+  const necessiteCanal = ROLES.some((r) => choixParRole[r].startsWith("retrait"));
+  const necessiteUniteTemps = ROLES.some((r) => choixParRole[r] === "temps");
   const construireParamAxe = (axe) => (axe.startsWith("retrait") ? `${axe}:${canal}` : axe);
 
+  function libelleAxe(role) {
+    if (choixParRole[role] === "temps") return `Temps (${UNITES_TEMPS[uniteTemps].label})`;
+    return AXES_GRANDEURS.find((a) => a.valeur === choixParRole[role])?.label ?? choixParRole[role];
+  }
+
   const charger = async () => {
+    const rolesReels = ROLES.filter((r) => choixParRole[r] !== "temps");
+    if (rolesReels.length === 0) {
+      setErreur("Choisis au moins une grandeur réelle en plus du temps.");
+      setPoints([]);
+      return;
+    }
     setEnCours(true);
     setErreur(null);
     try {
-      const params = Object.fromEntries(
-        Object.entries({
-          mur, couche,
-          axe_x: construireParamAxe(axeX),
-          axe_y: construireParamAxe(axeY),
-          axe_z: construireParamAxe(axeZ),
-        }).filter(([, v]) => v),
-      );
+      const params = { mur, couche };
+      rolesReels.forEach((role, i) => {
+        params[CLES_BACKEND[i]] = construireParamAxe(choixParRole[role]);
+      });
+      Object.keys(params).forEach((k) => (params[k] == null || params[k] === "") && delete params[k]);
+
       const resultat = await api.croisementLibre(params);
-      setPoints((resultat?.points ?? []).filter((p) => p.x != null && p.y != null && p.z != null));
+      const bruts = resultat?.points ?? [];
+      const tempsMs = bruts.map((p) => new Date(p.time).getTime());
+      const tMinMs = tempsMs.length ? Math.min(...tempsMs) : 0;
+      const diviseur = UNITES_TEMPS[uniteTemps].diviseur;
+
+      const finaux = bruts.map((p, i) => {
+        const valeurs = {};
+        rolesReels.forEach((role, idx) => {
+          valeurs[role] = p[["x", "y", "z"][idx]];
+        });
+        ROLES.forEach((role) => {
+          if (choixParRole[role] === "temps") valeurs[role] = (tempsMs[i] - tMinMs) / diviseur;
+        });
+        return { time: p.time, x: valeurs.x, y: valeurs.y, z: valeurs.z };
+      });
+      setPoints(finaux.filter((p) => p.x != null && p.y != null && p.z != null));
     } catch (e) {
       setErreur(e.message);
     } finally {
@@ -94,7 +128,7 @@ export default function Nomogramme3D({ mur, couche }) {
 
   useEffect(() => {
     charger();
-  }, [mur, couche, axeX, axeY, axeZ, canal]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mur, couche, axeX, axeY, axeZ, canal, uniteTemps]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Rotation automatique — façon POC (autorotate), désactivée dès que
   // l'utilisateur prend la main à la souris (cf. surSourisBas).
@@ -152,9 +186,9 @@ export default function Nomogramme3D({ mur, couche }) {
     ctx.font = "11px system-ui";
     const origine = proj(-1, -1, -1);
     const boutX = proj(1, -1, -1), boutY = proj(-1, 1, -1), boutZ = proj(-1, -1, 1);
-    ctx.fillText(`${libelleAxe(axeX)}: ${bornes.xMin.toFixed(1)} → ${bornes.xMax.toFixed(1)}`, boutX.x, boutX.y);
-    ctx.fillText(`${libelleAxe(axeY)}: ${bornes.yMin.toFixed(1)} → ${bornes.yMax.toFixed(1)}`, boutY.x, boutY.y);
-    ctx.fillText(`${libelleAxe(axeZ)}: ${bornes.zMin.toFixed(1)} → ${bornes.zMax.toFixed(1)}`, boutZ.x, boutZ.y);
+    ctx.fillText(`${libelleAxe("x")}: ${bornes.xMin.toFixed(1)} → ${bornes.xMax.toFixed(1)}`, boutX.x, boutX.y);
+    ctx.fillText(`${libelleAxe("y")}: ${bornes.yMin.toFixed(1)} → ${bornes.yMax.toFixed(1)}`, boutY.x, boutY.y);
+    ctx.fillText(`${libelleAxe("z")}: ${bornes.zMin.toFixed(1)} → ${bornes.zMax.toFixed(1)}`, boutZ.x, boutZ.y);
     ctx.fillText("origine", origine.x - 20, origine.y + 14);
 
     const temps = points.map((p) => new Date(p.time).getTime());
@@ -176,15 +210,15 @@ export default function Nomogramme3D({ mur, couche }) {
     if (survol) {
       const p = survol.point;
       ctx.fillStyle = "#0f1117";
-      ctx.fillRect(survol.x + 8, survol.y - 42, 160, 48);
+      ctx.fillRect(survol.x + 8, survol.y - 42, 170, 48);
       ctx.strokeStyle = "#7fd4ff";
-      ctx.strokeRect(survol.x + 8, survol.y - 42, 160, 48);
+      ctx.strokeRect(survol.x + 8, survol.y - 42, 170, 48);
       ctx.fillStyle = "#e6e6e6";
-      ctx.fillText(`${libelleAxe(axeX)} = ${p.x.toFixed(2)}`, survol.x + 14, survol.y - 28);
-      ctx.fillText(`${libelleAxe(axeY)} = ${p.y.toFixed(2)}`, survol.x + 14, survol.y - 16);
-      ctx.fillText(`${libelleAxe(axeZ)} = ${p.z.toFixed(2)}`, survol.x + 14, survol.y - 4);
+      ctx.fillText(`${libelleAxe("x")} = ${p.x.toFixed(2)}`, survol.x + 14, survol.y - 28);
+      ctx.fillText(`${libelleAxe("y")} = ${p.y.toFixed(2)}`, survol.x + 14, survol.y - 16);
+      ctx.fillText(`${libelleAxe("z")} = ${p.z.toFixed(2)}`, survol.x + 14, survol.y - 4);
     }
-  }, [points, bornes, yaw, pitch, zoom, survol, axeX, axeY, axeZ]);
+  }, [points, bornes, yaw, pitch, zoom, survol, axeX, axeY, axeZ, uniteTemps]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const surSourisBas = (e) => {
     setRotationAuto(false);
@@ -250,6 +284,18 @@ export default function Nomogramme3D({ mur, couche }) {
             {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
           </select>
         </div>
+        {necessiteUniteTemps && (
+          <div className="champ">
+            <label>Unité de temps</label>
+            <select value={uniteTemps} onChange={(e) => setUniteTemps(e.target.value)}>
+              <option value="heure">Heures</option>
+              <option value="jour">Jours</option>
+              <option value="semaine">Semaines</option>
+              <option value="mois">Mois</option>
+              <option value="annee">Années</option>
+            </select>
+          </div>
+        )}
         {necessiteCanal && (
           <div className="champ">
             <label>Canal retrait</label>

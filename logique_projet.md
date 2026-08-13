@@ -2629,6 +2629,31 @@ pas mélanger HR/T et retrait (le nomogramme 3D initial limitait les 3 axes
   température, humidité et retrait filtré (canal HA1) aux mêmes
   horodatages. Redeviendra pertinent par défaut une fois le HR/T live.
 
+### Axe "Temps" dans le nomogramme 3D (13/08/2026)
+
+Demande explicite : pouvoir mettre le temps sur un des 3 axes, avec un
+choix d'unité (heures/jours/semaines/mois/années).
+
+- **Backend** : `axe_y` de `/api/mesures/croisement-libre` devient
+  optionnel (`axe_x` reste seul obligatoire) — nécessaire pour le cas où 2
+  des 3 axes visuels sont "temps" (une seule grandeur réelle à
+  interroger). Le temps lui-même n'est **pas** calculé côté serveur : ça
+  reste une donnée dérivée du seul horodatage déjà renvoyé avec chaque
+  point, pas la peine d'ajouter un concept d'axe temporel côté API.
+- **Frontend** (`Nomogramme3D.jsx`) : "Temps" ajouté au catalogue d'axes.
+  Le composant sépare les axes "réels" (envoyés au backend, dans l'ordre,
+  sur `axe_x`/`axe_y`/`axe_z`) des axes "temps" (calculés localement :
+  écart entre l'horodatage du point et l'horodatage le plus ancien du jeu
+  de résultats, divisé par la durée de l'unité choisie), puis recompose
+  chaque point final selon l'assignation visuelle voulue par
+  l'utilisateur — ex. Axe X = Temps, Axe Y = Température, Axe Z = Retrait
+  envoie seulement `axe_x=hr_t:temperature` au backend (un seul axe réel)
+  et calcule X localement à partir de `point.time`. Sélecteur d'unité
+  affiché dès qu'au moins un axe est "Temps".
+- Validé : `croisement-libre` avec un seul axe réel (`axe_y`/`axe_z`
+  absents) renvoie bien des points `{time, x}` sans erreur (56 points
+  température testés sur une semaine réelle).
+
 ### Date d'expiration de clé API trackée (12/08/2026)
 
 Demande explicite : les identifiants API du LLM doivent être modifiables

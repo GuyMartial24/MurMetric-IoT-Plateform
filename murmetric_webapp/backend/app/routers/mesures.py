@@ -369,7 +369,7 @@ def croisement_libre(
     mur: str = Query(...),
     couche: str | None = None,
     axe_x: str = Query(..., description="'hr_t:champ' ou 'retrait:champ:canal'"),
-    axe_y: str = Query(...),
+    axe_y: str | None = Query(None, description="Optionnel — un axe peut être 'temps', calculé côté frontend, pas ici"),
     axe_z: str | None = Query(None),
     debut: str | None = None,
     fin: str | None = None,
@@ -385,7 +385,7 @@ def croisement_libre(
     restent plus sûres (cf. section 32 : combiner plusieurs canaux/mesures
     dans un seul filtre Flux coûte disproportionnellement plus cher que les
     séparer)."""
-    axes = [("x", axe_x), ("y", axe_y)] + ([("z", axe_z)] if axe_z else [])
+    axes = [("x", axe_x)] + ([("y", axe_y)] if axe_y else []) + ([("z", axe_z)] if axe_z else [])
     parses = {nom: _parser_axe(spec) for nom, spec in axes}
 
     # Sécurité mémoire : dès qu'un axe retrait est impliqué, la fenêtre est
@@ -412,7 +412,9 @@ def croisement_libre(
 
     points = []
     for t in sorted(horodatages_communs):
-        point = {"time": t, "x": series["x"][t], "y": series["y"][t]}
+        point = {"time": t, "x": series["x"][t]}
+        if "y" in series:
+            point["y"] = series["y"][t]
         if "z" in series:
             point["z"] = series["z"][t]
         points.append(point)
