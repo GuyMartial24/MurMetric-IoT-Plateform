@@ -2693,6 +2693,29 @@ d'origine) et trait fin reliant les points dans l'ordre chronologique
   projetées. En mode "trait" seul (sans nuage), un marqueur reste affiché
   au survol pour ne pas perdre la lecture de valeur.
 
+### Correspondances par projection (x→y, y→x) — 2D et 3D (13/08/2026)
+
+Distinct du survol existant (qui lit un point déjà présent) : ici
+l'utilisateur choisit une **valeur cible** sur un axe, et l'outil trouve
+où la trajectoire (points dans l'ordre chronologique, traités comme des
+segments reliés même en mode "nuage") **croise** cette valeur, en
+interpolant linéairement les autres axes à cet endroit précis — comme la
+lecture par projection du POC (section 24), en plus général (valeur libre,
+pas seulement un point déjà mesuré).
+
+- `trouverCroisements(points, axeCible, valeurCible, autresAxes)` ajouté à
+  `nomogrammeAxes.js` — parcourt les segments consécutifs, teste si la
+  valeur cible tombe entre les deux extrémités, interpole si oui. Une
+  trajectoire qui va-et-vient peut croiser une valeur plusieurs fois :
+  tous les croisements sont renvoyés, pas seulement le premier.
+- **2D** : deux champs ("Trouver Y pour X =" / "Trouver X pour Y ="),
+  résultats affichés en texte (vert pour x→y, orange pour y→x) et projetés
+  sur le graphique (lignes pointillées vers les axes, coexistent avec le
+  survol).
+- **3D** : un sélecteur "Axe de référence" (X/Y/Z) + une valeur cible —
+  les deux **autres** axes sont lus à chaque croisement. Marqueurs verts
+  (cercle + halo) sur la trajectoire aux points de croisement.
+
 ### Date d'expiration de clé API trackée (12/08/2026)
 
 Demande explicite : les identifiants API du LLM doivent être modifiables

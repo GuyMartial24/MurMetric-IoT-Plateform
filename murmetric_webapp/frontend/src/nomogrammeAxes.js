@@ -38,3 +38,28 @@ export function libelleGrandeur(valeur) {
 export function construireParamAxe(axe, canal) {
   return axe.startsWith("retrait") ? `${axe}:${canal}` : axe;
 }
+
+// Lecture de valeur par projection façon POC (section 24) : pas seulement
+// survoler un point existant, mais choisir une valeur cible sur UN axe et
+// trouver où la trajectoire (points dans l'ordre chronologique, traités
+// comme des segments reliés même en mode "nuage") la croise, en interpolant
+// linéairement les autres axes à cet endroit précis — x→y, y→x (et les deux
+// autres axes en 3D). Une trajectoire qui va et vient peut croiser une
+// valeur plusieurs fois : tous les croisements sont renvoyés, pas
+// seulement le premier.
+export function trouverCroisements(points, axeCible, valeurCible, autresAxes) {
+  const resultats = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i][axeCible];
+    const b = points[i + 1][axeCible];
+    if (a == null || b == null) continue;
+    if (!((a <= valeurCible && valeurCible <= b) || (b <= valeurCible && valeurCible <= a))) continue;
+    const t = a === b ? 0 : (valeurCible - a) / (b - a);
+    const valeurs = { [axeCible]: valeurCible };
+    autresAxes.forEach((axe) => {
+      valeurs[axe] = points[i][axe] + t * (points[i + 1][axe] - points[i][axe]);
+    });
+    resultats.push(valeurs);
+  }
+  return resultats;
+}

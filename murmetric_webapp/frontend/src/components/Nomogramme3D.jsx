@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
-import { AXES_DISPONIBLES, AXES_GRANDEURS, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe } from "../nomogrammeAxes.js";
+import { AXES_DISPONIBLES, AXES_GRANDEURS, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe, trouverCroisements } from "../nomogrammeAxes.js";
 
 // Nomogramme 3D — composition libre d'axes entre HR/T et retrait, y compris
 // le TEMPS comme axe à part entière (demandes explicites du 13/08/2026) +
@@ -55,6 +55,8 @@ export default function Nomogramme3D({ mur, couche }) {
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
   const [survol, setSurvol] = useState(null);
+  const [axeRef, setAxeRef] = useState("x");
+  const [valeurCible, setValeurCible] = useState("");
 
   const [yaw, setYaw] = useState(VUES_PREREGLEES.isometrique.yaw);
   const [pitch, setPitch] = useState(VUES_PREREGLEES.isometrique.pitch);
@@ -145,6 +147,15 @@ export default function Nomogramme3D({ mur, couche }) {
     b.zMax > b.zMin ? ((p.z - b.zMin) / (b.zMax - b.zMin)) * 2 - 1 : 0,
   ];
 
+  // Lecture par projection façon POC : choisir une valeur cible sur UN axe
+  // de référence et lire les DEUX autres par interpolation le long de la
+  // trajectoire, à chaque endroit où elle croise cette valeur.
+  const autresRoles = ROLES.filter((r) => r !== axeRef);
+  const croisements = useMemo(() => {
+    const v = parseFloat(valeurCible);
+    return Number.isNaN(v) ? [] : trouverCroisements(points, axeRef, v, autresRoles);
+  }, [points, axeRef, valeurCible]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !bornes) return;
@@ -234,7 +245,23 @@ export default function Nomogramme3D({ mur, couche }) {
       ctx.fillText(`${libelleAxe("y")} = ${p.y.toFixed(2)}`, survol.x + 14, survol.y - 16);
       ctx.fillText(`${libelleAxe("z")} = ${p.z.toFixed(2)}`, survol.x + 14, survol.y - 4);
     }
-  }, [points, bornes, yaw, pitch, zoom, survol, axeX, axeY, axeZ, uniteTemps, typeTrace]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Croisements demandés explicitement — marqueurs verts sur la
+    // trajectoire, aux endroits où elle passe par la valeur cible choisie.
+    for (const c of croisements) {
+      const [nx, ny, nz] = normaliser(c, bornes);
+      const pp = proj(nx, ny, nz);
+      ctx.fillStyle = "#7fff9e";
+      ctx.beginPath();
+      ctx.arc(pp.x, pp.y, 5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.strokeStyle = "#7fff9e";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(pp.x, pp.y, 9, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+  }, [points, bornes, yaw, pitch, zoom, survol, axeX, axeY, axeZ, uniteTemps, typeTrace, croisements]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const surSourisBas = (e) => {
     setRotationAuto(false);
@@ -346,6 +373,30 @@ export default function Nomogramme3D({ mur, couche }) {
       <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.5rem" }}>
         Glisser pour tourner · molette pour zoomer · survoler un point pour lire ses 3 valeurs.
       </p>
+
+      <div className="selection-form" style={{ marginBottom: "0.5rem" }}>
+        <div className="champ">
+          <label>Axe de référence</label>
+          <select value={axeRef} onChange={(e) => setAxeRef(e.target.value)}>
+            <option value="x">{libelleAxe("x")} (axe X)</option>
+            <option value="y">{libelleAxe("y")} (axe Y)</option>
+            <option value="z">{libelleAxe("z")} (axe Z)</option>
+          </select>
+        </div>
+        <div className="champ">
+          <label>Valeur cible</label>
+          <input value={valeurCible} onChange={(e) => setValeurCible(e.target.value)} placeholder="ex. 20" />
+        </div>
+      </div>
+      {croisements.length > 0 && (
+        <p style={{ fontSize: "0.85rem", color: "#7fff9e" }}>
+          {croisements.map((c, i) => (
+            <span key={i} style={{ marginRight: "1rem" }}>
+              {autresRoles.map((r) => `${libelleAxe(r)} ≈ ${c[r].toFixed(2)}`).join(" · ")}
+            </span>
+          ))}
+        </p>
+      )}
       {erreur && <p className="erreur">{erreur}</p>}
       {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
       {!enCours && points.length === 0 && !erreur && <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
-import { AXES_DISPONIBLES, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe, libelleGrandeur } from "../nomogrammeAxes.js";
+import { AXES_DISPONIBLES, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe, libelleGrandeur, trouverCroisements } from "../nomogrammeAxes.js";
 
 // Portage scopé du "nomogramme" de l'ancien POC (data_reel_compile/
 // abaque-3d-hygrothermique.html, cf. logique_projet.md section 32) : le
@@ -36,6 +36,8 @@ export default function Nomogramme({ mur, couche }) {
   const [survol, setSurvol] = useState(null);
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
+  const [valeurCibleX, setValeurCibleX] = useState("");
+  const [valeurCibleY, setValeurCibleY] = useState("");
   const canvasRef = useRef(null);
 
   const choixParRole = { x: axeX, y: axeY };
@@ -97,6 +99,19 @@ export default function Nomogramme({ mur, couche }) {
     const ys = points.map((p) => p.y);
     return { xMin: Math.min(...xs), xMax: Math.max(...xs), yMin: Math.min(...ys), yMax: Math.max(...ys) };
   }, [points]);
+
+  // Lecture par projection façon POC : on choisit une valeur cible sur un
+  // axe, on trouve où la trajectoire la croise et on lit l'autre axe par
+  // interpolation — dans les deux sens (x→y et y→x), pas seulement au
+  // survol d'un point déjà présent.
+  const croisementsX = useMemo(() => {
+    const v = parseFloat(valeurCibleX);
+    return Number.isNaN(v) ? [] : trouverCroisements(points, "x", v, ["y"]);
+  }, [points, valeurCibleX]);
+  const croisementsY = useMemo(() => {
+    const v = parseFloat(valeurCibleY);
+    return Number.isNaN(v) ? [] : trouverCroisements(points, "y", v, ["x"]);
+  }, [points, valeurCibleY]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -195,7 +210,27 @@ export default function Nomogramme({ mur, couche }) {
       ctx.fillText(`${libelleAxe("x")} = ${survol.x.toFixed(2)}`, px + 14, py - 14);
       ctx.fillText(`${libelleAxe("y")} = ${survol.y.toFixed(2)}`, px + 14, py - 2);
     }
-  }, [points, bornes, survol, axeX, axeY, uniteTemps, typeTrace]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Croisements demandés explicitement (x→y en vert, y→x en orange) —
+    // peuvent coexister avec le survol ci-dessus.
+    const dessinerCroisement = (px, py, couleur) => {
+      ctx.strokeStyle = couleur;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px, h - marge);
+      ctx.moveTo(px, py);
+      ctx.lineTo(marge, py);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = couleur;
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    };
+    croisementsX.forEach((c) => dessinerCroisement(x(c.x), y(c.y), "#7fff9e"));
+    croisementsY.forEach((c) => dessinerCroisement(x(c.x), y(c.y), "#ffb37f"));
+  }, [points, bornes, survol, axeX, axeY, uniteTemps, typeTrace, croisementsX, croisementsY]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const survolerCanvas = (e) => {
     if (points.length === 0 || !bornes) return;
@@ -265,6 +300,30 @@ export default function Nomogramme({ mur, couche }) {
           </select>
         </div>
       </div>
+      <div className="selection-form" style={{ marginBottom: "0.75rem" }}>
+        <div className="champ">
+          <label>Trouver {libelleAxe("y")} pour {libelleAxe("x")} =</label>
+          <input value={valeurCibleX} onChange={(e) => setValeurCibleX(e.target.value)} placeholder="ex. 20" />
+        </div>
+        <div className="champ">
+          <label>Trouver {libelleAxe("x")} pour {libelleAxe("y")} =</label>
+          <input value={valeurCibleY} onChange={(e) => setValeurCibleY(e.target.value)} placeholder="ex. 65" />
+        </div>
+      </div>
+      {(croisementsX.length > 0 || croisementsY.length > 0) && (
+        <p style={{ fontSize: "0.85rem" }}>
+          {croisementsX.map((c, i) => (
+            <span key={`x${i}`} style={{ color: "#7fff9e", marginRight: "1rem" }}>
+              {libelleAxe("y")} ≈ {c.y.toFixed(2)}
+            </span>
+          ))}
+          {croisementsY.map((c, i) => (
+            <span key={`y${i}`} style={{ color: "#ffb37f", marginRight: "1rem" }}>
+              {libelleAxe("x")} ≈ {c.x.toFixed(2)}
+            </span>
+          ))}
+        </p>
+      )}
       {erreur && <p className="erreur">{erreur}</p>}
       {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
       {!enCours && points.length === 0 && !erreur && <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>}
