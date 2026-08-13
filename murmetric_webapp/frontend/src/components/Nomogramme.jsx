@@ -311,18 +311,28 @@ export default function Nomogramme({ mur, couche }) {
         </div>
       </div>
       {(croisementsX.length > 0 || croisementsY.length > 0) && (
-        <p style={{ fontSize: "0.85rem" }}>
+        <div style={{ fontSize: "0.85rem", maxHeight: "160px", overflowY: "auto", marginBottom: "0.75rem" }}>
+          {croisementsX.length > 0 && (
+            <p style={{ color: "#a0a6b5", margin: "0 0 0.25rem" }}>
+              {croisementsX.length} croisement(s) à {libelleAxe("x")} = {valeurCibleX} :
+            </p>
+          )}
           {croisementsX.map((c, i) => (
-            <span key={`x${i}`} style={{ color: "#7fff9e", marginRight: "1rem" }}>
-              {libelleAxe("y")} ≈ {c.y.toFixed(2)}
-            </span>
+            <div key={`x${i}`} style={{ color: "#7fff9e" }}>
+              {libelleAxe("x")} = {c.x.toFixed(2)} · {libelleAxe("y")} ≈ {c.y.toFixed(2)}
+            </div>
           ))}
+          {croisementsY.length > 0 && (
+            <p style={{ color: "#a0a6b5", margin: "0.5rem 0 0.25rem" }}>
+              {croisementsY.length} croisement(s) à {libelleAxe("y")} = {valeurCibleY} :
+            </p>
+          )}
           {croisementsY.map((c, i) => (
-            <span key={`y${i}`} style={{ color: "#ffb37f", marginRight: "1rem" }}>
-              {libelleAxe("x")} ≈ {c.x.toFixed(2)}
-            </span>
+            <div key={`y${i}`} style={{ color: "#ffb37f" }}>
+              {libelleAxe("x")} ≈ {c.x.toFixed(2)} · {libelleAxe("y")} = {c.y.toFixed(2)}
+            </div>
           ))}
-        </p>
+        </div>
       )}
       {erreur && <p className="erreur">{erreur}</p>}
       {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
