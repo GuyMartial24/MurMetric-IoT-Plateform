@@ -2560,9 +2560,80 @@ structurellement pas :
 Validé en direct : 3658 points température/humidité réels renvoyés pour
 SOCMA 1 / "milieu isolant".
 
-**Non fait, explicitement hors de ce périmètre** : rotation 3D façon POC,
+**Non fait, explicitement hors de ce périmètre** : rotation 3D façon POC
+(prévue pour une prochaine session dédiée — décision explicite de
+l'utilisateur de ne pas la faire à la va-vite en fin de session),
 graphiques compagnons (couverts par Grafana), croisement avec la teneur en
 eau (jointure au plus proche à implémenter séparément si besoin).
+
+### Date d'expiration de clé API trackée (12/08/2026)
+
+Demande explicite : les identifiants API du LLM doivent être modifiables
+depuis l'interface, avec leur date d'expiration (11/08/2027 pour la clé
+Groq fournie). Champ `groq_api_key_expiration` ajouté à `app/parametres.py`
+(même stockage que la clé/le modèle) et à la page "Paramètres" — saisie
+manuelle (ni Groq ni InfluxDB n'exposent cette info via API), avertissement
+visuel sous 30 jours avant échéance.
+
+### Logo MurMetric (12/08/2026)
+
+Mark en zigzag façon signal capteur (la pointe = une mesure) + wordmark
+"MurMetric" + tagline "by FRD-CODEM", cohérent avec le thème sombre de
+l'appli — `murmetric_webapp/frontend/src/components/Logo.jsx`, utilisé dans
+le header et la page de connexion, décliné en favicon
+(`public/favicon.svg`, remplace le logo Vite par défaut jamais changé).
+Bug corrigé au passage : la route générique qui sert le frontend
+(`app/main.py`) interceptait aussi les fichiers statiques à la racine du
+build (`/favicon.svg` renvoyait le HTML de la page) — désormais un fichier
+existant est servi directement (avec vérification anti path-traversal via
+`is_relative_to`). Le titre d'onglet (`index.html`), resté sur "frontend"
+depuis la création du projet Vite, corrigé en "MurMetric" au passage.
+
+### Dashboard Grafana étoffé + limite mémoire InfluxDB relevée (13/08/2026)
+
+En composant un dashboard plus complet avec l'utilisateur (température/
+humidité par mur et par couche, retrait par canal, teneur en eau — 7
+panels, `k8s/grafana/dashboards/hr-t-socma.json`), deux problèmes réels
+découverts et corrigés :
+
+- **Lien "Ouvrir Grafana en plein écran"** ajouté dans l'onglet (`Grafana.jsx`)
+  — l'iframe embarquée reste volontairement verrouillée (mode kiosk +
+  accès anonyme Viewer, cf. section précédente), donc impossible d'y
+  composer ses propres graphiques ou de naviguer ailleurs. Plutôt que
+  d'élever le rôle anonyme (Grafana est public sur Internet depuis
+  l'ouverture du port 3000, ça ouvrirait l'édition à n'importe qui), le
+  lien renvoie vers Grafana sans le mode kiosk où un compte admin donne un
+  accès complet (Explore, requêtes Flux libres, nouveaux dashboards).
+- **Bug de fond trouvé en composant les panels retrait : limite mémoire
+  InfluxDB (1Gi) largement insuffisante pour `mesures_dewesoft`** (15 Go
+  sur disque, ~1,5 milliard de points). Toute requête un peu large sur ce
+  measurement faisait **OOM-kill le pod InfluxDB** (exit 137, confirmé via
+  `kubectl top` juste avant le kill et `top` sur le nœud montrant 60%+
+  de CPU en `iowait`) — pas un problème de syntaxe Flux ni de config
+  Grafana, un problème d'allocation de ressources k8s devenu insuffisant
+  après le backfill complet. Diagnostiqué en reproduisant la requête du
+  panel directement via `/api/ds/query` (Grafana) puis en comparant avec
+  des requêtes directes `influx query` dans le pod, en isolant
+  progressivement la variable en cause (fenêtre temporelle, nombre de
+  canaux combinés). `k8s/influxdb/statefulset.yaml` : limite mémoire
+  256Mi/1Gi -> **512Mi/4Gi** (validé avec l'utilisateur avant application,
+  ressource partagée avec MailFlow_Dylan/MINER/ollama sur le même VPS —
+  un premier passage à 3Gi suffisait tout juste, ~3067Mi observés sur
+  3072Mi de plafond, jugé trop proche de la limite pour être robuste dans
+  la durée).
+  **Deuxième correctif, plus déterminant que la mémoire seule** : combiner
+  4 canaux dans un seul filtre Flux (`r.canal_nom == "HA1" or ... or
+  r.canal_nom == "VA2"`) coûte disproportionnellement plus cher qu'exécuter
+  4 requêtes séparées sur un seul canal chacune (vérifié empiriquement :
+  la version combinée continuait de timeout/OOM même à 3-4Gi et fenêtre
+  réduite, la version à 4 requêtes séparées — une par `refId` dans le même
+  panel — passe en ~13s avec une marge mémoire confortable). Les 2 panels
+  retrait utilisent donc désormais 4 *targets* Flux séparés (pas un filtre
+  `or`) et une fenêtre par défaut réduite à **90 jours** (`"timeFrom": "90d"`
+  au niveau du panel, indépendant de la période partagée du dashboard,
+  1 an pour les autres panels) — cohérent avec le choix déjà fait côté
+  webapp (`_FENETRE_DEFAUT_JOURS`, section précédente) pour la même raison
+  exacte.
 
 ## Points ouverts / non implémentés
 
