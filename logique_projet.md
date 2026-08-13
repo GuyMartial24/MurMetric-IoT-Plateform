@@ -2785,6 +2785,55 @@ découverts et corrigés :
   webapp (`_FENETRE_DEFAUT_JOURS`, section précédente) pour la même raison
   exacte.
 
+### Filtre de Hampel ajustable à la volée (13/08/2026)
+
+En creusant une question de l'utilisateur ("brut et filtré semblent
+identiques ?"), vérifié sur de vraies données que c'est **volontaire** :
+`HAMPEL_SEUIL_K=8.0` (réglage d'ingestion) est délibérément conservateur —
+sur une fenêtre calme de 79 minutes (canal HA1, 47 021 points), brut et
+filtré sont rigoureusement identiques (écart max = 0), le filtre ne
+touchant que les pics vraiment extrêmes. Sur 90 jours en revanche, l'écart
+est réel : brut min -2322 mm / max 5898 mm vs filtré min -10.85 mm / max
+5898 mm — le pic négatif extrême est corrigé, **le pic positif ne l'est
+pas** (piste non résolue : possible rafale d'échantillons aberrants
+consécutifs qui aurait faussé la médiane glissante locale, angle mort
+connu d'un Hampel face à un artefact groupé plutôt qu'isolé — pas
+creusé plus avant).
+
+Cette investigation a mené à une demande explicite : le réglage
+`HAMPEL_SEUIL_K`/`HAMPEL_FENETRE` (fixe, appliqué une seule fois à
+l'ingestion sur le PC d'Amiens, cf. section 17) n'était pas ajustable
+depuis l'interface — pour le devenir sans reprocesser les fichiers
+sources, un recalcul à la volée a été ajouté :
+
+- **`murmetric_webapp/backend/app/hampel.py`** (nouveau) — reprend
+  **exactement** l'algorithme de `_filtrer_hampel_numpy()` dans
+  `ingestion_dewesoft_dxd.py` (médiane + MAD glissantes, effectif =
+  max(MAD des valeurs, MAD des différences successives), facteur 1,4826)
+  plutôt qu'un Hampel simplifié — cohérence avec le réglage de production.
+  `numpy` ajouté aux dépendances backend.
+- **`GET /api/mesures/hampel`** — récupère les valeurs **brutes**
+  (`valeur`, jamais `valeur_filtree`) sur une période **plafonnée à 2h**
+  (mesures_dewesoft à 100 Hz — contrairement aux autres vues retrait, un
+  filtre point par point ne peut pas s'appuyer sur une agrégation
+  préalable, donc pas de fenêtre longue possible sans revivre le risque
+  mémoire déjà rencontré) et applique le filtre avec la fenêtre/le seuil
+  demandés. Ne modifie jamais `valeur_filtree` en base — recalcul pour
+  l'affichage uniquement.
+- **`FiltreHampel.jsx`** (nouveau, visible dans "Vue d'ensemble" pour le
+  type retrait) — canal, période (max 2h), fenêtre et seuil K réglables,
+  graphique SVG superposant brut (gris) et filtré-ajusté (bleu), points
+  corrigés marqués en rouge.
+- Validé avec de vraies données (canal HA1, 47 021 points) : K=8 (réglage
+  production) → 0 aberrant sur cette période (cohérent avec l'écart nul
+  déjà constaté) ; K=3 (plus sensible) → 56 aberrants détectés — le
+  réglage a un effet réel et mesurable.
+
+**Non fait à ce stade** : seul le retrait a un équivalent brut/filtré en
+base (mesures_capteurs — température/humidité/point de rosée — n'a qu'un
+seul champ par grandeur, cf. section précédente) ; investigation du pic
+positif non filtré laissée ouverte.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

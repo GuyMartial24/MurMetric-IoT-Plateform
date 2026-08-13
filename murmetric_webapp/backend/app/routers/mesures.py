@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from .. import config
+from ..hampel import filtrer_hampel
 from ..influx import MESURE_CAPTEURS, MESURE_DEWESOFT, MESURE_TENEUR_EAU, flux_escape, query_api
 
 router = APIRouter(prefix="/api/mesures", tags=["mesures"])
@@ -420,3 +421,65 @@ def croisement_libre(
         points.append(point)
 
     return {"axe_x": axe_x, "axe_y": axe_y, "axe_z": axe_z, "points": points}
+
+
+_HAMPEL_DUREE_MAX = timedelta(hours=2)
+
+
+@router.get("/hampel")
+def hampel(
+    mur: str = Query(...),
+    canal_nom: str = Query(...),
+    debut: str = Query(...),
+    fin: str = Query(...),
+    fenetre: int = Query(10, ge=1, le=200, description="Demi-largeur de la fenêtre glissante, en échantillons"),
+    seuil_k: float = Query(8.0, gt=0, description="Multiplicateur du MAD au-delà duquel un point est aberrant"),
+) -> dict:
+    """Filtre de Hampel recalculé à la volée sur les valeurs BRUTES (jamais
+    celles déjà stockées dans `valeur_filtree`, fixées à l'ingestion et pas
+    ajustables — demande explicite du 13/08/2026). Volontairement limité à
+    une fenêtre courte (2h max) : mesures_dewesoft est à 100 Hz, un
+    recalcul point par point sur une période longue reviendrait au même
+    risque mémoire déjà rencontré et corrigé pour les requêtes agrégées
+    (cf. section 32) — ici on ne peut PAS agréger avant de filtrer, la
+    résolution native est nécessaire au calcul lui-même."""
+    debut_dt = datetime.fromisoformat(debut.replace("Z", "+00:00"))
+    fin_dt = datetime.fromisoformat(fin.replace("Z", "+00:00"))
+    if fin_dt - debut_dt > _HAMPEL_DUREE_MAX:
+        raise HTTPException(status_code=400, detail=f"Période trop longue pour un recalcul point par point (max {_HAMPEL_DUREE_MAX}).")
+
+    flux = (
+        f'from(bucket: "{config.INFLUX_BUCKET}")\n'
+        f"  |> range(start: {debut}, stop: {fin})\n"
+        f'  |> filter(fn: (r) => r._measurement == "{MESURE_DEWESOFT}")\n'
+        f'  |> filter(fn: (r) => r._field == "valeur")\n'
+        f'  |> filter(fn: (r) => r.nom_mur == "{flux_escape(mur)}")\n'
+        f'  |> filter(fn: (r) => r.canal_nom == "{flux_escape(canal_nom)}")\n'
+        f'  |> sort(columns: ["_time"])'
+    )
+    try:
+        tables = query_api().query(flux, org=config.INFLUX_ORG)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
+
+    temps, valeurs = [], []
+    for table in tables:
+        for record in table.records:
+            temps.append(record.get_time().isoformat())
+            valeurs.append(record.get_value())
+
+    if not valeurs:
+        return {"points": [], "nb_points": 0, "nb_aberrants": 0, "fenetre": fenetre, "seuil_k": seuil_k}
+
+    filtrees, aberrants = filtrer_hampel(valeurs, fenetre, seuil_k)
+    points = [
+        {"time": t, "brut": b, "filtre_ajuste": f, "aberrant": a}
+        for t, b, f, a in zip(temps, valeurs, filtrees, aberrants)
+    ]
+    return {
+        "points": points,
+        "nb_points": len(points),
+        "nb_aberrants": sum(aberrants),
+        "fenetre": fenetre,
+        "seuil_k": seuil_k,
+    }

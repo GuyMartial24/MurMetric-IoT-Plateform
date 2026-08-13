@@ -31,6 +31,7 @@ export const api = {
   mesures: (params) => requete(`/api/mesures?${new URLSearchParams(params)}`),
   croisement: (params) => requete(`/api/mesures/croisement?${new URLSearchParams(params)}`),
   croisementLibre: (params) => requete(`/api/mesures/croisement-libre?${new URLSearchParams(params)}`),
+  hampel: (params) => requete(`/api/mesures/hampel?${new URLSearchParams(params)}`),
   mesuresValeursTags: (params) => requete(`/api/mesures/valeurs-tags?${new URLSearchParams(params)}`),
   statistiques: (params) => requete(`/api/mesures/statistiques?${new URLSearchParams(params)}`),
   capteursHrT: () => requete("/api/capteurs/hr_t"),

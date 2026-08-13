@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api.js";
+import FiltreHampel from "../components/FiltreHampel.jsx";
 import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import Nomogramme from "../components/Nomogramme.jsx";
 import Nomogramme3D from "../components/Nomogramme3D.jsx";
@@ -63,6 +64,12 @@ export default function VueEnsemble() {
           ) : (
             <Nomogramme mur={selection.mur} couche={selection.couche} />
           )}
+        </div>
+      )}
+      {selection.type === "retrait" && (
+        <div className="carte">
+          <h3 style={{ marginTop: 0 }}>Filtre de Hampel — comparer brut/filtré avec un réglage ajustable</h3>
+          <FiltreHampel mur={selection.mur} />
         </div>
       )}
     </div>
