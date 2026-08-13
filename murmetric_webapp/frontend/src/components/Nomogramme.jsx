@@ -319,7 +319,7 @@ export default function Nomogramme({ mur, couche }) {
           )}
           {croisementsX.map((c, i) => (
             <div key={`x${i}`} style={{ color: "#7fff9e" }}>
-              {libelleAxe("x")} = {c.x.toFixed(2)} · {libelleAxe("y")} ≈ {c.y.toFixed(2)}
+              {libelleAxe("x")} = {valeurCibleX} · {libelleAxe("y")} ≈ {c.y.toFixed(2)}
             </div>
           ))}
           {croisementsY.length > 0 && (
@@ -329,7 +329,7 @@ export default function Nomogramme({ mur, couche }) {
           )}
           {croisementsY.map((c, i) => (
             <div key={`y${i}`} style={{ color: "#ffb37f" }}>
-              {libelleAxe("x")} ≈ {c.x.toFixed(2)} · {libelleAxe("y")} = {c.y.toFixed(2)}
+              {libelleAxe("x")} ≈ {c.x.toFixed(2)} · {libelleAxe("y")} = {valeurCibleY}
             </div>
           ))}
         </div>
