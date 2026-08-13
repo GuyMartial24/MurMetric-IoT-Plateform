@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from .. import config
-from ..hampel import filtrer_hampel
+from ..hampel import appliquer_bornes_physiques, filtrer_hampel
 from ..influx import MESURE_CAPTEURS, MESURE_DEWESOFT, MESURE_TENEUR_EAU, flux_escape, query_api
 
 router = APIRouter(prefix="/api/mesures", tags=["mesures"])
@@ -434,6 +434,8 @@ def hampel(
     fin: str = Query(...),
     fenetre: int = Query(10, ge=1, le=200, description="Demi-largeur de la fenêtre glissante, en échantillons"),
     seuil_k: float = Query(8.0, gt=0, description="Multiplicateur du MAD au-delà duquel un point est aberrant"),
+    borne_min: float | None = Query(None, description="Borne physique basse optionnelle — rattrape les rafales trop longues pour le Hampel seul"),
+    borne_max: float | None = Query(None, description="Borne physique haute optionnelle"),
 ) -> dict:
     """Filtre de Hampel recalculé à la volée sur les valeurs BRUTES (jamais
     celles déjà stockées dans `valeur_filtree`, fixées à l'ingestion et pas
@@ -442,7 +444,13 @@ def hampel(
     recalcul point par point sur une période longue reviendrait au même
     risque mémoire déjà rencontré et corrigé pour les requêtes agrégées
     (cf. section 32) — ici on ne peut PAS agréger avant de filtrer, la
-    résolution native est nécessaire au calcul lui-même."""
+    résolution native est nécessaire au calcul lui-même.
+
+    borne_min/borne_max : deuxième couche optionnelle, ajoutée après avoir
+    constaté qu'un pic positif extrême échappait au Hampel seul (rafale
+    d'échantillons aberrants plus longue que la fenêtre glissante, cf.
+    logique_projet.md section 32) — indépendante du contexte statistique
+    local, contrairement au Hampel."""
     debut_dt = datetime.fromisoformat(debut.replace("Z", "+00:00"))
     fin_dt = datetime.fromisoformat(fin.replace("Z", "+00:00"))
     if fin_dt - debut_dt > _HAMPEL_DUREE_MAX:
@@ -472,6 +480,8 @@ def hampel(
         return {"points": [], "nb_points": 0, "nb_aberrants": 0, "fenetre": fenetre, "seuil_k": seuil_k}
 
     filtrees, aberrants = filtrer_hampel(valeurs, fenetre, seuil_k)
+    if borne_min is not None and borne_max is not None:
+        filtrees, aberrants = appliquer_bornes_physiques(filtrees, aberrants, borne_min, borne_max)
     points = [
         {"time": t, "brut": b, "filtre_ajuste": f, "aberrant": a}
         for t, b, f, a in zip(temps, valeurs, filtrees, aberrants)

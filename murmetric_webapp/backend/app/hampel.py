@@ -56,3 +56,46 @@ def filtrer_hampel(valeurs: list[float], demi_fenetre: int, seuil_k: float) -> t
             filtrees[i] = mediane_i
 
     return filtrees.tolist(), aberrants.tolist()
+
+
+def appliquer_bornes_physiques(
+    valeurs: list[float], aberrants: list[bool], borne_min: float, borne_max: float,
+) -> tuple[list[float], list[bool]]:
+    """Deuxième couche, complémentaire du Hampel — demande explicite du
+    13/08/2026, après avoir constaté sur données réelles qu'un pic positif
+    extrême (+5898 mm) n'était pas corrigé par le Hampel seul : une rafale
+    de plusieurs échantillons aberrants CONSÉCUTIFS plus longue que la
+    fenêtre glissante rend la médiane locale elle-même corrompue (le
+    Hampel ne "voit" que des valeurs cohérentes autour de lui). Une borne
+    physique absolue, indépendante du contexte statistique local, rattrape
+    ce cas — les points hors bornes sont remplacés par interpolation
+    linéaire entre les voisins valides les plus proches (pas par la
+    médiane locale, qui serait tout aussi corrompue dans ce scénario)."""
+    v = np.asarray(valeurs, dtype=np.float64)
+    n = len(v)
+    hors_bornes = (v < borne_min) | (v > borne_max)
+    tous_aberrants = np.asarray(aberrants, dtype=bool) | hors_bornes
+
+    valide = ~hors_bornes
+    if not valide.any() or not hors_bornes.any():
+        return v.tolist(), tous_aberrants.tolist()
+
+    indices = np.arange(n)
+    idx_avant = np.maximum.accumulate(np.where(valide, indices, -1))
+    idx_apres = np.minimum.accumulate(np.where(valide, indices, n)[::-1])[::-1]
+
+    resultat = v.copy()
+    for i in np.nonzero(hors_bornes)[0]:
+        a, b = int(idx_avant[i]), int(idx_apres[i])
+        if a == -1 and b == n:
+            continue  # tout est hors bornes, rien de valide pour interpoler
+        if a == -1:
+            resultat[i] = v[b]
+        elif b == n:
+            resultat[i] = v[a]
+        elif a == b:
+            resultat[i] = v[a]
+        else:
+            t = (i - a) / (b - a)
+            resultat[i] = v[a] + t * (v[b] - v[a])
+    return resultat.tolist(), tous_aberrants.tolist()

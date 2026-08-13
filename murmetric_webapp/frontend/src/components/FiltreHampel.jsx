@@ -23,6 +23,8 @@ export default function FiltreHampel({ mur }) {
   const [fin, setFin] = useState(heureLocaleDatetimeInput(MAINTENANT));
   const [fenetre, setFenetre] = useState(10);
   const [seuilK, setSeuilK] = useState(8);
+  const [borneMin, setBorneMin] = useState("");
+  const [borneMax, setBorneMax] = useState("");
   const [resultat, setResultat] = useState(null);
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
@@ -38,6 +40,7 @@ export default function FiltreHampel({ mur }) {
         fin: new Date(fin).toISOString(),
         fenetre,
         seuil_k: seuilK,
+        ...(borneMin !== "" && borneMax !== "" ? { borne_min: borneMin, borne_max: borneMax } : {}),
       });
       setResultat(r);
     } catch (e) {
@@ -78,7 +81,19 @@ export default function FiltreHampel({ mur }) {
           <label>Seuil K</label>
           <input type="number" min="0.1" step="0.1" value={seuilK} onChange={(e) => setSeuilK(Number(e.target.value))} />
         </div>
+        <div className="champ">
+          <label>Borne physique min (optionnel)</label>
+          <input type="number" step="0.1" value={borneMin} onChange={(e) => setBorneMin(e.target.value)} placeholder="ex. -50" />
+        </div>
+        <div className="champ">
+          <label>Borne physique max (optionnel)</label>
+          <input type="number" step="0.1" value={borneMax} onChange={(e) => setBorneMax(e.target.value)} placeholder="ex. 50" />
+        </div>
       </div>
+      <p style={{ color: "#a0a6b5", fontSize: "0.78rem", margin: "-0.25rem 0 0.75rem" }}>
+        Les bornes physiques sont une 2e couche indépendante du Hampel — elles rattrapent les rafales d'échantillons
+        aberrants trop longues pour la fenêtre glissante (remplacement par interpolation entre voisins valides).
+      </p>
       <button onClick={appliquer} disabled={enCours}>{enCours ? "Calcul..." : "Appliquer"}</button>
       {erreur && <p className="erreur">{erreur}</p>}
       {resultat && (

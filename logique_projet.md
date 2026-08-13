@@ -2831,8 +2831,41 @@ sources, un recalcul à la volée a été ajouté :
 
 **Non fait à ce stade** : seul le retrait a un équivalent brut/filtré en
 base (mesures_capteurs — température/humidité/point de rosée — n'a qu'un
-seul champ par grandeur, cf. section précédente) ; investigation du pic
-positif non filtré laissée ouverte.
+seul champ par grandeur, cf. section précédente).
+
+### Deuxième couche — bornes physiques absolues (13/08/2026)
+
+Suite immédiate : l'utilisateur a comparé l'algorithme implémenté à la
+définition "manuel" d'un Hampel classique (médiane + MAD simple, K=3) et a
+demandé d'adopter la meilleure solution. Verdict : la version du projet
+(MAD effectif = max(MAD des valeurs, MAD des différences successives),
+cf. section précédente) est déjà **supérieure** à la version manuelle pour
+les pics isolés — mais reste aveugle aux rafales d'échantillons aberrants
+**plus longues que la fenêtre glissante** (exactement le pic +5898mm non
+corrigé constaté plus haut) : dans ce cas, la médiane locale elle-même est
+calculée à partir de valeurs déjà corrompues, donc rien ne semble
+"aberrant" localement.
+
+- **`appliquer_bornes_physiques()`** ajoutée à `hampel.py` — deuxième
+  couche indépendante du contexte statistique local : tout point hors
+  d'une plage physique absolue (`borne_min`/`borne_max`, saisie par
+  l'utilisateur) est remplacé par **interpolation linéaire entre les
+  voisins valides les plus proches** (pas par la médiane locale, qui
+  serait tout aussi corrompue dans ce scénario). Appliquée **après** le
+  Hampel, sur son résultat — rattrape ce qu'il a laissé passer.
+- Endpoint `/api/mesures/hampel` et `FiltreHampel.jsx` étendus avec deux
+  champs optionnels (bornes min/max) — si absents, comportement inchangé
+  (Hampel seul).
+- **Validé par test unitaire** avant déploiement : une rafale synthétique
+  de 30 échantillons aberrants consécutifs (fenêtre Hampel=10, donc largeur
+  de fenêtre 21) est **invisible pour le Hampel seul (0/30 détectés)** —
+  reproduit exactement le bug réel constaté sur les données de production.
+  Avec la borne physique ajoutée : **30/30 détectés et corrigés**,
+  transition interpolée cohérente avec le signal environnant.
+- Volontairement limité à l'outil de recalcul à la volée, **pas** au
+  pipeline d'ingestion de production (`ingestion_dewesoft_dxd.py` sur le
+  PC Amiens) — décision explicite de l'utilisateur, `valeur_filtree`
+  stockée en base reste inchangée pour l'instant.
 
 ## Points ouverts / non implémentés
 
