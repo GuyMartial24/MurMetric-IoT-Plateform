@@ -36,6 +36,10 @@ export const api = {
   statistiques: (params) => requete(`/api/mesures/statistiques?${new URLSearchParams(params)}`),
   capteursHrT: () => requete("/api/capteurs/hr_t"),
   capteursRetrait: () => requete("/api/capteurs/retrait"),
+  modifierCapteurHrT: (mac, champs) =>
+    requete(`/api/capteurs/hr_t/${encodeURIComponent(mac)}`, { method: "PUT", body: JSON.stringify(champs) }),
+  modifierCapteurRetrait: (canal, champs) =>
+    requete(`/api/capteurs/retrait/${encodeURIComponent(canal)}`, { method: "PUT", body: JSON.stringify(champs) }),
   listerTeneurEau: () => requete("/api/teneur_eau"),
   creerTeneurEau: (saisie) => requete("/api/teneur_eau", { method: "POST", body: JSON.stringify(saisie) }),
   corrigerTeneurEau: (correction) => requete("/api/teneur_eau", { method: "PUT", body: JSON.stringify(correction) }),

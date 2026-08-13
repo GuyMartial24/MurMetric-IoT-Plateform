@@ -8,5 +8,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      # users.json seul — quelques Ko réels, 100Mi est déjà large.
+      # users.json + parametres.json + capteurs.json/capteurs_retrait.json
+      # (source unique, section 32) — quelques dizaines de Ko réels au total,
+      # 100Mi est déjà large.
       storage: 100Mi

@@ -66,8 +66,20 @@ spec:
                 secretKeyRef:
                   name: murmetric-secrets
                   key: webapp-admin-password
-            # users.json doit survivre aux rebuilds d'image (contrairement à
-            # capteurs.json, copié dans l'image) — volume persistant dédié.
+            # Clé partagée pour les endpoints machine-à-machine
+            # (POST /api/capteurs/*/enregistrer), appelés sans session
+            # utilisateur par ingestion_dewesoft_dxd.py (PC Amiens) et
+            # ingestion_capteurs_bluetooth.py (Pi) — cf. chantier "source
+            # unique", section 32 (13/08/2026).
+            - name: INGESTION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: webapp-ingestion-api-key
+            # users.json ET capteurs.json/capteurs_retrait.json doivent
+            # survivre aux rebuilds d'image — volume persistant dédié
+            # (capteurs.json/capteurs_retrait.json amorcés depuis l'image au
+            # tout premier démarrage seulement, cf. app/main.py).
             - name: USERS_DIR
               value: /data
           volumeMounts:

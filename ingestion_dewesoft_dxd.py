@@ -39,11 +39,14 @@ Hampel — médiane + MAD glissantes). Les deux sont conservées pour permettre
 une visualisation brut/filtré côte à côte côté application (aucune donnée
 n'est perdue).
 
-Étiquetage mur/couche/position (capteurs_retrait.json, cf. logique_projet.md
-section 19) : chaque canal DeweSoft rencontré est auto-enregistré (entrée
-vide, ingestion: false) au premier fichier .dxd qui le contient — aucune
-donnée n'est publiée pour un canal tant que l'utilisateur n'a pas complété
-son étiquetage et mis ingestion à true dans ce fichier. Un même nom de canal
+Étiquetage mur/couche/position (registre "capteurs retrait" de la webapp,
+source unique depuis le 13/08/2026, cf. logique_projet.md section 32 ;
+capteurs_retrait_cache.json local sert de repli hors-ligne seulement) :
+chaque canal DeweSoft rencontré est auto-enregistré (entrée vide,
+ingestion: false) au premier fichier .dxd qui le contient — aucune donnée
+n'est publiée pour un canal tant que l'utilisateur n'a pas complété son
+étiquetage et activé l'ingestion depuis la page Capteurs de la webapp. Un
+même nom de canal
 apparaissant deux fois dans un seul fichier (collision) est signalé en
 console ET publié comme point InfluxDB (mesure alertes_ingestion, via le
 topic MQTT_TOPIC_ALERTES) plutôt que fusionné silencieusement.
@@ -98,6 +101,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import paho.mqtt.client as mqtt
+import requests
 
 # NumPy accélère le filtre de Hampel et relâche le GIL pendant les calculs
 # lourds, ce qui évite d'étouffer le thread réseau de paho (cf.
@@ -233,10 +237,25 @@ MQTT_ATTENTE_TIMEOUT = float(os.getenv("MQTT_ATTENTE_TIMEOUT", "60"))
 # cf. logique_projet.md section 19 — mêmes principes que capteurs.json côté
 # BLE (ingestion_capteurs_bluetooth.py), adaptés à des canaux DeweSoft
 # identifiés par nom (pas de MAC, pas de découverte automatique).
+#
+# Chantier "source unique" (section 32, 13/08/2026) : ce registre n'est plus
+# un fichier local géré à la main sur le PC Amiens — la webapp (hébergée sur
+# le VPS) en est désormais la source de vérité, ce script interroge son API.
+# CAPTEURS_RETRAIT_FILE devient un CACHE local (utilisé si l'API est
+# injoignable au démarrage ou lors d'un rafraîchissement — panne réseau,
+# webapp temporairement indisponible), jamais la source primaire.
 # ---------------------------------------------------------------------------
+CAPTEURS_RETRAIT_API_URL = os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/") + "/api/capteurs/retrait"
+INGESTION_API_KEY = os.getenv("INGESTION_API_KEY", "")
 CAPTEURS_RETRAIT_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "capteurs_retrait.json"
+    os.path.dirname(os.path.abspath(__file__)), "capteurs_retrait_cache.json"
 )
+# Le registre ne change pas à chaque fichier .dxd traité : on évite un appel
+# HTTP à chaque tour de boucle (POLL_INTERVAL_DXD = 5 s par défaut) en ne
+# rafraîchissant réellement que toutes les CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S
+# secondes (même logique que l'ancien hot-reload par mtime, mais basée sur le
+# temps écoulé puisqu'il n'y a plus de fichier local à surveiller).
+CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S = float(os.getenv("CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S", "60"))
 
 # ---------------------------------------------------------------------------
 # Configuration de la surveillance du dossier .dxd.
@@ -562,117 +581,135 @@ def publier_ou_stocker(topic: str, payload: dict) -> None:
 
 
 # ===========================================================================
-# Registre d'étiquetage des capteurs de retrait (capteurs_retrait.json).
-#
-# Symétrique du registre BLE (capteurs.json / ingestion_capteurs_bluetooth.py)
-# mais sans adresse MAC : la clé est le nom de canal DeweSoft (ex. "HA1"),
-# fixé une fois pour toutes par le câblage du rig — pas de découverte
-# automatique équivalente au BLE, cf. logique_projet.md section 19.
+# Registre d'étiquetage des capteurs de retrait — API webapp (source unique,
+# section 32, 13/08/2026), avec repli sur un cache local si l'API est
+# injoignable (réseau, webapp temporairement indisponible). Symétrique du
+# registre BLE (capteurs.json / ingestion_capteurs_bluetooth.py) mais sans
+# adresse MAC : la clé est le nom de canal DeweSoft (ex. "HA1"), fixé une
+# fois pour toutes par le câblage du rig — pas de découverte automatique
+# équivalente au BLE, cf. logique_projet.md section 19.
 # ===========================================================================
 
 _fichier_retrait_lock = threading.Lock()
-_capteurs_retrait_mtime: float | None = None
+_capteurs_retrait_prochain_rafraichissement: float = 0.0
 CAPTEURS_RETRAIT_CONNUS: dict = {}
 
 
-def _lire_et_valider_fichier_retrait() -> dict | None:
-    """Lire capteurs_retrait.json et retourner le mapping canal → infos.
-
-    Contrairement à capteurs.json (BLE), aucun format de clé à valider (pas
-    de regex MAC) : un nom de canal DeweSoft est une chaîne libre.
+def _recuperer_registre_retrait_distant() -> dict | None:
+    """Récupérer capteurs_retrait.json depuis l'API webapp.
 
     Returns:
-        Le mapping canal → infos, ou {} si le fichier n'existe pas encore,
-        ou None si le JSON est malformé (le registre en mémoire est alors
-        conservé tel quel plutôt que vidé).
+        Le mapping canal → infos, ou None si l'API est injoignable, en
+        timeout, répond une erreur HTTP ou un JSON invalide — dans tous ces
+        cas l'appelant doit conserver le registre en mémoire tel quel (ou se
+        rabattre sur le cache local) plutôt que le vider.
     """
     try:
-        with open(CAPTEURS_RETRAIT_FILE, "r", encoding="utf-8") as f:
-            donnees = json.load(f)
-    except FileNotFoundError:
-        return {}
-    except json.JSONDecodeError as e:
-        print(f"⚠️  {CAPTEURS_RETRAIT_FILE} invalide (JSON malformé) : {e} — registre inchangé.")
+        reponse = requests.get(CAPTEURS_RETRAIT_API_URL, timeout=10)
+        reponse.raise_for_status()
+        donnees = reponse.json()
+    except (requests.RequestException, ValueError) as exc:
+        print(f"⚠️  API capteurs_retrait injoignable ({exc}).")
         return None
-
     return {cle: infos for cle, infos in donnees.items() if not cle.startswith("_")}
 
 
+def _lire_cache_retrait_local() -> dict | None:
+    try:
+        with open(CAPTEURS_RETRAIT_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _ecrire_cache_retrait_local(donnees: dict) -> None:
+    try:
+        with open(CAPTEURS_RETRAIT_FILE, "w", encoding="utf-8") as f:
+            json.dump(donnees, f, indent=2, ensure_ascii=False)
+    except OSError as exc:
+        print(f"⚠️  Écriture du cache {CAPTEURS_RETRAIT_FILE} impossible ({exc}) — ignoré.")
+
+
+def _rafraichir_capteurs_retrait_connus() -> None:
+    """Récupérer le registre distant et, seulement en cas d'échec, retomber
+    sur le cache local le plus récent. Met à jour le cache local à chaque
+    récupération distante réussie."""
+    global CAPTEURS_RETRAIT_CONNUS
+    nouveau = _recuperer_registre_retrait_distant()
+    if nouveau is not None:
+        CAPTEURS_RETRAIT_CONNUS = nouveau
+        _ecrire_cache_retrait_local(nouveau)
+        return
+    nouveau = _lire_cache_retrait_local()
+    if nouveau is not None:
+        print(f"↩️  Registre capteurs_retrait repris du cache local ({CAPTEURS_RETRAIT_FILE}).")
+        CAPTEURS_RETRAIT_CONNUS = nouveau
+
+
 def charger_capteurs_retrait_connus() -> None:
-    """Charger capteurs_retrait.json en mémoire au démarrage du script."""
-    global CAPTEURS_RETRAIT_CONNUS, _capteurs_retrait_mtime
+    """Charger le registre capteurs_retrait en mémoire au démarrage du script."""
+    global _capteurs_retrait_prochain_rafraichissement
     with _fichier_retrait_lock:
-        nouveau = _lire_et_valider_fichier_retrait()
-        if nouveau is not None:
-            CAPTEURS_RETRAIT_CONNUS = nouveau
-        try:
-            _capteurs_retrait_mtime = os.path.getmtime(CAPTEURS_RETRAIT_FILE)
-        except OSError:
-            _capteurs_retrait_mtime = None
+        _rafraichir_capteurs_retrait_connus()
+        _capteurs_retrait_prochain_rafraichissement = time.monotonic() + CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S
 
 
 def verifier_et_recharger_capteurs_retrait() -> None:
-    """Recharger capteurs_retrait.json à chaud si le fichier a été modifié."""
-    global CAPTEURS_RETRAIT_CONNUS, _capteurs_retrait_mtime
-    try:
-        mtime_actuel = os.path.getmtime(CAPTEURS_RETRAIT_FILE)
-    except OSError:
-        return
-    if mtime_actuel == _capteurs_retrait_mtime:
+    """Rafraîchir le registre capteurs_retrait depuis l'API, au rythme de
+    CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S (pas à chaque tour de boucle — le
+    registre ne change pas à chaque fichier .dxd traité)."""
+    global _capteurs_retrait_prochain_rafraichissement
+    if time.monotonic() < _capteurs_retrait_prochain_rafraichissement:
         return
     with _fichier_retrait_lock:
-        nouveau = _lire_et_valider_fichier_retrait()
-        if nouveau is not None:
-            CAPTEURS_RETRAIT_CONNUS = nouveau
-            print(f"🔄 capteurs_retrait.json rechargé à chaud ({len(CAPTEURS_RETRAIT_CONNUS)} canal(aux) connus)")
-        _capteurs_retrait_mtime = mtime_actuel
+        avant = len(CAPTEURS_RETRAIT_CONNUS)
+        _rafraichir_capteurs_retrait_connus()
+        if len(CAPTEURS_RETRAIT_CONNUS) != avant:
+            print(f"🔄 Registre capteurs_retrait rechargé ({len(CAPTEURS_RETRAIT_CONNUS)} canal(aux) connus)")
+        _capteurs_retrait_prochain_rafraichissement = time.monotonic() + CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S
 
 
 def enregistrer_canal_si_inconnu(canal_nom: str) -> None:
-    """Ajouter un nouveau canal dans capteurs_retrait.json avec ingestion: false.
+    """Déclarer un nouveau canal auprès de l'API webapp avec ingestion: false.
 
     Aucun canal n'est donc ingéré silencieusement : sa première lecture crée
-    une entrée vide à étiqueter, exactement comme une MAC BLE inconnue dans
-    capteurs.json.
+    une entrée vide à étiqueter depuis la webapp, exactement comme une MAC
+    BLE inconnue dans capteurs.json. Si l'API est injoignable, l'entrée reste
+    seulement en mémoire pour cette exécution (retentée au prochain
+    redémarrage) — aucune mesure n'est perdue, elle reste simplement non
+    publiée tant que le canal n'est pas étiqueté et activé.
     """
-    global CAPTEURS_RETRAIT_CONNUS, _capteurs_retrait_mtime
+    global CAPTEURS_RETRAIT_CONNUS
 
     if canal_nom in CAPTEURS_RETRAIT_CONNUS:
         return
 
-    with _fichier_retrait_lock:
-        try:
-            if os.path.exists(CAPTEURS_RETRAIT_FILE):
-                with open(CAPTEURS_RETRAIT_FILE, "r", encoding="utf-8") as f:
-                    donnees = json.load(f)
-            else:
-                donnees = {}
-        except (json.JSONDecodeError, OSError):
-            return
+    entree = {
+        "canal": canal_nom,
+        "nom_mur": "",
+        "nom_couche": "",
+        "position": "",
+        "categorie R&D": "",
+        "prestation": "",
+        "ingestion": False,
+    }
 
-        if canal_nom in donnees:
-            return
-
-        entree = {
-            "canal": canal_nom,
-            "nom_mur": "",
-            "nom_couche": "",
-            "position": "",
-            "categorie R&D": "",
-            "prestation": "",
-            "ingestion": False,
-        }
-        donnees[canal_nom] = entree
-
-        with open(CAPTEURS_RETRAIT_FILE, "w", encoding="utf-8") as f:
-            json.dump(donnees, f, indent=2, ensure_ascii=False)
-
-        _capteurs_retrait_mtime = os.path.getmtime(CAPTEURS_RETRAIT_FILE)
+    try:
+        reponse = requests.post(
+            CAPTEURS_RETRAIT_API_URL + "/enregistrer",
+            json={"canal": canal_nom},
+            headers={"X-Ingestion-Key": INGESTION_API_KEY},
+            timeout=10,
+        )
+        reponse.raise_for_status()
+        entree = reponse.json()
+    except (requests.RequestException, ValueError) as exc:
+        print(f"⚠️  Enregistrement distant du canal {canal_nom} impossible ({exc}) — retenté au prochain démarrage.")
 
     CAPTEURS_RETRAIT_CONNUS[canal_nom] = entree
     print(
         f"📝 Nouveau canal de retrait enregistré : {canal_nom} "
-        "— définissez ingestion: true dans capteurs_retrait.json pour l'activer"
+        "— définissez ingestion=true depuis la page Capteurs de la webapp pour l'activer"
     )
 
 
@@ -1274,7 +1311,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
                 if not infos_canal.get("ingestion", False):
                     print(
                         f"   ⏭️  {nom_canal} : ingestion désactivée "
-                        "(capteurs_retrait.json) — canal ignoré."
+                        "(page Capteurs de la webapp) — canal ignoré."
                     )
                     continue
 

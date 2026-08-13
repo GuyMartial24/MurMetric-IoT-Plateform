@@ -59,6 +59,7 @@ from datetime import datetime, timedelta
 
 from bleak import BleakScanner
 import paho.mqtt.client as mqtt
+import requests
 
 # Requis pour afficher les emojis sous Windows (console cp1252 par défaut).
 sys.stdout.reconfigure(encoding="utf-8")
@@ -172,10 +173,30 @@ ELA_UUID_TEMPERATURE = "00002a6e-0000-1000-8000-00805f9b34fb"
 ELA_UUID_HUMIDITE = "00002a6f-0000-1000-8000-00805f9b34fb"
 
 # ---------------------------------------------------------------------------
-# Gestion du fichier capteurs.json.
+# Gestion du registre capteurs — API webapp (source unique, section 32,
+# 13/08/2026), avec repli sur capteurs.json local si l'API est injoignable.
+#
+# capteurs.json mélange deux catégories de champs qui ne vivent PAS au même
+# endroit désormais :
+# - Champs d'identité/étiquetage (nom, nom_mur, nom_couche, position,
+#   prestation, categorie R&D, ingestion, emplacement) : la webapp en est la
+#   source de vérité, récupérés par requête HTTP.
+# - Champs techniques BLE propres à ce Pi (famille_capteur,
+#   mac_complete_connue, numero_capteur_hr_t, lint_configure,
+#   lint_max_confirme_s, lint_gatt_absent, lint_gatt_non_supporte) : écrits
+#   localement par configure_capteurs.py (reconfiguration GATT), sans rapport
+#   avec l'étiquetage mur/couche/position — ce script ne les modifie jamais,
+#   seulement les relit depuis capteurs.json pour les fusionner sur les
+#   champs d'identité venus de la webapp (cf. _fusionner_champs_techniques).
 # ---------------------------------------------------------------------------
 
 CAPTEURS_FILE = os.path.join(os.path.dirname(__file__), "capteurs.json")
+CAPTEURS_API_URL = os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/") + "/api/capteurs/hr_t"
+INGESTION_API_KEY = os.getenv("INGESTION_API_KEY", "")
+CHAMPS_TECHNIQUES_LOCAUX = (
+    "famille_capteur", "mac_complete_connue", "numero_capteur_hr_t",
+    "lint_configure", "lint_max_confirme_s", "lint_gatt_absent", "lint_gatt_non_supporte",
+)
 
 # Regex de validation du format d'adresse MAC BLE (XX:XX:XX:XX:XX:XX).
 MAC_REGEX = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", re.IGNORECASE)
@@ -191,10 +212,14 @@ MAC_PROVISOIRE_REGEX = re.compile(r"^[0-9A-F]{8}$", re.IGNORECASE)
 # Verrou threading protégeant toutes les lectures/écritures sur capteurs.json.
 _fichier_lock = threading.Lock()
 
-# Timestamp de la dernière lecture de capteurs.json — sert au hot-reload.
-_capteurs_mtime: float | None = None
+# Rafraîchissement du registre distant au rythme de
+# CAPTEURS_RAFRAICHISSEMENT_S (pas à chaque appel — verifier_et_recharger_
+# capteurs() est appelée depuis des callbacks BLE potentiellement fréquents).
+CAPTEURS_RAFRAICHISSEMENT_S = float(os.getenv("CAPTEURS_RAFRAICHISSEMENT_S", "60"))
+_capteurs_prochain_rafraichissement: float = 0.0
 
-# Dictionnaire en mémoire : MAC (majuscule) → infos capteur.
+# Dictionnaire en mémoire : MAC (majuscule) → infos capteur (fusion identité
+# webapp + champs techniques locaux).
 CAPTEURS_CONNUS: dict = {}
 
 
@@ -470,37 +495,14 @@ def on_disconnect(client, userdata, rc) -> None:
 
 
 # ===========================================================================
-# Gestion de capteurs.json.
+# Gestion du registre capteurs (API webapp + fusion capteurs.json local).
 # ===========================================================================
 
-def _lire_et_valider_fichier() -> dict | None:
-    """Lire capteurs.json et valider chaque entrée.
-
-    Returns:
-        dict  : entrées valides si le fichier est lisible.
-        {}    : si le fichier est introuvable.
-        None  : si le JSON est malformé (conserver l'ancien dict).
-    """
-    try:
-        # utf-8-sig : tolère un BOM éventuel (ex. fichier édité/sauvé par un
-        # outil qui en ajoute un) en plus de l'UTF-8 sans BOM — utf-8 strict
-        # plante sur un BOM (JSONDecodeError), ce qui invalidait silencieusement
-        # tout le hot-reload jusqu'à la prochaine écriture par ce script.
-        with open(CAPTEURS_FILE, "r", encoding="utf-8-sig") as f:
-            donnees = json.load(f)
-    except FileNotFoundError:
-        print(
-            f"⚠️ {CAPTEURS_FILE} introuvable — "
-            "les capteurs seront identifiés par leur MAC seule."
-        )
-        return {}
-    except json.JSONDecodeError as e:
-        print(
-            f"⚠️ {CAPTEURS_FILE} malformé ({e}) — "
-            "conservation des données précédentes en mémoire."
-        )
-        return None
-
+def _valider_entrees(donnees: dict) -> dict:
+    """Valider chaque entrée d'un dict brut MAC → infos (même règles qu'avant
+    ce chantier : clé provisoire acceptée telle quelle, clé MAC bien formée,
+    cohérence clé/champ "mac") — appliqué aussi bien à la réponse de l'API
+    webapp qu'au fichier local, qui partagent le même format."""
     resultat = {}
     for mac_cle, infos in donnees.items():
         # Les clés commençant par '_' sont des métadonnées (ex. _schema).
@@ -518,10 +520,7 @@ def _lire_et_valider_fichier() -> dict | None:
             continue
 
         if not MAC_REGEX.match(mac_cle_upper):
-            print(
-                f"⚠️ Clé MAC invalide ignorée : '{mac_cle}' — "
-                "corrigez le fichier capteurs.json"
-            )
+            print(f"⚠️ Clé MAC invalide ignorée : '{mac_cle}'")
             continue
 
         mac_champ = infos.get("mac", "").upper()
@@ -537,47 +536,127 @@ def _lire_et_valider_fichier() -> dict | None:
     return resultat
 
 
+def _recuperer_registre_distant() -> dict | None:
+    """Récupérer les champs d'identité (mur/couche/position/ingestion/...)
+    depuis l'API webapp.
+
+    Returns:
+        Le mapping MAC → infos validé, ou None si l'API est injoignable, en
+        timeout, répond une erreur HTTP ou un JSON invalide.
+    """
+    try:
+        reponse = requests.get(CAPTEURS_API_URL, timeout=10)
+        reponse.raise_for_status()
+        donnees = reponse.json()
+    except (requests.RequestException, ValueError) as exc:
+        print(f"⚠️ API capteurs (HR/T) injoignable ({exc}).")
+        return None
+    return _valider_entrees(donnees)
+
+
+def _lire_capteurs_local_brut() -> dict:
+    """Lire capteurs.json local tel quel — champs techniques BLE ET dernier
+    état d'identité connu (repli hors-ligne)."""
+    try:
+        # utf-8-sig : tolère un BOM éventuel (ex. fichier édité/sauvé par un
+        # outil qui en ajoute un) en plus de l'UTF-8 sans BOM.
+        with open(CAPTEURS_FILE, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        print(f"⚠️ {CAPTEURS_FILE} malformé ({e}) — traité comme vide.")
+        return {}
+
+
+def _ecrire_capteurs_local(donnees: dict) -> None:
+    try:
+        with open(CAPTEURS_FILE, "w", encoding="utf-8") as f:
+            json.dump(donnees, f, indent=2, ensure_ascii=False)
+    except OSError as exc:
+        print(f"⚠️ Écriture de {CAPTEURS_FILE} impossible ({exc}) — ignoré.")
+
+
+def _fusionner_champs_techniques(identite: dict) -> dict:
+    """Superposer sur chaque entrée d'identité (venue de la webapp) les
+    champs techniques BLE déjà connus localement (CHAMPS_TECHNIQUES_LOCAUX)
+    — propriété de configure_capteurs.py, sans rapport avec l'étiquetage
+    mur/couche/position désormais porté par la webapp."""
+    locales = _valider_entrees(_lire_capteurs_local_brut())
+    fusion = {}
+    for mac, infos in identite.items():
+        entree = dict(infos)
+        locale = locales.get(mac, {})
+        for champ in CHAMPS_TECHNIQUES_LOCAUX:
+            if champ in locale:
+                entree[champ] = locale[champ]
+        fusion[mac] = entree
+    return fusion
+
+
+def _rafraichir_capteurs_connus() -> bool:
+    """Récupérer le registre distant (webapp), le fusionner avec les champs
+    techniques locaux et écrire le résultat dans capteurs.json — qui sert
+    ainsi à la fois de cache de repli hors-ligne et de vue à jour pour
+    configure_capteurs.py (exécuté séparément, jamais concurremment en
+    pratique). Si l'API est injoignable, retombe sur capteurs.json tel quel
+    (dernier état connu, potentiellement périmé côté identité).
+
+    Returns:
+        True si CAPTEURS_CONNUS a changé, False sinon.
+    """
+    global CAPTEURS_CONNUS
+
+    identite = _recuperer_registre_distant()
+    if identite is not None:
+        fusion = _fusionner_champs_techniques(identite)
+        if fusion == CAPTEURS_CONNUS:
+            return False
+        CAPTEURS_CONNUS = fusion
+        _ecrire_capteurs_local(fusion)
+        return True
+
+    local = _valider_entrees(_lire_capteurs_local_brut())
+    if local and local != CAPTEURS_CONNUS:
+        print(f"↩️ Registre capteurs repris du cache local ({CAPTEURS_FILE}).")
+        CAPTEURS_CONNUS = local
+        return True
+    return False
+
+
 def charger_capteurs_connus() -> None:
-    """Charger capteurs.json en mémoire au démarrage du script."""
-    global CAPTEURS_CONNUS, _capteurs_mtime
+    """Charger le registre capteurs en mémoire au démarrage du script."""
+    global _capteurs_prochain_rafraichissement
 
     with _fichier_lock:
-        nouveau = _lire_et_valider_fichier()
-        if nouveau is not None:
-            CAPTEURS_CONNUS = nouveau
-        try:
-            _capteurs_mtime = os.path.getmtime(CAPTEURS_FILE)
-        except OSError:
-            _capteurs_mtime = None
+        _rafraichir_capteurs_connus()
+        _capteurs_prochain_rafraichissement = time.monotonic() + CAPTEURS_RAFRAICHISSEMENT_S
 
 
 def verifier_et_recharger_capteurs() -> None:
-    """Recharger capteurs.json à chaud si le fichier a été modifié."""
-    global CAPTEURS_CONNUS, _capteurs_mtime
+    """Rafraîchir le registre depuis l'API webapp, au rythme de
+    CAPTEURS_RAFRAICHISSEMENT_S — cette fonction est appelée depuis des
+    callbacks BLE potentiellement fréquents, pas question d'y faire une
+    requête HTTP à chaque appel."""
+    global _capteurs_prochain_rafraichissement
 
-    try:
-        mtime_actuel = os.path.getmtime(CAPTEURS_FILE)
-    except OSError:
-        return
-
-    if mtime_actuel == _capteurs_mtime:
+    if time.monotonic() < _capteurs_prochain_rafraichissement:
         return
 
     with _fichier_lock:
-        nouveau = _lire_et_valider_fichier()
-        if nouveau is not None:
-            CAPTEURS_CONNUS = nouveau
-            print(
-                f"🔄 capteurs.json rechargé à chaud "
-                f"({len(CAPTEURS_CONNUS)} capteurs connus)"
-            )
+        if _rafraichir_capteurs_connus():
+            print(f"🔄 Registre capteurs rechargé ({len(CAPTEURS_CONNUS)} capteurs connus)")
             # Republier le registre pour refléter les changements dans InfluxDB.
             publier_registre()
-        _capteurs_mtime = mtime_actuel
+        _capteurs_prochain_rafraichissement = time.monotonic() + CAPTEURS_RAFRAICHISSEMENT_S
 
 
 def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
-    """Ajouter une nouvelle MAC dans capteurs.json avec ingestion: false par défaut.
+    """Déclarer une nouvelle MAC auprès de l'API webapp avec ingestion:
+    false par défaut. Si l'API est injoignable, l'entrée reste seulement en
+    mémoire pour cette exécution (retentée au prochain démarrage) — aucune
+    mesure n'est perdue, elle reste simplement non publiée tant que le
+    capteur n'est pas étiqueté et activé depuis la webapp.
 
     Args:
         mac:     Adresse MAC BLE (majuscules).
@@ -591,44 +670,12 @@ def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
             déclencherait un scan+pause GATT toutes les INTERVALLE_RECONF_SECONDES
             (6h par défaut) pour rien.
     """
-    global CAPTEURS_CONNUS, _capteurs_mtime
+    global CAPTEURS_CONNUS
 
     if mac in CAPTEURS_CONNUS:
         return
 
-    with _fichier_lock:
-        try:
-            if os.path.exists(CAPTEURS_FILE):
-                with open(CAPTEURS_FILE, "r", encoding="utf-8-sig") as f:
-                    donnees = json.load(f)
-            else:
-                donnees = {}
-        except (json.JSONDecodeError, OSError):
-            return
-
-        macs_existantes = {k.upper() for k in donnees}
-        if mac.upper() in macs_existantes:
-            return
-
-        donnees[mac] = {
-            "mac": mac,
-            "famille_capteur": famille,
-            "nom": "",
-            "emplacement": "",
-            "nom_mur": "",
-            "nom_couche": "",
-            "position": "",
-            "prestation": "",
-            "categorie R&D": "",
-            "ingestion": False,
-        }
-
-        with open(CAPTEURS_FILE, "w", encoding="utf-8") as f:
-            json.dump(donnees, f, indent=2, ensure_ascii=False)
-
-        _capteurs_mtime = os.path.getmtime(CAPTEURS_FILE)
-
-    CAPTEURS_CONNUS[mac] = {
+    entree = {
         "mac": mac,
         "famille_capteur": famille,
         "nom": "",
@@ -640,9 +687,31 @@ def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
         "categorie R&D": "",
         "ingestion": False,
     }
+
+    with _fichier_lock:
+        try:
+            reponse = requests.post(
+                CAPTEURS_API_URL + "/enregistrer",
+                json={"mac": mac, "famille_capteur": famille},
+                headers={"X-Ingestion-Key": INGESTION_API_KEY},
+                timeout=10,
+            )
+            reponse.raise_for_status()
+            entree = {**entree, **reponse.json()}
+        except (requests.RequestException, ValueError) as exc:
+            print(f"⚠️ Enregistrement distant de {mac} impossible ({exc}) — retenté au prochain démarrage.")
+
+        CAPTEURS_CONNUS[mac] = entree
+        # Trace locale aussi (repli hors-ligne + visible pour
+        # configure_capteurs.py) — fusion avec le fichier existant, pas
+        # d'écrasement des autres entrées.
+        local = _lire_capteurs_local_brut()
+        local[mac] = entree
+        _ecrire_capteurs_local(local)
+
     print(
         f"📝 Nouveau capteur enregistré : {mac} ({famille}) "
-        "— définissez ingestion: true pour activer la publication MQTT"
+        "— définissez ingestion: true depuis la page Capteurs de la webapp pour l'activer"
     )
 
 

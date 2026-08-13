@@ -1,21 +1,27 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 
-// Lecture seule en V1 — cf. logique_projet.md section 32 : l'écriture depuis
-// l'appli est repoussée tant que capteurs.json/capteurs_retrait.json ne sont
-// pas une source de configuration concurrente-safe.
+// Édition en place (chantier "source unique", section 32, 13/08/2026) :
+// capteurs.json/capteurs_retrait.json vivent désormais sur le volume
+// persistant de la webapp, qui en est la source de vérité — le PC Amiens et
+// le Pi interrogent son API au lieu de leur copie locale, donc une
+// modification faite ici a un effet réel sur l'étiquetage des prochaines
+// mesures (pas seulement cosmétique comme avant ce chantier).
 export default function Capteurs() {
   const [hrT, setHrT] = useState(null);
   const [retrait, setRetrait] = useState(null);
   const [erreur, setErreur] = useState(null);
 
-  useEffect(() => {
+  const charger = () =>
     Promise.all([api.capteursHrT(), api.capteursRetrait()])
       .then(([h, r]) => {
         setHrT(h);
         setRetrait(r);
       })
       .catch((e) => setErreur(e.message));
+
+  useEffect(() => {
+    charger();
   }, []);
 
   const lignes = (donnees) =>
@@ -27,46 +33,117 @@ export default function Capteurs() {
     <div>
       {erreur && <p className="erreur">{erreur}</p>}
 
-      <div className="carte">
-        <h2>Capteurs HR/T ({lignes(hrT).length})</h2>
-        <table>
-          <thead>
-            <tr><th>MAC / clé</th><th>Nom</th><th>Famille</th><th>Mur</th><th>Couche</th><th>Ingestion</th></tr>
-          </thead>
-          <tbody>
-            {lignes(hrT).map(([cle, c]) => (
-              <tr key={cle}>
-                <td>{cle}</td>
-                <td>{c.nom}</td>
-                <td>{c.famille_capteur}</td>
-                <td>{c.nom_mur}</td>
-                <td>{c.nom_couche}</td>
-                <td>{c.ingestion ? "✅" : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <TableauCapteurs
+        titre="Capteurs HR/T"
+        lignes={lignes(hrT)}
+        colonnes={["nom", "famille_capteur", "nom_mur", "nom_couche", "ingestion"]}
+        champsEditables={["nom", "nom_mur", "nom_couche", "ingestion"]}
+        cleColonne="MAC / clé"
+        enregistrer={(cle, champs) => api.modifierCapteurHrT(cle, champs)}
+        recharger={charger}
+      />
 
-      <div className="carte">
-        <h2>Canaux retrait ({lignes(retrait).length})</h2>
-        <table>
-          <thead>
-            <tr><th>Canal</th><th>Mur</th><th>Couche</th><th>Position</th><th>Ingestion</th></tr>
-          </thead>
-          <tbody>
-            {lignes(retrait).map(([cle, c]) => (
+      <TableauCapteurs
+        titre="Canaux retrait"
+        lignes={lignes(retrait)}
+        colonnes={["nom_mur", "nom_couche", "position", "ingestion"]}
+        champsEditables={["nom_mur", "nom_couche", "position", "ingestion"]}
+        cleColonne="Canal"
+        enregistrer={(cle, champs) => api.modifierCapteurRetrait(cle, champs)}
+        recharger={charger}
+      />
+    </div>
+  );
+}
+
+const LIBELLES = {
+  nom: "Nom",
+  famille_capteur: "Famille",
+  nom_mur: "Mur",
+  nom_couche: "Couche",
+  position: "Position",
+  ingestion: "Ingestion",
+};
+
+function TableauCapteurs({ titre, lignes, colonnes, champsEditables, cleColonne, enregistrer, recharger }) {
+  const [enEdition, setEnEdition] = useState(null); // { cle, valeurs }
+  const [enCours, setEnCours] = useState(false);
+  const [erreur, setErreur] = useState(null);
+
+  const demarrerEdition = (cle, c) => {
+    setErreur(null);
+    setEnEdition({ cle, valeurs: Object.fromEntries(champsEditables.map((champ) => [champ, c[champ] ?? (champ === "ingestion" ? false : "")])) });
+  };
+
+  const valider = async () => {
+    setEnCours(true);
+    setErreur(null);
+    try {
+      await enregistrer(enEdition.cle, enEdition.valeurs);
+      setEnEdition(null);
+      await recharger();
+    } catch (e) {
+      setErreur(e.message);
+    } finally {
+      setEnCours(false);
+    }
+  };
+
+  return (
+    <div className="carte">
+      <h2>{titre} ({lignes.length})</h2>
+      {erreur && <p className="erreur">{erreur}</p>}
+      <table>
+        <thead>
+          <tr>
+            <th>{cleColonne}</th>
+            {colonnes.map((champ) => <th key={champ}>{LIBELLES[champ]}</th>)}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {lignes.map(([cle, c]) => {
+            const edition = enEdition?.cle === cle;
+            return (
               <tr key={cle}>
                 <td>{cle}</td>
-                <td>{c.nom_mur}</td>
-                <td>{c.nom_couche}</td>
-                <td>{c.position}</td>
-                <td>{c.ingestion ? "✅" : "—"}</td>
+                {colonnes.map((champ) => (
+                  <td key={champ}>
+                    {edition && champsEditables.includes(champ) ? (
+                      champ === "ingestion" ? (
+                        <input
+                          type="checkbox"
+                          checked={enEdition.valeurs.ingestion}
+                          onChange={(e) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, ingestion: e.target.checked } })}
+                        />
+                      ) : (
+                        <input
+                          value={enEdition.valeurs[champ]}
+                          onChange={(e) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, [champ]: e.target.value } })}
+                        />
+                      )
+                    ) : champ === "ingestion" ? (
+                      c.ingestion ? "✅" : "—"
+                    ) : (
+                      c[champ]
+                    )}
+                  </td>
+                ))}
+                <td>
+                  {edition ? (
+                    <>
+                      <button onClick={valider} disabled={enCours}>{enCours ? "..." : "Enregistrer"}</button>{" "}
+                      <button onClick={() => setEnEdition(null)} disabled={enCours}>Annuler</button>
+                    </>
+                  ) : (
+                    <button onClick={() => demarrerEdition(cle, c)}>Éditer</button>
+                  )}
+                </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

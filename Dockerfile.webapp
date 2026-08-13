@@ -17,7 +17,13 @@ WORKDIR /app
 COPY murmetric_webapp/backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY murmetric_webapp/backend/app ./app
-COPY capteurs.json capteurs_retrait.json ./app/
+# Copies "amorce" (seed) — initialisent le volume persistant au tout premier
+# démarrage puis ne sont plus jamais relues (cf. app/main.py, _amorcer_capteurs
+# et app/config.py, chantier "source unique" du 13/08/2026). Noms distincts
+# de capteurs.json/capteurs_retrait.json pour ne jamais être confondues avec
+# les fichiers vivants du volume monté sur /data.
+COPY capteurs.json ./app/capteurs.seed.json
+COPY capteurs_retrait.json ./app/capteurs_retrait.seed.json
 COPY --from=frontend-build /frontend/dist ./app/static
 
 EXPOSE 8000

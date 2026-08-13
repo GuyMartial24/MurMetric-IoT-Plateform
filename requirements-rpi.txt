@@ -11,4 +11,10 @@ bleak>=3.0.0
 # Publication MQTT vers le broker cloud
 paho-mqtt>=2.1.0
 
+# Registre capteurs (mur/couche/position) interrogé via l'API de la webapp —
+# source unique depuis le 13/08/2026 (cf. logique_projet.md section 32),
+# capteurs.json local ne sert plus que de repli hors-ligne + champs
+# techniques BLE (configure_capteurs.py).
+requests>=2.31
+
 # SQLite (store-and-forward résilience cloud) — stdlib Python, pas d'install

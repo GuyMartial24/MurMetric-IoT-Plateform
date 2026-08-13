@@ -1,5 +1,6 @@
 """Point d'entrée FastAPI — squelette de l'interface applicative unifiée
 (section 32 de logique_projet.md)."""
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,13 +9,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import config
 from .auth import initialiser_bootstrap
 from .routers import assistant, auth, capteurs, mesures, parametres, teneur_eau
+
+
+def _amorcer_capteurs() -> None:
+    """Copier capteurs.json/capteurs_retrait.json de l'image vers le volume
+    persistant au tout premier démarrage (volume vide juste après création
+    du PVC) — ensuite le volume est seul relu, jamais réécrasé par l'image
+    même si sa copie "amorce" change à un déploiement ultérieur (cf.
+    config.py, chantier "source unique" du 13/08/2026)."""
+    for cible, source in (
+        (config.CAPTEURS_JSON, config.CAPTEURS_JSON_SEED),
+        (config.CAPTEURS_RETRAIT_JSON, config.CAPTEURS_RETRAIT_JSON_SEED),
+    ):
+        if not cible.exists() and source.exists():
+            cible.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(source, cible)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialiser_bootstrap()
+    _amorcer_capteurs()
     yield
 
 

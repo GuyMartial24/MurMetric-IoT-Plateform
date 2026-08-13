@@ -21,6 +21,14 @@ MQTT_CA_CERT="$(dirname "$0")/murmetric_mosquitto_ca.pem"
 MQTT_USERNAME=A_COMPLETER
 MQTT_PASSWORD=A_COMPLETER
 
+# Registre capteurs (mur/couche/position) — source unique cote webapp depuis
+# le 13/08/2026 (cf. logique_projet.md section 32). CAPTEURS_API_URL = URL de
+# base de la webapp (ex. http://<IP_VPS_ORACLE>:8090). INGESTION_API_KEY =
+# cle partagee recuperable via :
+#   ssh -i <chemin_cle> ubuntu@<IP_VPS_ORACLE> "kubectl get secret murmetric-secrets -n murmetric -o jsonpath={.data.webapp-ingestion-api-key} | base64 -d"
+CAPTEURS_API_URL=http://<IP_VPS_ORACLE>:8090
+INGESTION_API_KEY=A_COMPLETER
+
 # hci1 = antenne USB externe (si presente), repli automatique sur hci0
 # (Bluetooth integre) si absente/indisponible — cf. demarrer_scanner_avec_repli()
 # dans ingestion_capteurs_bluetooth.py. Ajuster si la numerotation differe.

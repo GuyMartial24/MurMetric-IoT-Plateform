@@ -17,6 +17,15 @@ set MQTT_CA_CERT=C:\MurMetric\ingestion\murmetric_mosquitto_ca.pem
 set MQTT_USERNAME=A_COMPLETER
 set MQTT_PASSWORD=A_COMPLETER
 
+REM Registre capteurs_retrait (mur/couche/position) — source unique cote
+REM webapp depuis le 13/08/2026 (cf. logique_projet.md section 32).
+REM CAPTEURS_API_URL = URL de base de la webapp (meme machine/port que
+REM l'interface, ex. http://<IP_VPS_ORACLE>:8090). INGESTION_API_KEY = cle
+REM partagee recuperable via :
+REM   ssh -i <chemin_cle> ubuntu@<IP_VPS_ORACLE> "kubectl get secret murmetric-secrets -n murmetric -o jsonpath={.data.webapp-ingestion-api-key} | base64 -d"
+set CAPTEURS_API_URL=http://<IP_VPS_ORACLE>:8090
+set INGESTION_API_KEY=A_COMPLETER
+
 REM Dossier reel ou DeweSoftX genere ses .dxd (pas un dossier cree par MurMetric) :
 set DXD_WATCH_FOLDER=C:\Users\Public\Documents\Dewesoft\Data
 

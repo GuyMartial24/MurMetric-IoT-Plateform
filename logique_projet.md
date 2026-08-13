@@ -2913,6 +2913,165 @@ observée, mais bien en dessous des artefacts confirmés (±2000-6000mm).
 Un artefact futur pousserait désormais la courbe en butée haute/basse du
 graphique au lieu de rendre les autres courbes illisibles.
 
+**Annulé (13/08/2026, même jour)** : l'utilisateur a demandé de restaurer
+les courbes de retrait précédentes — clarifié via question explicite que
+cela visait bien ce bornage -50/+50, pas une restauration de données.
+`fieldConfig.defaults` remis à `{}` (auto-scale) sur les 4 panels retrait
+— le dashboard est donc revenu à l'échelle automatique, le pic HA1 non
+corrigé reste visible tel quel jusqu'à correction de la donnée elle-même.
+
+### Chantier "source unique" — capteurs.json/capteurs_retrait.json (13/08/2026)
+
+**Origine.** En réponse à une capture d'écran de la page Capteurs (tableau
+"Canaux retrait" en lecture seule), l'utilisateur a demandé si rendre ces
+champs (mur/couche/position) modifiables depuis la webapp serait possible,
+logique, sécurisé et cohérent. Réponse donnée : techniquement possible,
+mais **pas encore sécurisé** (capteurs.json/capteurs_retrait.json étaient
+copiés dans l'image Docker au build, pas sur le volume persistant — un
+edit webapp aurait été perdu au prochain redéploiement) ni **cohérent**
+(trois copies non synchronisées existaient : dépôt git, PC Amiens/Pi
+— seules copies réellement lues par l'ingestion en direct —, et image
+webapp — copie d'affichage seule). Éditer depuis la webapp aurait donc été
+cosmétique, sans effet sur l'étiquetage réel des mesures. Trois options
+proposées (chantier complet / webapp seule avec avertissement / reporté) ;
+l'utilisateur a choisi **le chantier complet : la webapp devient la source
+unique de vérité, le PC Amiens et le Pi interrogent son API au lieu de
+leur copie locale.**
+
+**Backend (`murmetric_webapp/backend/app/`).**
+- `config.py` : `CAPTEURS_JSON`/`CAPTEURS_RETRAIT_JSON` pointent désormais
+  vers le volume persistant (`USERS_DIR=/data`, même volume que
+  `users.json`) en production, toujours la racine du dépôt en dev local.
+  Nouvelles constantes `CAPTEURS_JSON_SEED`/`CAPTEURS_RETRAIT_JSON_SEED`
+  (copies "amorce" baties dans l'image) et `INGESTION_API_KEY` (secret
+  partagé pour les endpoints machine-à-machine).
+- `main.py` : `_amorcer_capteurs()` copie les fichiers "amorce" vers le
+  volume persistant au tout premier démarrage seulement (volume vide juste
+  après création du PVC) — jamais réécrasés ensuite, même si l'image
+  change à un déploiement ultérieur.
+- `routers/capteurs.py` : GET inchangés (public, utilisés par l'UI ET par
+  les scripts d'ingestion). Ajout de `PUT /api/capteurs/{hr_t,retrait}/{clé}`
+  (JWT requis — édition humaine des champs d'identité : nom, nom_mur,
+  nom_couche, position, prestation, categorie R&D, ingestion, emplacement)
+  et `POST /api/capteurs/{hr_t,retrait}/enregistrer` (protégé par l'en-tête
+  `X-Ingestion-Key`, pas de session utilisateur — déclaration d'un
+  canal/MAC inconnu par un script d'ingestion sans surveillance, idempotent,
+  crée une entrée vide avec `ingestion: false`, miroir exact de l'ancien
+  comportement local `enregistrer_canal_si_inconnu`/
+  `enregistrer_capteur_si_inconnu`). Sans `INGESTION_API_KEY` configurée,
+  les endpoints d'enregistrement répondent 404 (jamais exposés sans
+  protection par défaut).
+- `Dockerfile.webapp` : `COPY capteurs.json ./app/capteurs.seed.json` (et
+  idem retrait) au lieu de copier directement sous les noms vivants.
+- `k8s/webapp/deployment.yaml` : nouvelle variable `INGESTION_API_KEY`
+  depuis `murmetric-secrets` (clé `webapp-ingestion-api-key`, générée par
+  `openssl rand -hex 32` et poussée dans le secret via `kubectl patch`).
+
+**Frontend.** `Capteurs.jsx` réécrit avec édition en place (même pattern
+que `TeneurEau.jsx` : bouton "Éditer" → champs texte/case à cocher →
+"Enregistrer"/"Annuler"). Champs éditables : nom/mur/couche/ingestion
+(HR/T), mur/couche/position/ingestion (retrait) — inchangé pour les champs
+non affichés (prestation, categorie R&D restent modifiables via l'API,
+pas encore exposés dans le tableau, hors scope de la demande initiale).
+
+**Distinction identité vs champs techniques BLE (Pi).** capteurs.json
+mélange des champs d'identité (mur/couche/position/ingestion...) et des
+champs techniques propres au Pi, écrits par `configure_capteurs.py` après
+reconfiguration GATT (`lint_configure`, `lint_max_confirme_s`,
+`lint_gatt_absent`, `lint_gatt_non_supporte`, `famille_capteur`,
+`mac_complete_connue`, `numero_capteur_hr_t`). Seuls les champs d'identité
+migrent vers la webapp — les champs techniques restent une propriété
+locale du Pi, sans rapport avec le split-brain mur/couche/position qui a
+motivé ce chantier. `configure_capteurs.py` n'a donc **pas été modifié**.
+
+**Scripts d'ingestion (PC Amiens + Pi) — modifiés dans le dépôt, PAS
+ENCORE déployés sur les machines distantes** (cf. point ouvert ci-dessous) :
+- `ingestion_dewesoft_dxd.py` : le registre capteurs_retrait n'est plus lu
+  depuis un fichier local géré à la main — récupéré via
+  `GET {CAPTEURS_API_URL}/api/capteurs/retrait` (nouvelle variable d'env
+  `CAPTEURS_API_URL`), rafraîchi toutes les 60s (`CAPTEURS_RETRAIT_
+  RAFRAICHISSEMENT_S`, pas à chaque tour de boucle de 5s). `capteurs_retrait
+  _cache.json` local sert de repli hors-ligne si l'API est injoignable
+  (écrit à chaque récupération distante réussie, relu si elle échoue).
+  `enregistrer_canal_si_inconnu` devient un `POST .../enregistrer`
+  authentifié par `INGESTION_API_KEY` ; en cas d'échec réseau, l'entrée
+  reste en mémoire pour cette exécution seulement (retentée au prochain
+  démarrage, aucune mesure perdue — juste non publiée tant que non
+  étiquetée).
+- `ingestion_capteurs_bluetooth.py` : même principe côté HR/T
+  (`GET {CAPTEURS_API_URL}/api/capteurs/hr_t`), avec la nuance champs
+  techniques ci-dessus : le registre effectif en mémoire fusionne les
+  champs d'identité venus de l'API avec les champs techniques relus dans
+  le `capteurs.json` local (propriété de `configure_capteurs.py`). Le
+  résultat fusionné est réécrit dans `capteurs.json` à chaque
+  rafraîchissement — sert à la fois de cache de repli et de vue à jour
+  pour `configure_capteurs.py` (exécuté séparément, jamais concurremment
+  en pratique avec le script d'ingestion qui tourne en continu).
+- `requirements-windows.txt`/`requirements-rpi.txt` : ajout de `requests`.
+  `lancer_ingestion_dewesoft.bat.example`/`lancer_ingestion_capteurs.sh.
+  example` : ajout de `CAPTEURS_API_URL`/`INGESTION_API_KEY`.
+
+**Déployé et vérifié réel sur le VPS (13/08/2026)** : image rebuild
+(`docker build -f Dockerfile.webapp`), secret `murmetric-secrets` patché
+avec `webapp-ingestion-api-key` (64 caractères hex), `kubectl apply` sur
+`deployment.yaml`/`pvc.yaml`, rollout restart. Vérifié en direct après
+rollout :
+- `/data` contient bien `capteurs.json`/`capteurs_retrait.json` (amorcés
+  automatiquement depuis l'image au premier démarrage, aux côtés de
+  `users.json`/`parametres.json` déjà présents).
+- `GET /api/capteurs/retrait` renvoie les 8 canaux réels (HA1/HA2/VA1/VA2/
+  HB1/HB2/VB1/VB2).
+- `PUT /api/capteurs/retrait/VA1` (avec JWT) modifie bien la position et le
+  changement est immédiatement visible au `GET` suivant — testé puis
+  annulé (valeur de test posée puis restaurée à "droite").
+- `POST /api/capteurs/retrait/enregistrer` sans `X-Ingestion-Key` → 404 ;
+  avec la clé → crée `TEST_CANAL` (`ingestion: false`) ; rejoué à
+  l'identique → idempotent (retourne la même entrée, pas de doublon) ;
+  entrée de test supprimée après vérification.
+- Frontend (`npm run build`) compile sans erreur ; page d'accueil et
+  `/api/health` répondent 200 depuis le pod redéployé. **Non vérifié en
+  navigateur réel** (pas d'outil d'automatisation navigateur disponible
+  dans cet environnement) — l'UI d'édition suit le même schéma que
+  `TeneurEau.jsx`, déjà en production, mais l'interaction "Éditer" n'a été
+  validée qu'en simulant les appels API qu'elle déclenche, pas en cliquant
+  réellement dans la page.
+
+**Déployé sur le PC Amiens et le Raspberry Pi, avec confirmation explicite
+de l'utilisateur (13/08/2026, même jour)** :
+- PC Amiens (`C:\MurMetric\ingestion\`, accès SSH/paramiko via Tailscale,
+  compte FRD-CODEM) : `ingestion_dewesoft_dxd.py` et
+  `requirements-windows.txt` déposés par SFTP (anciennes versions
+  sauvegardées en `.bak_20260813`), `lancer_ingestion_dewesoft.bat`
+  réécrit avec `CAPTEURS_API_URL=http://89.168.34.201:8090` et
+  `INGESTION_API_KEY` (identifiants MQTT existants préservés), `requests`
+  installé. Buffer MQTT local vérifié vide avant coupure ; tâche planifiée
+  `MurMetric_Ingestion_DeweSoft` arrêtée puis relancée proprement
+  (`schtasks /End` + `/Run`) — reprise immédiate au fichier suivant sans
+  aucun message reperdu ni rebufferisé. Log confirmé sans warning "API
+  injoignable", `capteurs_retrait_cache.json` créé et à jour.
+- Raspberry Pi (`murmetric-pi5`, 100.101.220.39, accès SSH via Tailscale,
+  compte `murmetric`) : `ingestion_capteurs_bluetooth.py` et
+  `requirements-rpi.txt` déposés (idem, sauvegardes `.bak_20260813`),
+  `lancer_ingestion_capteurs.sh` réécrit avec les mêmes variables,
+  `requests` installé dans le venv dédié
+  (`/home/murmetric/murmetric_pi5/.venv`). Service systemd
+  `murmetric-capteurs.service` redémarré (`systemctl restart`, buffer
+  MQTT vérifié vide avant). Vérifié en direct : `capteurs.json` local
+  réécrit par la fusion identité(webapp)/technique(local) — testé sur
+  l'entrée `D2:0D:27:1C:F3:97` : champs d'identité venus de l'API,
+  `lint_configure`/`lint_max_confirme_s` (propriété de
+  `configure_capteurs.py`) intacts ; `📋 Registre capteurs publié sur MQTT
+  (64 capteur(s))` confirme un chargement réussi depuis l'API dès le
+  redémarrage.
+
+Les deux machines distantes tournent donc désormais sur l'architecture
+"source unique" — un edit fait depuis la page Capteurs de la webapp a un
+effet réel sur l'étiquetage des prochaines mesures en direct (retrait :
+sous 60s via le rafraîchissement périodique ; HR/T : idem). Les copies
+locales (`capteurs_retrait_cache.json` sur le PC Amiens,
+`capteurs.json` sur le Pi) ne sont plus que des caches de repli hors-ligne
+(+ champs techniques BLE pour le Pi).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

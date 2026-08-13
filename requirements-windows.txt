@@ -5,6 +5,11 @@
 # Publication MQTT vers le broker cloud
 paho-mqtt>=2.1.0
 
+# Registre capteurs_retrait (mur/couche/position) interrogé via l'API de la
+# webapp — source unique depuis le 13/08/2026 (cf. logique_projet.md
+# section 32), plus un fichier local géré à la main.
+requests>=2.31
+
 # Filtre de Hampel vectorisé (ingestion_dewesoft_dxd.py). Facultatif au sens
 # strict — le code retombe automatiquement sur une version pure Python — mais
 # fortement recommandé : la version NumPy est ~3x plus rapide et relâche le
