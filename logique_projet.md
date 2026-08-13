@@ -3157,6 +3157,80 @@ dans InfluxDB, soit transiter par ce canal MQTT existant.
   premier envoi. Pas corrigé (retarder le premier envoi ajouterait de la
   complexité pour un désagrément cosmétique qui se résorbe seul).
 
+### Bug trouvé et corrigé — heartbeat retrait figé pendant l'attente d'un fichier .dxd (13/08/2026)
+
+**Symptôme signalé par l'utilisateur** : le pipeline retrait affichait
+"❌ déconnecté" en continu dans la page Monitoring, alors que les logs
+côté PC Amiens montraient une connexion MQTT saine, un buffer vide et
+aucune erreur.
+
+**Cause réelle** : `attendre_fichier_stable()` boucle en interne (vérifie
+la taille du fichier `.dxd` en cours toutes les `POLL_INTERVAL_DXD` = 5s,
+jusqu'à 3 vérifications consécutives sans changement) et ne rend la main
+que si le fichier finit par se stabiliser. Le fichier DeweSoft actif
+grossit en continu jusqu'à sa rotation (~12h) : cette fonction peut donc
+bloquer la boucle extérieure de `boucle_surveillance()` — où vivent
+`verifier_et_recharger_capteurs_retrait()` ET `envoyer_heartbeat_si_du()`
+— pendant des heures. Résultat observé : le tout premier battement envoyé
+juste après un redémarrage (avec `mqtt_connecte` à sa valeur du split
+second avant la fin de la connexion) restait affiché indéfiniment côté
+webapp, le script étant en réalité bloqué à l'intérieur de cette attente,
+jamais revenu à la boucle extérieure pour en envoyer un nouveau. Ce blind
+spot existait déjà pour le rafraîchissement du registre capteurs (moins
+visible : le registre change rarement), le heartbeat l'a juste rendu
+manifeste.
+
+**Corrigé** : `verifier_et_recharger_capteurs_retrait()` et
+`envoyer_heartbeat_si_du()` appelés aussi à l'intérieur de la boucle de
+`attendre_fichier_stable()`, pas seulement autour — sans toucher à la
+logique de détection de stabilité elle-même (délicate, déjà durcie après
+l'incident de backfill du 09/08/2026, cf. section "RÈGLE ABSOLUE" plus
+haut). Déployé et vérifié réel : après redémarrage, le second battement
+(reçu alors que le script attendait toujours le même fichier `.dxd` non
+stabilisé) est bien arrivé avec `mqtt_connecte: true` — confirme que la
+boucle extérieure est désormais réatteinte périodiquement même en
+attente prolongée sur un fichier.
+
+### Bug trouvé et corrigé — Assistant IA aveugle à l'humidité/point de rosée (13/08/2026)
+
+**Origine** : l'utilisateur a remarqué que la liste déroulante "Type de
+mesure" de l'Assistant IA (température/humidité groupés en une seule
+option "hr_t") ne proposait pas les mêmes éléments que la liste des axes
+du nomogramme (température, humidité, point de rosée, retrait filtré/brut
+séparés) — question posée : la liste devrait-elle être alignée ?
+
+**Investigation** : `calculer_statistiques()` (`mesures.py`), utilisée par
+`/api/assistant/chat`, calculait `champ_principal =
+_CHAMPS_PAR_TYPE[type_mesure][0]` — **toujours le premier champ du type**,
+donc toujours "temperature" pour hr_t, jamais "humidite" ni
+"point_de_rosee", quelle que soit la sélection affichée ou la question
+posée par l'utilisateur. La liste déroulante coarse n'était donc pas le
+vrai problème : même parfaitement alignée sur le nomogramme, ajouter un
+sélecteur de grandeur n'aurait rien changé tant que le backend ignorait
+tout champ au-delà du premier.
+
+**Corrigé** : `calculer_statistiques()` calcule désormais les 4 agrégats
+(min/max/moyenne/nombre de points) pour **toutes** les grandeurs du type
+sélectionné en parallèle (`champs`, pas un champ unique) — coût
+négligeable (hr_t/teneur_eau : volumes instantanés ; retrait : seulement 2
+champs). Nouvelle forme de réponse : `{"champs": {"temperature": {...},
+"humidite": {...}, "point_de_rosee": {...}}, "mur", "couche", "debut",
+"fin"}` au lieu d'un objet plat à un seul champ. `/api/mesures/statistiques`
+(même fonction) n'est utilisé nulle part côté frontend en dehors de
+l'assistant — changement de forme sans risque de régression visuelle.
+Prompt système et description de l'outil Groq mis à jour en conséquence.
+**Décision sur la liste déroulante** : gardée coarse (hr_t/retrait/
+teneur_eau), pas alignée sur le catalogue d'axes du nomogramme — puisque
+l'assistant voit maintenant TOUTES les grandeurs du type en une fois, un
+sélecteur de grandeur individuelle serait redondant, et le regroupement
+aide même l'assistant à raisonner sur les relations entre grandeurs liées
+(ex. expliquer le point de rosée nécessite déjà température ET humidité).
+**Vérifié réel** (VPS, après rebuild/rollout) : `GET
+/api/mesures/statistiques?type=hr_t&...` renvoie bien les 3 champs avec
+des valeurs cohérentes (871 points chacun) ; question posée à l'assistant
+sur l'humidité (jamais accessible avant ce correctif) → réponse
+`71.51331802525837`, identique au chiffre réel renvoyé par l'API.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

@@ -970,6 +970,17 @@ def fichier_est_verrouille(chemin: str) -> bool:
 def attendre_fichier_stable(chemin: str) -> bool:
     """Attendre que la taille du fichier soit stable et qu'il ne soit plus verrouillé.
 
+    Peut bloquer très longtemps (jusqu'à ~12h) sur le fichier DeweSoft en
+    cours d'écriture — sa taille ne se stabilise qu'à la rotation suivante.
+    Pendant ce temps, la boucle extérieure de boucle_surveillance() (où
+    vivent verifier_et_recharger_capteurs_retrait() et
+    envoyer_heartbeat_si_du()) n'est jamais réatteinte : sans les appeler
+    ici aussi, le registre capteurs et le battement de vie resteraient
+    figés pendant tout ce blocage (trouvé le 13/08/2026 — le tout premier
+    battement envoyé au démarrage, avec mqtt_connecte à sa valeur du split
+    second avant la fin de la poignée de main, restait affiché indéfiniment
+    côté webapp alors que le script tournait normalement).
+
     Returns:
         True si le fichier est prêt à être traité, False s'il a disparu
         (déplacé/supprimé entre-temps) avant stabilisation.
@@ -991,6 +1002,8 @@ def attendre_fichier_stable(chemin: str) -> bool:
             verifications_stables = 0
 
         taille_precedente = taille
+        verifier_et_recharger_capteurs_retrait()
+        envoyer_heartbeat_si_du()
         time.sleep(POLL_INTERVAL_DXD)
 
     return True

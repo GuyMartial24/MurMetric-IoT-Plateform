@@ -55,7 +55,10 @@ Règles strictes :
   agrégées (min/max/moyenne/nombre de points) via l'outil
   interroger_statistiques_mesures. Utilise-le pour obtenir des chiffres
   précis avant toute affirmation quantitative — ne jamais inventer une
-  valeur.
+  valeur. Le résultat contient un sous-objet "champs" avec TOUTES les
+  grandeurs du type sélectionné (ex. pour "hr_t" : temperature, humidite
+  ET point_de_rosee ensemble) — tu peux et dois commenter n'importe
+  laquelle selon la question posée, pas seulement la première.
 - Si le mode est "report" : rédige un brouillon structuré de rapport
   d'instrumentation (contexte, mesures, observations, limites), en
   rappelant explicitement qu'il s'agit d'un brouillon à relire et valider
@@ -69,8 +72,9 @@ _TOOLS = [{
         "name": "interroger_statistiques_mesures",
         "description": (
             "Renvoie des statistiques pré-agrégées (min, max, moyenne, nombre de "
-            "points) pour une sélection de mesures MurMetric. Ne renvoie jamais "
-            "de points bruts."
+            "points) pour toutes les grandeurs du type demandé (ex. 'hr_t' renvoie "
+            "temperature, humidite ET point_de_rosee) sur une sélection de mesures "
+            "MurMetric. Ne renvoie jamais de points bruts."
         ),
         "parameters": {
             "type": "object",

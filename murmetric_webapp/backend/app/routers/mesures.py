@@ -112,22 +112,30 @@ def calculer_statistiques(
     fin: str,
 ) -> dict:
     """Stats pré-agrégées (min/max/mean/count) — jamais de points bruts
-    envoyés à l'assistant IA, cf. section 32 (garde-fou coût/fiabilité)."""
-    champ_principal = _CHAMPS_PAR_TYPE[type_mesure][0]
+    envoyés à l'assistant IA, cf. section 32 (garde-fou coût/fiabilité).
+
+    Un champ par grandeur du type (ex. hr_t → temperature/humidite/
+    point_de_rosee), pas seulement la première — bug trouvé le 13/08/2026 :
+    l'assistant ne calculait que sur `_CHAMPS_PAR_TYPE[type][0]`
+    (toujours "temperature" pour hr_t), donc ne pouvait littéralement pas
+    répondre sur l'humidité ou le point de rosée quel que soit le contenu
+    de la sélection ou de la question posée. Coût négligeable : hr_t/
+    teneur_eau sont des volumes instantanés (cf. _FENETRE_DEFAUT_JOURS),
+    retrait n'a que 2 champs — toutes les requêtes restent lancées en
+    parallèle.
+    """
+    champs = _CHAMPS_PAR_TYPE[type_mesure]
     mesure = _MESURE_PAR_TYPE[type_mesure]
 
-    filtres = [f'r._measurement == "{mesure}"', f'r._field == "{champ_principal}"']
+    filtres_communs = []
     if mur:
-        filtres.append(f'r.nom_mur == "{flux_escape(mur)}"' if type_mesure != "teneur_eau" else f'r.mur == "{flux_escape(mur)}"')
+        filtres_communs.append(f'r.nom_mur == "{flux_escape(mur)}"' if type_mesure != "teneur_eau" else f'r.mur == "{flux_escape(mur)}"')
     if couche:
-        filtres.append(f'r.nom_couche == "{flux_escape(couche)}"' if type_mesure != "teneur_eau" else f'r.couche == "{flux_escape(couche)}"')
+        filtres_communs.append(f'r.nom_couche == "{flux_escape(couche)}"' if type_mesure != "teneur_eau" else f'r.couche == "{flux_escape(couche)}"')
     if position and type_mesure in ("hr_t", "retrait"):
-        filtres.append(f'r.position == "{flux_escape(position)}"')
+        filtres_communs.append(f'r.position == "{flux_escape(position)}"')
     if canal_nom and type_mesure == "retrait":
-        filtres.append(f'r.canal_nom == "{flux_escape(canal_nom)}"')
-    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
-
-    stats: dict = {"champ": champ_principal, "mur": mur, "couche": couche, "debut": debut, "fin": fin}
+        filtres_communs.append(f'r.canal_nom == "{flux_escape(canal_nom)}"')
 
     # Les 4 agrégats natifs (min/max/mean/count, optimisés par InfluxDB —
     # nettement plus rapides qu'un reduce() générique passé par la VM Flux
@@ -135,8 +143,11 @@ def calculer_statistiques(
     # mesures_dewesoft/retrait, ~1,5 milliard de points : le reduce() dépassait
     # encore le timeout là où min()/max()/mean()/count() natifs passent) sont
     # lancés en parallèle plutôt qu'en séquence — le temps total tombe alors
-    # au niveau du plus lent des 4, pas de leur somme.
-    def _executer(nom_fonction: str) -> tuple | None:
+    # au niveau du plus lent des 4, pas de leur somme. Idem entre champs :
+    # toutes les requêtes (champs × agrégats) partent ensemble.
+    def _executer(champ: str, nom_fonction: str) -> tuple | None:
+        filtres = [f'r._measurement == "{mesure}"', f'r._field == "{champ}"', *filtres_communs]
+        clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
         flux = (
             f'from(bucket: "{config.INFLUX_BUCKET}")\n'
             f"  |> range(start: {debut}, stop: {fin})"
@@ -149,14 +160,20 @@ def calculer_statistiques(
                 return record.get_value()
         return None
 
+    stats_par_champ: dict = {champ: {} for champ in champs}
     try:
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futurs = {nom: executor.submit(_executer, fn) for nom, fn in (("minimum", "min"), ("maximum", "max"), ("moyenne", "mean"), ("nombre_points", "count"))}
-            for nom, futur in futurs.items():
-                stats[nom] = futur.result()
+        with ThreadPoolExecutor(max_workers=4 * len(champs)) as executor:
+            futurs = {
+                (champ, nom): executor.submit(_executer, champ, fn)
+                for champ in champs
+                for nom, fn in (("minimum", "min"), ("maximum", "max"), ("moyenne", "mean"), ("nombre_points", "count"))
+            }
+            for (champ, nom), futur in futurs.items():
+                stats_par_champ[champ][nom] = futur.result()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Requête statistique échouée : {exc}") from exc
-    return stats
+
+    return {"champs": stats_par_champ, "mur": mur, "couche": couche, "debut": debut, "fin": fin}
 
 
 _TAGS_PAR_TYPE = {
