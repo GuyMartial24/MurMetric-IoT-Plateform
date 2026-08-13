@@ -2867,6 +2867,32 @@ calculée à partir de valeurs déjà corrompues, donc rien ne semble
   PC Amiens) — décision explicite de l'utilisateur, `valeur_filtree`
   stockée en base reste inchangée pour l'instant.
 
+### Export des graphiques (PNG) — pour coller dans des rapports (13/08/2026)
+
+Demande explicite : pouvoir copier/exporter facilement les courbes pour
+les insérer dans un rapport.
+
+- **`exportGraphique.js`** (nouveau) — deux chemins de conversion vers PNG
+  selon le type de rendu de l'appli : `canvas` directement
+  (`canvas.toDataURL`, utilisé par les nomogrammes 2D/3D) ou `svg` via une
+  conversion (sérialisation XML → `<img>` → canvas hors-écran à 2×, utilisé
+  par la courbe valeur/temps et le graphique du filtre de Hampel). Fond
+  opaque ajouté explicitement à l'export SVG (`#0f1117`, même couleur que
+  le thème) — sans ça l'image exportée serait transparente, illisible une
+  fois collée sur un fond blanc dans un rapport.
+- **`BoutonsExport.jsx`** (nouveau, réutilisable) — "Télécharger PNG" et
+  "Copier l'image" (API Clipboard), ajouté sous les 4 graphiques de
+  l'appli (`GraphiqueSVG`, `Nomogramme` 2D, `Nomogramme3D`,
+  `FiltreHampel`).
+- **Limite connue, pas encore résolue** : `navigator.clipboard.write()`
+  (bouton "Copier") exige un contexte sécurisé (HTTPS) dans la plupart des
+  navigateurs — l'appli tourne pour l'instant en HTTP simple
+  (`http://89.168.34.201:8090`, cf. section 32 "Déployé sur le VPS"). Le
+  bouton "Télécharger PNG" fonctionne dans tous les cas (pas besoin de
+  l'API Clipboard) ; "Copier" échouera probablement tant que l'appli n'a
+  pas de certificat TLS — pas traité ici, sujet à part (nécessiterait
+  Let's Encrypt/cert-manager ou un reverse proxy TLS devant le service k3s).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

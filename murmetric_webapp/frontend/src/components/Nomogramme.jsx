@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { AXES_DISPONIBLES, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe, libelleGrandeur, trouverCroisements } from "../nomogrammeAxes.js";
+import BoutonsExport from "./BoutonsExport.jsx";
 
 // Portage scopé du "nomogramme" de l'ancien POC (data_reel_compile/
 // abaque-3d-hygrothermique.html, cf. logique_projet.md section 32) : le
@@ -343,6 +344,9 @@ export default function Nomogramme({ mur, couche }) {
         onMouseMove={survolerCanvas}
         onMouseLeave={() => setSurvol(null)}
       />
+      {points.length > 0 && (
+        <BoutonsExport obtenirElement={() => canvasRef.current} type="canvas" nomFichier="nomogramme-2d" />
+      )}
     </div>
   );
 }

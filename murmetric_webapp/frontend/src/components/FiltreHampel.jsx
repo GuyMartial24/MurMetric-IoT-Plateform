@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../api.js";
 import { CANAUX_RETRAIT } from "../nomogrammeAxes.js";
+import BoutonsExport from "./BoutonsExport.jsx";
 
 // Filtre de Hampel recalculé à la volée sur le retrait BRUT — répond à une
 // question explicite de l'utilisateur (13/08/2026) : le seuil d'ingestion
@@ -109,6 +110,7 @@ export default function FiltreHampel({ mur }) {
 }
 
 function GraphiqueHampel({ points }) {
+  const svgRef = useRef(null);
   const largeur = 900, hauteur = 320, marge = 40;
   const temps = points.map((p) => new Date(p.time).getTime());
   const brut = points.map((p) => p.brut);
@@ -123,15 +125,18 @@ function GraphiqueHampel({ points }) {
   const cheminFiltre = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(temps[i])},${y(p.filtre_ajuste)}`).join(" ");
 
   return (
-    <svg viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
-      <path d={cheminBrut} fill="none" stroke="#5a6270" strokeWidth="1" />
-      <path d={cheminFiltre} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
-      {points.map((p, i) => p.aberrant && (
-        <circle key={i} cx={x(temps[i])} cy={y(p.brut)} r="3" fill="#ff8080" />
-      ))}
-      <text x={marge} y={16} fill="#5a6270" fontSize="12">— brut</text>
-      <text x={marge + 60} y={16} fill="#7fd4ff" fontSize="12">— filtré (ajusté)</text>
-      <text x={marge + 190} y={16} fill="#ff8080" fontSize="12">● point corrigé</text>
-    </svg>
+    <div>
+      <svg ref={svgRef} viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
+        <path d={cheminBrut} fill="none" stroke="#5a6270" strokeWidth="1" />
+        <path d={cheminFiltre} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
+        {points.map((p, i) => p.aberrant && (
+          <circle key={i} cx={x(temps[i])} cy={y(p.brut)} r="3" fill="#ff8080" />
+        ))}
+        <text x={marge} y={16} fill="#5a6270" fontSize="12">— brut</text>
+        <text x={marge + 60} y={16} fill="#7fd4ff" fontSize="12">— filtré (ajusté)</text>
+        <text x={marge + 190} y={16} fill="#ff8080" fontSize="12">● point corrigé</text>
+      </svg>
+      <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier="filtre-hampel" />
+    </div>
   );
 }

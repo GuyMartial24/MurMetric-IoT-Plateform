@@ -1,8 +1,12 @@
+import { useRef } from "react";
+import BoutonsExport from "./BoutonsExport.jsx";
+
 // Tracé minimal en SVG pur (pas de dépendance de charting) — représentation
 // provisoire en attendant le portage du moteur Canvas de l'abaque POC
 // (data_reel_compile/abaque-3d-hygrothermique.html, cf. logique_projet.md
 // section 32) en composant React.
 export default function GraphiqueSVG({ points, champ }) {
+  const svgRef = useRef(null);
   const valeurs = points.filter((p) => p.field === champ);
   if (valeurs.length === 0) {
     return <p>Aucun point pour ce champ sur la période sélectionnée.</p>;
@@ -23,10 +27,13 @@ export default function GraphiqueSVG({ points, champ }) {
   const chemin = valeurs.map((p, i) => `${i === 0 ? "M" : "L"}${x(new Date(p.time).getTime())},${y(p.value)}`).join(" ");
 
   return (
-    <svg viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
-      <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
-      <text x={marge} y={16} fill="#a0a6b5" fontSize="12">{champ} — max {vMax.toFixed(2)}</text>
-      <text x={marge} y={hauteur - 8} fill="#a0a6b5" fontSize="12">min {vMin.toFixed(2)} — {valeurs.length} points</text>
-    </svg>
+    <div>
+      <svg ref={svgRef} viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
+        <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
+        <text x={marge} y={16} fill="#a0a6b5" fontSize="12">{champ} — max {vMax.toFixed(2)}</text>
+        <text x={marge} y={hauteur - 8} fill="#a0a6b5" fontSize="12">min {vMin.toFixed(2)} — {valeurs.length} points</text>
+      </svg>
+      <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier={`courbe-${champ}`} />
+    </div>
   );
 }

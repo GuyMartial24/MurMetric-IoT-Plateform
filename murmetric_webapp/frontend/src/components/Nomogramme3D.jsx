@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { AXES_DISPONIBLES, AXES_GRANDEURS, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe, trouverCroisements } from "../nomogrammeAxes.js";
+import BoutonsExport from "./BoutonsExport.jsx";
 
 // Nomogramme 3D — composition libre d'axes entre HR/T et retrait, y compris
 // le TEMPS comme axe à part entière (demandes explicites du 13/08/2026) +
@@ -409,6 +410,9 @@ export default function Nomogramme3D({ mur, couche }) {
         onMouseLeave={surSourisHaut}
         onWheel={surMolette}
       />
+      {points.length > 0 && (
+        <BoutonsExport obtenirElement={() => canvasRef.current} type="canvas" nomFichier="nomogramme-3d" />
+      )}
     </div>
   );
 }
