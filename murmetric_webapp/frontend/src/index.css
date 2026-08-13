@@ -115,6 +115,26 @@ th, td {
   gap: 0.75rem;
 }
 
+/* Formulaires plus denses (nombreux petits champs, ex. FiltreHampel) — en
+   grille, un champ qui se retrouve seul sur sa ligne s'étire sur toute la
+   largeur (minmax(..., 1fr)) ; en flex, chaque champ garde sa taille
+   naturelle et le retour à la ligne reste propre. */
+.form-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.form-compact .champ {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
+
+.form-compact .champ input,
+.form-compact .champ select {
+  width: 100%;
+}
+
 .chat-message {
   padding: 0.75rem;
   border-radius: 6px;

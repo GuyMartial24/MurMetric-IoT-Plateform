@@ -58,35 +58,35 @@ export default function FiltreHampel({ mur }) {
         Recalcule le filtre de Hampel à la volée sur les valeurs brutes (rien n'est modifié en base) — pour comparer
         différents réglages de fenêtre/seuil sans toucher au réglage d'ingestion. Période limitée à 2h (données à 100 Hz).
       </p>
-      <div className="selection-form" style={{ marginBottom: "0.75rem" }}>
-        <div className="champ">
+      <div className="form-compact" style={{ marginBottom: "0.75rem" }}>
+        <div className="champ" style={{ width: "90px" }}>
           <label>Canal</label>
           <select value={canal} onChange={(e) => setCanal(e.target.value)}>
             {CANAUX_RETRAIT.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
-        <div className="champ">
+        <div className="champ" style={{ width: "195px" }}>
           <label>Début</label>
           <input type="datetime-local" value={debut} onChange={(e) => setDebut(e.target.value)} />
         </div>
-        <div className="champ">
+        <div className="champ" style={{ width: "195px" }}>
           <label>Fin</label>
           <input type="datetime-local" value={fin} onChange={(e) => setFin(e.target.value)} />
         </div>
-        <div className="champ">
-          <label>Fenêtre (échantillons)</label>
+        <div className="champ" style={{ width: "110px" }}>
+          <label>Fenêtre</label>
           <input type="number" min="1" max="200" value={fenetre} onChange={(e) => setFenetre(Number(e.target.value))} />
         </div>
-        <div className="champ">
+        <div className="champ" style={{ width: "90px" }}>
           <label>Seuil K</label>
           <input type="number" min="0.1" step="0.1" value={seuilK} onChange={(e) => setSeuilK(Number(e.target.value))} />
         </div>
-        <div className="champ">
-          <label>Borne physique min (optionnel)</label>
+        <div className="champ" style={{ width: "110px" }}>
+          <label>Borne min</label>
           <input type="number" step="0.1" value={borneMin} onChange={(e) => setBorneMin(e.target.value)} placeholder="ex. -50" />
         </div>
-        <div className="champ">
-          <label>Borne physique max (optionnel)</label>
+        <div className="champ" style={{ width: "110px" }}>
+          <label>Borne max</label>
           <input type="number" step="0.1" value={borneMax} onChange={(e) => setBorneMax(e.target.value)} placeholder="ex. 50" />
         </div>
       </div>
