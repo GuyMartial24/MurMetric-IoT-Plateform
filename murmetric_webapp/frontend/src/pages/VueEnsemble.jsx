@@ -48,20 +48,18 @@ export default function VueEnsemble() {
         <div className="carte">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ margin: 0 }}>Nomogramme — grandeurs croisées</h3>
-            {selection.type === "hr_t" && (
-              <div>
-                <button onClick={() => setMode3D(false)} disabled={!mode3D} style={{ marginRight: "0.5rem" }}>2D</button>
-                <button onClick={() => setMode3D(true)} disabled={mode3D}>3D</button>
-              </div>
-            )}
+            <div>
+              <button onClick={() => setMode3D(false)} disabled={!mode3D} style={{ marginRight: "0.5rem" }}>2D</button>
+              <button onClick={() => setMode3D(true)} disabled={mode3D}>3D (HR/T + retrait)</button>
+            </div>
           </div>
           <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
             {mode3D
-              ? "Croise trois grandeurs dans un même espace — glisse pour tourner, molette pour zoomer, survole un point pour lire ses valeurs."
-              : "Croise deux grandeurs l'une contre l'autre (pas contre le temps) — survole un point pour lire sa valeur par projection sur les axes."}
+              ? "Compose librement 3 grandeurs, même entre HR/T et retrait — glisse pour tourner, molette pour zoomer, survole un point pour lire ses valeurs."
+              : "Croise deux grandeurs de la même mesure l'une contre l'autre (pas contre le temps) — survole un point pour lire sa valeur par projection sur les axes."}
           </p>
-          {mode3D && selection.type === "hr_t" ? (
-            <Nomogramme3D type={selection.type} mur={selection.mur} couche={selection.couche} position={selection.position} />
+          {mode3D ? (
+            <Nomogramme3D mur={selection.mur} couche={selection.couche} />
           ) : (
             <Nomogramme type={selection.type} mur={selection.mur} couche={selection.couche} position={selection.position} />
           )}

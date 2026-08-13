@@ -2593,6 +2593,42 @@ POC.
 - Validé avec de vraies données : 3658 triplets température/humidité/point
   de rosée récupérés pour SOCMA 1 / milieu isolant.
 
+### Composition libre des axes (HR/T × retrait) + options de vue (13/08/2026)
+
+Suite immédiate — l'utilisateur a demandé pourquoi les axes ne pouvaient
+pas mélanger HR/T et retrait (le nomogramme 3D initial limitait les 3 axes
+à une seule mesure, comme la version 2D), et des options de vue façon POC.
+
+- **Nouvel endpoint `GET /api/mesures/croisement-libre`** — contrairement à
+  `/croisement` (une seule mesure, `pivot()` direct), interroge chaque axe
+  **séparément** (HR/T et retrait ont des fréquences trop différentes pour
+  un pivot commun — HR/T toutes les quelques heures, retrait 100 Hz),
+  chacun agrégé sur la **même fenêtre** (`aggregateWindow`), puis aligne
+  les séries en Python sur les horodatages communs (intersection des clés).
+  Même leçon que retrait/mémoire réappliquée ici : dès qu'un axe retrait
+  est impliqué, la fenêtre par défaut est plafonnée à 90 jours et
+  s'applique à **tous** les axes de la requête (comparer des grandeurs sur
+  des périodes différentes n'aurait pas de sens de toute façon). Chaque
+  axe est décrit par une chaîne `"mesure:champ"` ou `"mesure:champ:canal"`
+  (ex. `"retrait:valeur_filtree:HA1"`).
+- **Frontend** (`Nomogramme3D.jsx`) : catalogue d'axes unifié (température,
+  humidité, point de rosée, retrait filtré, retrait brut), sélecteur de
+  canal qui apparaît dès qu'un axe retrait est choisi. Options de vue
+  ajoutées : boutons de vues préréglées (Face/Dessus/Profil/Isométrique),
+  rotation automatique (`requestAnimationFrame`, désactivée dès que
+  l'utilisateur prend la main à la souris), légende de couleur (dégradé
+  ancien→récent). Le nomogramme 3D n'est plus conditionné à `type === "hr_t"`
+  dans `VueEnsemble.jsx` — accessible dès que HR/T ou retrait est
+  sélectionné, puisqu'il peut désormais combiner les deux.
+- **Point de vigilance découvert en testant** : sans dates explicites, la
+  fenêtre par défaut (30 jours glissants côté retrait) peut renvoyer 0
+  points — les données HR/T sont un backfill historique arrêté vers mai
+  2026 (Pi pas encore déployé), le retrait continue en direct ; les deux
+  périodes ne se chevauchent donc pas sur les 30 derniers jours. Validé
+  avec une période explicite (avril 2026) : 407 points réels combinant
+  température, humidité et retrait filtré (canal HA1) aux mêmes
+  horodatages. Redeviendra pertinent par défaut une fois le HR/T live.
+
 ### Date d'expiration de clé API trackée (12/08/2026)
 
 Demande explicite : les identifiants API du LLM doivent être modifiables

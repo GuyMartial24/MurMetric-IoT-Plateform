@@ -1,23 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 
-// Nomogramme 3D — suite du portage scopé du POC (Nomogramme.jsx fait le
-// croisement 2D ; ici la vraie rotation 3D demandée explicitement le
-// 13/08/2026). Projection en perspective classique (rotation yaw/pitch puis
-// division perspective) — même principe mathématique générique que le POC,
-// réécrit proprement pour ce composant plutôt que porté ligne à ligne (cf.
-// logique_projet.md section 32 : le POC lui-même n'a pas été repris tel
-// quel, ~50 fonctions très couplées à son propre DOM).
-const CHAMPS_PAR_TYPE = {
-  hr_t: [
-    { valeur: "temperature", label: "Température (°C)" },
-    { valeur: "humidite", label: "Humidité (%)" },
-    { valeur: "point_de_rosee", label: "Point de rosée (°C)" },
-  ],
-  retrait: [
-    { valeur: "valeur", label: "Valeur brute" },
-    { valeur: "valeur_filtree", label: "Valeur filtrée (Hampel)" },
-  ],
+// Nomogramme 3D — composition libre d'axes entre HR/T et retrait (demande
+// explicite du 13/08/2026 : ne plus limiter les axes à une seule mesure) +
+// options de vue façon POC (rotation auto, vues préréglées) en plus de la
+// rotation à la souris déjà en place. Projection en perspective classique
+// (rotation yaw/pitch puis division perspective) — même principe
+// mathématique générique que le POC, réécrit proprement (cf. logique_projet.md
+// section 32 : le POC lui-même, ~50 fonctions très couplées à son propre
+// DOM, n'a pas été repris tel quel).
+const AXES_DISPONIBLES = [
+  { valeur: "hr_t:temperature", label: "Température (°C)" },
+  { valeur: "hr_t:humidite", label: "Humidité (%)" },
+  { valeur: "hr_t:point_de_rosee", label: "Point de rosée (°C)" },
+  { valeur: "retrait:valeur_filtree", label: "Retrait filtré" },
+  { valeur: "retrait:valeur", label: "Retrait brut" },
+];
+const CANAUX_RETRAIT = ["HA1", "HA2", "VA1", "VA2", "HB1", "HB2", "VB1", "VB2"];
+
+const VUES_PREREGLEES = {
+  face: { yaw: 0, pitch: 0 },
+  dessus: { yaw: 0, pitch: 1.45 },
+  profil: { yaw: 1.5708, pitch: 0 },
+  isometrique: { yaw: 0.6, pitch: 0.35 },
 };
 
 function projeter(nx, ny, nz, yaw, pitch, zoom, w, h) {
@@ -42,38 +47,43 @@ const ARETES_CUBE = [
   [5, 1], [5, 4], [5, 7], [6, 2], [6, 4], [6, 7],
 ];
 
-export default function Nomogramme3D({ type, mur, couche, position }) {
-  const champs = CHAMPS_PAR_TYPE[type] ?? [];
-  const [champX, setChampX] = useState(champs[0]?.valeur);
-  const [champY, setChampY] = useState(champs[1]?.valeur);
-  const [champZ, setChampZ] = useState(champs[2]?.valeur ?? champs[0]?.valeur);
+function libelleAxe(valeur) {
+  return AXES_DISPONIBLES.find((a) => a.valeur === valeur)?.label ?? valeur;
+}
+
+export default function Nomogramme3D({ mur, couche }) {
+  const [axeX, setAxeX] = useState("hr_t:temperature");
+  const [axeY, setAxeY] = useState("hr_t:humidite");
+  const [axeZ, setAxeZ] = useState("hr_t:point_de_rosee");
+  const [canal, setCanal] = useState("HA1");
   const [points, setPoints] = useState([]);
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
   const [survol, setSurvol] = useState(null);
 
-  const [yaw, setYaw] = useState(0.6);
-  const [pitch, setPitch] = useState(0.35);
+  const [yaw, setYaw] = useState(VUES_PREREGLEES.isometrique.yaw);
+  const [pitch, setPitch] = useState(VUES_PREREGLEES.isometrique.pitch);
   const [zoom, setZoom] = useState(1);
+  const [rotationAuto, setRotationAuto] = useState(false);
   const canvasRef = useRef(null);
   const glisseRef = useRef(null);
 
-  useEffect(() => {
-    if (champs.length < 2) return;
-    if (!champs.some((c) => c.valeur === champX)) setChampX(champs[0].valeur);
-    if (!champs.some((c) => c.valeur === champY)) setChampY(champs[1]?.valeur ?? champs[0].valeur);
-    if (!champs.some((c) => c.valeur === champZ)) setChampZ(champs[2]?.valeur ?? champs[0].valeur);
-  }, [type]); // eslint-disable-line react-hooks/exhaustive-deps
+  const necessiteCanal = [axeX, axeY, axeZ].some((a) => a.startsWith("retrait"));
+  const construireParamAxe = (axe) => (axe.startsWith("retrait") ? `${axe}:${canal}` : axe);
 
   const charger = async () => {
-    if (!champX || !champY || !champZ) return;
     setEnCours(true);
     setErreur(null);
     try {
       const params = Object.fromEntries(
-        Object.entries({ type, mur, couche, position, champ_x: champX, champ_y: champY, champ_z: champZ }).filter(([, v]) => v),
+        Object.entries({
+          mur, couche,
+          axe_x: construireParamAxe(axeX),
+          axe_y: construireParamAxe(axeY),
+          axe_z: construireParamAxe(axeZ),
+        }).filter(([, v]) => v),
       );
-      const resultat = await api.croisement(params);
+      const resultat = await api.croisementLibre(params);
       setPoints((resultat?.points ?? []).filter((p) => p.x != null && p.y != null && p.z != null));
     } catch (e) {
       setErreur(e.message);
@@ -84,7 +94,20 @@ export default function Nomogramme3D({ type, mur, couche, position }) {
 
   useEffect(() => {
     charger();
-  }, [type, mur, couche, position, champX, champY, champZ]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mur, couche, axeX, axeY, axeZ, canal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Rotation automatique — façon POC (autorotate), désactivée dès que
+  // l'utilisateur prend la main à la souris (cf. surSourisBas).
+  useEffect(() => {
+    if (!rotationAuto) return;
+    let brut;
+    const boucle = () => {
+      setYaw((y) => y + 0.006);
+      brut = requestAnimationFrame(boucle);
+    };
+    brut = requestAnimationFrame(boucle);
+    return () => cancelAnimationFrame(brut);
+  }, [rotationAuto]);
 
   const bornes = useMemo(() => {
     if (points.length === 0) return null;
@@ -114,7 +137,6 @@ export default function Nomogramme3D({ type, mur, couche, position }) {
 
     const proj = (nx, ny, nz) => projeter(nx, ny, nz, yaw, pitch, zoom, w, h);
 
-    // Arête du cube-cadre (repère spatial).
     ctx.strokeStyle = "#2a2e3a";
     ctx.lineWidth = 1;
     for (const [a, b] of ARETES_CUBE) {
@@ -126,18 +148,15 @@ export default function Nomogramme3D({ type, mur, couche, position }) {
       ctx.stroke();
     }
 
-    // Étiquettes des axes (min/max) depuis le coin (-1,-1,-1).
     ctx.fillStyle = "#a0a6b5";
     ctx.font = "11px system-ui";
     const origine = proj(-1, -1, -1);
     const boutX = proj(1, -1, -1), boutY = proj(-1, 1, -1), boutZ = proj(-1, -1, 1);
-    ctx.fillText(`${champX}: ${bornes.xMin.toFixed(1)} → ${bornes.xMax.toFixed(1)}`, boutX.x, boutX.y);
-    ctx.fillText(`${champY}: ${bornes.yMin.toFixed(1)} → ${bornes.yMax.toFixed(1)}`, boutY.x, boutY.y);
-    ctx.fillText(`${champZ}: ${bornes.zMin.toFixed(1)} → ${bornes.zMax.toFixed(1)}`, boutZ.x, boutZ.y);
+    ctx.fillText(`${libelleAxe(axeX)}: ${bornes.xMin.toFixed(1)} → ${bornes.xMax.toFixed(1)}`, boutX.x, boutX.y);
+    ctx.fillText(`${libelleAxe(axeY)}: ${bornes.yMin.toFixed(1)} → ${bornes.yMax.toFixed(1)}`, boutY.x, boutY.y);
+    ctx.fillText(`${libelleAxe(axeZ)}: ${bornes.zMin.toFixed(1)} → ${bornes.zMax.toFixed(1)}`, boutZ.x, boutZ.y);
     ctx.fillText("origine", origine.x - 20, origine.y + 14);
 
-    // Points, triés par profondeur (peintre) pour une occlusion correcte,
-    // couleur = position temporelle (bleu = ancien, rouge = récent).
     const temps = points.map((p) => new Date(p.time).getTime());
     const [tMin, tMax] = [Math.min(...temps), Math.max(...temps)];
     const projetes = points.map((p, i) => {
@@ -157,17 +176,18 @@ export default function Nomogramme3D({ type, mur, couche, position }) {
     if (survol) {
       const p = survol.point;
       ctx.fillStyle = "#0f1117";
-      ctx.fillRect(survol.x + 8, survol.y - 42, 150, 48);
+      ctx.fillRect(survol.x + 8, survol.y - 42, 160, 48);
       ctx.strokeStyle = "#7fd4ff";
-      ctx.strokeRect(survol.x + 8, survol.y - 42, 150, 48);
+      ctx.strokeRect(survol.x + 8, survol.y - 42, 160, 48);
       ctx.fillStyle = "#e6e6e6";
-      ctx.fillText(`${champX} = ${p.x.toFixed(2)}`, survol.x + 14, survol.y - 28);
-      ctx.fillText(`${champY} = ${p.y.toFixed(2)}`, survol.x + 14, survol.y - 16);
-      ctx.fillText(`${champZ} = ${p.z.toFixed(2)}`, survol.x + 14, survol.y - 4);
+      ctx.fillText(`${libelleAxe(axeX)} = ${p.x.toFixed(2)}`, survol.x + 14, survol.y - 28);
+      ctx.fillText(`${libelleAxe(axeY)} = ${p.y.toFixed(2)}`, survol.x + 14, survol.y - 16);
+      ctx.fillText(`${libelleAxe(axeZ)} = ${p.z.toFixed(2)}`, survol.x + 14, survol.y - 4);
     }
-  }, [points, bornes, yaw, pitch, zoom, survol, champX, champY, champZ]);
+  }, [points, bornes, yaw, pitch, zoom, survol, axeX, axeY, axeZ]);
 
   const surSourisBas = (e) => {
+    setRotationAuto(false);
     glisseRef.current = { x: e.clientX, y: e.clientY, yaw, pitch };
   };
   const surSourisDeplace = (e) => {
@@ -203,37 +223,56 @@ export default function Nomogramme3D({ type, mur, couche, position }) {
     e.preventDefault();
     setZoom((z) => Math.max(0.4, Math.min(3, z - e.deltaY * 0.001)));
   };
-
-  if (champs.length < 3) {
-    return <p style={{ color: "#a0a6b5" }}>Pas assez de grandeurs disponibles pour un nomogramme 3D sur ce type de mesure.</p>;
-  }
+  const appliquerVue = (nom) => {
+    setRotationAuto(false);
+    setYaw(VUES_PREREGLEES[nom].yaw);
+    setPitch(VUES_PREREGLEES[nom].pitch);
+  };
 
   return (
     <div>
       <div className="selection-form" style={{ marginBottom: "0.75rem" }}>
         <div className="champ">
           <label>Axe X</label>
-          <select value={champX} onChange={(e) => setChampX(e.target.value)}>
-            {champs.map((c) => <option key={c.valeur} value={c.valeur}>{c.label}</option>)}
+          <select value={axeX} onChange={(e) => setAxeX(e.target.value)}>
+            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
           </select>
         </div>
         <div className="champ">
           <label>Axe Y</label>
-          <select value={champY} onChange={(e) => setChampY(e.target.value)}>
-            {champs.map((c) => <option key={c.valeur} value={c.valeur}>{c.label}</option>)}
+          <select value={axeY} onChange={(e) => setAxeY(e.target.value)}>
+            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
           </select>
         </div>
         <div className="champ">
           <label>Axe Z</label>
-          <select value={champZ} onChange={(e) => setChampZ(e.target.value)}>
-            {champs.map((c) => <option key={c.valeur} value={c.valeur}>{c.label}</option>)}
+          <select value={axeZ} onChange={(e) => setAxeZ(e.target.value)}>
+            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
           </select>
         </div>
-        <div className="champ" style={{ justifyContent: "flex-end" }}>
-          <label>&nbsp;</label>
-          <button type="button" onClick={() => { setYaw(0.6); setPitch(0.35); setZoom(1); }}>
-            Réinitialiser la vue
-          </button>
+        {necessiteCanal && (
+          <div className="champ">
+            <label>Canal retrait</label>
+            <select value={canal} onChange={(e) => setCanal(e.target.value)}>
+              {CANAUX_RETRAIT.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+        <button type="button" onClick={() => appliquerVue("face")}>Face</button>
+        <button type="button" onClick={() => appliquerVue("dessus")}>Dessus</button>
+        <button type="button" onClick={() => appliquerVue("profil")}>Profil</button>
+        <button type="button" onClick={() => appliquerVue("isometrique")}>Isométrique</button>
+        <button type="button" onClick={() => setRotationAuto((v) => !v)}>
+          {rotationAuto ? "⏸ Arrêter la rotation" : "▶ Rotation automatique"}
+        </button>
+        <button type="button" onClick={() => setZoom(1)}>Réinitialiser le zoom</button>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", color: "#a0a6b5" }}>
+          <span>ancien</span>
+          <div style={{ width: "60px", height: "8px", borderRadius: "4px", background: "linear-gradient(90deg, hsl(220,80%,60%), hsl(0,80%,60%))" }} />
+          <span>récent</span>
         </div>
       </div>
       <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.5rem" }}>

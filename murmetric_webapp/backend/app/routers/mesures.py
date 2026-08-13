@@ -320,3 +320,101 @@ def croisement(
                 point["z"] = valeurs.get(champ_z)
             points.append(point)
     return {"champ_x": champ_x, "champ_y": champ_y, "champ_z": champ_z, "points": points}
+
+
+_MESURES_LIBRES = {"hr_t": MESURE_CAPTEURS, "retrait": MESURE_DEWESOFT}
+
+
+def _parser_axe(spec: str) -> tuple[str, str, str | None]:
+    """"hr_t:temperature" ou "retrait:valeur_filtree:HA1" -> (mesure, champ, canal)."""
+    morceaux = spec.split(":")
+    if len(morceaux) == 2:
+        mesure, champ, canal = morceaux[0], morceaux[1], None
+    elif len(morceaux) == 3:
+        mesure, champ, canal = morceaux
+    else:
+        raise HTTPException(status_code=400, detail=f"Axe invalide : {spec!r} (attendu 'mesure:champ' ou 'mesure:champ:canal')")
+    if mesure not in _MESURES_LIBRES or champ not in _CHAMPS_PAR_TYPE[mesure]:
+        raise HTTPException(status_code=400, detail=f"Axe invalide : {spec!r}")
+    if mesure == "retrait" and not canal:
+        raise HTTPException(status_code=400, detail=f"Axe retrait sans canal : {spec!r}")
+    return mesure, champ, canal
+
+
+def _requeter_axe(mesure: str, champ: str, canal: str | None, mur: str, couche: str | None, debut: str, fin: str, fenetre: str) -> dict[str, float]:
+    filtres = [f'r._measurement == "{_MESURES_LIBRES[mesure]}"', f'r._field == "{champ}"']
+    if mur:
+        filtres.append(f'r.nom_mur == "{flux_escape(mur)}"')
+    if mesure == "hr_t" and couche:
+        filtres.append(f'r.nom_couche == "{flux_escape(couche)}"')
+    if mesure == "retrait" and canal:
+        filtres.append(f'r.canal_nom == "{flux_escape(canal)}"')
+    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    flux = (
+        f'from(bucket: "{config.INFLUX_BUCKET}")\n'
+        f"  |> range(start: {debut}, stop: {fin})"
+        f"{clause_filtre}\n"
+        f"  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)"
+    )
+    tables = query_api().query(flux, org=config.INFLUX_ORG)
+    resultat: dict[str, float] = {}
+    for table in tables:
+        for record in table.records:
+            resultat[record.get_time().isoformat()] = record.get_value()
+    return resultat
+
+
+@router.get("/croisement-libre")
+def croisement_libre(
+    mur: str = Query(...),
+    couche: str | None = None,
+    axe_x: str = Query(..., description="'hr_t:champ' ou 'retrait:champ:canal'"),
+    axe_y: str = Query(...),
+    axe_z: str | None = Query(None),
+    debut: str | None = None,
+    fin: str | None = None,
+    fenetre: str = Query("1h", description="Fenêtre d'agrégation commune — aligne les points des deux mesures sur la même grille temporelle"),
+) -> dict:
+    """Croisement libre entre grandeurs de mesures DIFFÉRENTES (HR/T et
+    retrait), demandé explicitement le 13/08/2026 — contrairement à
+    /croisement (une seule mesure, pivot direct). Les deux mesures ont des
+    fréquences très différentes (HR/T ~toutes les quelques heures, retrait
+    100 Hz) : chaque axe est interrogé séparément, agrégé sur LA MÊME
+    fenêtre, puis aligné en Python sur les horodatages communs — un join
+    Flux ferait la même chose côté serveur, mais des requêtes séparées
+    restent plus sûres (cf. section 32 : combiner plusieurs canaux/mesures
+    dans un seul filtre Flux coûte disproportionnellement plus cher que les
+    séparer)."""
+    axes = [("x", axe_x), ("y", axe_y)] + ([("z", axe_z)] if axe_z else [])
+    parses = {nom: _parser_axe(spec) for nom, spec in axes}
+
+    # Sécurité mémoire : dès qu'un axe retrait est impliqué, la fenêtre est
+    # plafonnée à 90 jours (cf. section 32) — appliquée à TOUS les axes pour
+    # qu'ils restent alignés sur la même période (comparer deux grandeurs
+    # sur des fenêtres différentes n'aurait de toute façon aucun sens).
+    type_borne: TypeMesure = "retrait" if any(p[0] == "retrait" for p in parses.values()) else "hr_t"
+    debut_iso, fin_iso = _valider_bornes(debut, fin, type_borne)
+
+    try:
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futurs = {
+                nom: executor.submit(_requeter_axe, mesure, champ, canal, mur, couche, debut_iso, fin_iso, fenetre)
+                for nom, (mesure, champ, canal) in parses.items()
+            }
+            series = {nom: futur.result() for nom, futur in futurs.items()}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
+
+    cles = list(series.keys())
+    horodatages_communs = set(series[cles[0]])
+    for nom in cles[1:]:
+        horodatages_communs &= set(series[nom])
+
+    points = []
+    for t in sorted(horodatages_communs):
+        point = {"time": t, "x": series["x"][t], "y": series["y"][t]}
+        if "z" in series:
+            point["z"] = series["z"][t]
+        points.append(point)
+
+    return {"axe_x": axe_x, "axe_y": axe_y, "axe_z": axe_z, "points": points}
