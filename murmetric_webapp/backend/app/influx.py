@@ -10,6 +10,7 @@ from . import config
 MESURE_CAPTEURS = "mesures_capteurs"
 MESURE_DEWESOFT = "mesures_dewesoft"
 MESURE_TENEUR_EAU = "mesures_teneur_eau"
+MESURE_HEARTBEAT = "pipeline_heartbeat"
 
 
 @lru_cache

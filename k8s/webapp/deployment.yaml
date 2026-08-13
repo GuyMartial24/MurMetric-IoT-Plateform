@@ -76,6 +76,31 @@ spec:
                 secretKeyRef:
                   name: murmetric-secrets
                   key: webapp-ingestion-api-key
+            # Monitoring des pipelines (section 32, 13/08/2026) : broker MQTT
+            # **interne** au cluster (mosquitto:1883, même valeurs que
+            # bridge-mqtt-kafka), pas le 8883/TLS externe utilisé par le PC
+            # Amiens/le Pi — la webapp reste dans le namespace, pas besoin de
+            # TLS pour parler à un Service ClusterIP.
+            - name: MQTT_BROKER
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: mqtt-broker
+            - name: MQTT_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: murmetric-config
+                  key: mqtt-port
+            - name: MQTT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: mqtt-username
+            - name: MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: murmetric-secrets
+                  key: mqtt-password
             # users.json ET capteurs.json/capteurs_retrait.json doivent
             # survivre aux rebuilds d'image — volume persistant dédié
             # (capteurs.json/capteurs_retrait.json amorcés depuis l'image au

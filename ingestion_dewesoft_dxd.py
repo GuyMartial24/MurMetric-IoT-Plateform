@@ -92,6 +92,7 @@ Usage :
 import ctypes
 import json
 import os
+import socket
 import sqlite3
 import statistics
 import sys
@@ -182,6 +183,10 @@ MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "300"))
 MQTT_CA_CERT = os.getenv("MQTT_CA_CERT", "")
 MQTT_TOPIC_DEWESOFT = os.getenv("MQTT_TOPIC_DEWESOFT", "frd/dewesoft/bruts")
 MQTT_TOPIC_ALERTES = os.getenv("MQTT_TOPIC_ALERTES", "frd/dewesoft/alertes")
+# Battement de vie pour le monitoring des pipelines côté webapp (section 32,
+# 13/08/2026) — cf. logique_projet.md, monitoring_mqtt.py côté backend.
+MQTT_TOPIC_HEARTBEAT = os.getenv("MQTT_TOPIC_HEARTBEAT", "frd/monitoring/heartbeat")
+HEARTBEAT_INTERVAL_S = float(os.getenv("HEARTBEAT_INTERVAL_S", "300"))
 # Nombre de messages QoS 1 "en vol" (envoyés, en attente d'accusé de réception)
 # autorisés simultanément — le défaut paho-mqtt (20) plafonne le débit à
 # ~20/aller-retour réseau, ce qui devient le goulot d'étranglement dominant
@@ -400,6 +405,11 @@ SYNC_INTERVAL_SECONDES = int(os.getenv("SYNC_INTERVAL", "5"))
 
 _mqtt_connecte: bool = False
 
+# Horodatage de démarrage du script — publié dans le battement de vie
+# (cf. envoyer_heartbeat) pour que la page Monitoring de la webapp puisse
+# afficher depuis quand le process tourne sans interruption.
+_DEMARRAGE = datetime.now()
+
 # Réveille immédiatement tache_sync_sqlite() à la reconnexion MQTT, au lieu
 # d'attendre le prochain tick périodique de SYNC_INTERVAL_SECONDES.
 _sync_event = threading.Event()
@@ -593,6 +603,10 @@ def publier_ou_stocker(topic: str, payload: dict) -> None:
 _fichier_retrait_lock = threading.Lock()
 _capteurs_retrait_prochain_rafraichissement: float = 0.0
 CAPTEURS_RETRAIT_CONNUS: dict = {}
+# Dernier résultat connu de _recuperer_registre_retrait_distant() — exposé
+# dans le battement de vie (cf. envoyer_heartbeat) pour distinguer "l'API a
+# répondu, tout va bien" de "on tourne sur le cache local depuis un moment".
+_dernier_registre_api_ok: bool | None = None
 
 
 def _recuperer_registre_retrait_distant() -> dict | None:
@@ -604,13 +618,16 @@ def _recuperer_registre_retrait_distant() -> dict | None:
         cas l'appelant doit conserver le registre en mémoire tel quel (ou se
         rabattre sur le cache local) plutôt que le vider.
     """
+    global _dernier_registre_api_ok
     try:
         reponse = requests.get(CAPTEURS_RETRAIT_API_URL, timeout=10)
         reponse.raise_for_status()
         donnees = reponse.json()
     except (requests.RequestException, ValueError) as exc:
         print(f"⚠️  API capteurs_retrait injoignable ({exc}).")
+        _dernier_registre_api_ok = False
         return None
+    _dernier_registre_api_ok = True
     return {cle: infos for cle, infos in donnees.items() if not cle.startswith("_")}
 
 
@@ -711,6 +728,34 @@ def enregistrer_canal_si_inconnu(canal_nom: str) -> None:
         f"📝 Nouveau canal de retrait enregistré : {canal_nom} "
         "— définissez ingestion=true depuis la page Capteurs de la webapp pour l'activer"
     )
+
+
+# ===========================================================================
+# Battement de vie — monitoring des pipelines côté webapp (section 32,
+# 13/08/2026). Publié sur le même canal MQTT que les mesures (buffer SQLite
+# en secours si le cloud est injoignable) : un battement perdu ou en retard
+# n'a aucune conséquence sur les données réelles, contrairement à un point
+# de mesure.
+# ===========================================================================
+
+_heartbeat_prochain_envoi: float = 0.0
+
+
+def envoyer_heartbeat_si_du() -> None:
+    global _heartbeat_prochain_envoi
+    if time.monotonic() < _heartbeat_prochain_envoi:
+        return
+    _heartbeat_prochain_envoi = time.monotonic() + HEARTBEAT_INTERVAL_S
+    payload = {
+        "pipeline": "retrait",
+        "machine": socket.gethostname(),
+        "demarre_le": _DEMARRAGE.isoformat(),
+        "mqtt_connecte": _mqtt_connecte,
+        "buffer_sqlite_en_attente": compter_messages_en_attente(),
+        "registre_api_ok": _dernier_registre_api_ok,
+        "nb_capteurs_connus": len(CAPTEURS_RETRAIT_CONNUS),
+    }
+    publier_ou_stocker(MQTT_TOPIC_HEARTBEAT, payload)
 
 
 # ===========================================================================
@@ -1488,6 +1533,7 @@ def boucle_surveillance() -> None:
 
     while True:
         verifier_et_recharger_capteurs_retrait()
+        envoyer_heartbeat_si_du()
 
         try:
             noms_fichiers = os.listdir(DXD_WATCH_FOLDER)

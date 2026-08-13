@@ -51,6 +51,7 @@ import json
 import math
 import os
 import re
+import socket
 import sqlite3
 import sys
 import threading
@@ -85,6 +86,11 @@ MQTT_TOPIC = os.getenv("MQTT_TOPIC", "frd/capteurs/bruts")
 # Publié au démarrage et à chaque modification de capteurs.json.
 MQTT_TOPIC_REGISTRE = os.getenv("MQTT_TOPIC_REGISTRE", "frd/capteurs/registre")
 
+# Battement de vie pour le monitoring des pipelines côté webapp (section 32,
+# 13/08/2026) — cf. logique_projet.md, monitoring_mqtt.py côté backend.
+MQTT_TOPIC_HEARTBEAT = os.getenv("MQTT_TOPIC_HEARTBEAT", "frd/monitoring/heartbeat")
+HEARTBEAT_INTERVAL_S = float(os.getenv("HEARTBEAT_INTERVAL_S", "300"))
+
 # ---------------------------------------------------------------------------
 # Configuration du buffer SQLite local (résilience cloud).
 # ---------------------------------------------------------------------------
@@ -113,6 +119,11 @@ SYNC_INTERVAL_SECONDES = int(os.getenv("SYNC_INTERVAL", "30"))
 # Mis à jour depuis les callbacks paho (thread séparé) — accès thread-safe
 # car la lecture/écriture d'un bool est atomique en Python (GIL).
 _mqtt_connecte: bool = False
+
+# Horodatage de démarrage du script — publié dans le battement de vie
+# (cf. tache_heartbeat) pour que la page Monitoring de la webapp puisse
+# afficher depuis quand le process tourne sans interruption.
+_DEMARRAGE = datetime.now()
 
 # Référence à l'event loop asyncio, stockée au démarrage pour permettre aux
 # callbacks paho (thread paho) de signaler des événements à asyncio.
@@ -536,6 +547,12 @@ def _valider_entrees(donnees: dict) -> dict:
     return resultat
 
 
+# Dernier résultat connu de _recuperer_registre_distant() — exposé dans le
+# battement de vie (cf. tache_heartbeat) pour distinguer "l'API a répondu,
+# tout va bien" de "on tourne sur le cache local depuis un moment".
+_dernier_registre_api_ok: bool | None = None
+
+
 def _recuperer_registre_distant() -> dict | None:
     """Récupérer les champs d'identité (mur/couche/position/ingestion/...)
     depuis l'API webapp.
@@ -544,13 +561,16 @@ def _recuperer_registre_distant() -> dict | None:
         Le mapping MAC → infos validé, ou None si l'API est injoignable, en
         timeout, répond une erreur HTTP ou un JSON invalide.
     """
+    global _dernier_registre_api_ok
     try:
         reponse = requests.get(CAPTEURS_API_URL, timeout=10)
         reponse.raise_for_status()
         donnees = reponse.json()
     except (requests.RequestException, ValueError) as exc:
         print(f"⚠️ API capteurs (HR/T) injoignable ({exc}).")
+        _dernier_registre_api_ok = False
         return None
+    _dernier_registre_api_ok = True
     return _valider_entrees(donnees)
 
 
@@ -1072,6 +1092,29 @@ def callback(device, advertising_data) -> None:
 
 
 # ===========================================================================
+# Battement de vie — monitoring des pipelines côté webapp (section 32,
+# 13/08/2026). Publié sur le même canal MQTT que les mesures (buffer SQLite
+# en secours si le cloud est injoignable) : un battement perdu ou en retard
+# n'a aucune conséquence sur les données réelles, contrairement à un point
+# de mesure.
+# ===========================================================================
+
+async def tache_heartbeat() -> None:
+    while True:
+        payload = {
+            "pipeline": "hr_t",
+            "machine": socket.gethostname(),
+            "demarre_le": _DEMARRAGE.isoformat(),
+            "mqtt_connecte": _mqtt_connecte,
+            "buffer_sqlite_en_attente": compter_messages_en_attente(),
+            "registre_api_ok": _dernier_registre_api_ok,
+            "nb_capteurs_connus": len(CAPTEURS_CONNUS),
+        }
+        publier_ou_stocker(MQTT_TOPIC_HEARTBEAT, payload)
+        await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+
+
+# ===========================================================================
 # Reconfiguration périodique des capteurs.
 # ===========================================================================
 
@@ -1206,6 +1249,9 @@ async def main() -> None:
 
     # Tâche de fond : reconfiguration périodique des capteurs non optimisés.
     asyncio.create_task(tache_reconfiguration_periodique(scanner))
+
+    # Tâche de fond : battement de vie pour le monitoring des pipelines.
+    asyncio.create_task(tache_heartbeat())
 
     try:
         while True:

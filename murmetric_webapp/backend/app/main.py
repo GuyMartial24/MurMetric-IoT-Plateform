@@ -9,9 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config
+from . import config, monitoring_mqtt
 from .auth import initialiser_bootstrap
-from .routers import assistant, auth, capteurs, mesures, parametres, teneur_eau
+from .routers import assistant, auth, capteurs, mesures, monitoring, parametres, teneur_eau
 
 
 def _amorcer_capteurs() -> None:
@@ -33,7 +33,9 @@ def _amorcer_capteurs() -> None:
 async def lifespan(_app: FastAPI):
     initialiser_bootstrap()
     _amorcer_capteurs()
+    monitoring_mqtt.demarrer()
     yield
+    monitoring_mqtt.arreter()
 
 
 app = FastAPI(title="MurMetric API", version="0.1.0", lifespan=lifespan)
@@ -54,6 +56,7 @@ app.include_router(capteurs.router)
 app.include_router(assistant.router)
 app.include_router(auth.router)
 app.include_router(parametres.router)
+app.include_router(monitoring.router)
 
 
 @app.get("/api/health")

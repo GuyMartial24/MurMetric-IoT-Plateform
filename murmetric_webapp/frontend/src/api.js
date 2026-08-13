@@ -50,4 +50,7 @@ export const api = {
   modifierCompte: (modification) => requete("/api/auth/me", { method: "PUT", body: JSON.stringify(modification) }),
   lireParametres: () => requete("/api/parametres"),
   modifierParametres: (parametres) => requete("/api/parametres", { method: "PUT", body: JSON.stringify(parametres) }),
+  monitoringEtat: () => requete("/api/monitoring/etat"),
+  monitoringHeartbeats: (pipeline, heures = 24) =>
+    requete(`/api/monitoring/heartbeats?${new URLSearchParams({ pipeline, heures })}`),
 };

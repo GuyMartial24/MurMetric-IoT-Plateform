@@ -82,3 +82,18 @@ CAPTEURS_RETRAIT_JSON_SEED = _ICI.parent / "capteurs_retrait.seed.json"
 # (404), pour ne jamais les exposer sans protection par défaut.
 INGESTION_API_KEY = os.getenv("INGESTION_API_KEY", "")
 
+# Monitoring des pipelines d'ingestion (section 32, 13/08/2026). La webapp
+# n'a aucun accès réseau direct au PC Amiens ni au Pi (seul MQTT relie ces
+# machines au VPS) : plutôt que de passer par bridge-mqtt-kafka/Kafka (pensé
+# pour le volume/la fiabilité des mesures, disproportionné pour un signal de
+# battement de vie), la webapp s'abonne directement au broker MQTT **interne**
+# au cluster (mosquitto:1883 en clair, même service que bridge-mqtt-kafka
+# utilise déjà en interne — pas le port 8883/TLS exposé aux machines
+# externes) et écrit les battements reçus dans InfluxDB (mesure
+# "pipeline_heartbeat", cf. monitoring_mqtt.py).
+MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
+MQTT_TOPIC_HEARTBEAT = os.getenv("MQTT_TOPIC_HEARTBEAT", "frd/monitoring/heartbeat")
+

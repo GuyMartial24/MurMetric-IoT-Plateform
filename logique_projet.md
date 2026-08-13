@@ -3072,6 +3072,91 @@ locales (`capteurs_retrait_cache.json` sur le PC Amiens,
 `capteurs.json` sur le Pi) ne sont plus que des caches de repli hors-ligne
 (+ champs techniques BLE pour le Pi).
 
+### Monitoring des pipelines d'ingestion (13/08/2026, même jour)
+
+**Origine.** Après avoir vérifié en direct (SSH) que les deux pipelines
+tournaient bien suite au chantier "source unique", l'utilisateur a demandé
+que cette vérification soit intégrée à l'appli plutôt que de dépendre d'un
+contrôle manuel — "m'assurer en tout temps de la santé et de l'évolution
+des pipelines". Trois options présentées (fraîcheur seule / fraîcheur +
+battements de vie MQTT / stack de supervision externe type
+Prometheus-Grafana) ; l'utilisateur a choisi les deux premières combinées.
+
+**Contrainte structurante identifiée avant de concevoir la solution** : la
+webapp (pod k8s sur le VPS) n'a **aucun accès réseau direct** au PC Amiens
+ni au Pi — seul Claude, via Tailscale, peut s'y connecter en SSH. Le seul
+canal que ces machines ont déjà vers le VPS est MQTT (TLS, port 8883
+externe). Toute supervision doit donc soit se déduire des données déjà
+dans InfluxDB, soit transiter par ce canal MQTT existant.
+
+**Architecture retenue** :
+- **Fraîcheur** : nouvel endpoint `GET /api/monitoring/etat`
+  (`routers/monitoring.py`) qui interroge InfluxDB pour le dernier point
+  réellement écrit, **seulement pour les canaux/capteurs avec
+  `ingestion: true`** (réutilise `_lire_json` de `capteurs.py` via import
+  différé, même pattern que `_valeurs_tags_retrait()` dans `mesures.py`) —
+  un capteur jamais activé n'est pas une panne, juste rien à surveiller.
+  Statut `ok`/`attention`/`critique` selon l'âge du dernier point (seuils
+  différents par pipeline : retrait 18h/36h, HR/T 30h/72h — capteurs BLE
+  configurables jusqu'à 24h d'intervalle de log). Statut `inactif` séparé
+  si zéro source active (évite une alerte rouge permanente pour HR/T,
+  actuellement sans capteur activé).
+- **Battement de vie** : `ingestion_dewesoft_dxd.py` et
+  `ingestion_capteurs_bluetooth.py` publient toutes les
+  `HEARTBEAT_INTERVAL_S` (300s défaut) un petit JSON sur
+  `frd/monitoring/heartbeat` (uptime, buffer SQLite en attente, MQTT
+  connecté, dernier appel au registre API réussi ou non, nombre de
+  capteurs connus) — via `publier_ou_stocker()`, donc bufferisé comme les
+  vraies mesures si le cloud est temporairement injoignable (aucune
+  conséquence pour un battement de vie, contrairement à un point de
+  mesure). Réutilise `compter_messages_en_attente()`, déjà présent dans
+  les deux scripts.
+- **Réception côté webapp** : plutôt que de router ces battements par
+  bridge-mqtt-kafka/Kafka (pensé pour le volume/la fiabilité des mesures
+  réelles, disproportionné pour un signal à faible enjeu), nouveau module
+  `monitoring_mqtt.py` — la webapp s'abonne **directement** au broker MQTT
+  **interne** au cluster (`mosquitto:1883` en clair, même service que
+  bridge-mqtt-kafka utilise déjà en interne, pas le 8883/TLS externe) et
+  écrit chaque battement dans InfluxDB (mesure `pipeline_heartbeat`, tags
+  `pipeline`/`machine`) via `influx.write_point()` (déjà utilisé pour
+  teneur_eau). Démarré/arrêté dans le `lifespan` de `main.py`, connexion
+  non-bloquante (un broker interne injoignable au démarrage n'empêche pas
+  la webapp de démarrer). `paho-mqtt` ajouté aux dépendances backend.
+  `GET /api/monitoring/heartbeats?pipeline=...&heures=...` expose
+  l'historique (utilisé pour un petit graphique d'évolution du buffer
+  SQLite sur 24h — une valeur qui grimpe sans redescendre signale une
+  perte de connexion cloud prolongée, répond au "évolution" de la demande
+  initiale).
+- **Frontend** : nouvelle page "Monitoring" (onglet dédié), une carte par
+  pipeline avec pastille de couleur (vert/orange/rouge/gris), dernière
+  donnée reçue, sources actives, puis le détail du battement de vie
+  (machine, en marche depuis, MQTT connecté, buffer en attente, registre
+  API à jour) et le graphique d'évolution du buffer. Rafraîchissement
+  automatique toutes les 30s.
+
+**Déployé et vérifié réel (13/08/2026)** :
+- Webapp (VPS) : rebuild + rollout, log confirmé `✅ Monitoring MQTT
+  connecté, abonné à frd/monitoring/heartbeat`. Chaîne complète testée
+  avec un battement de vie publié manuellement (pod `mosquitto_pub`
+  jetable) : reçu, écrit dans InfluxDB, restitué par `/api/monitoring/etat`
+  ET `/api/monitoring/heartbeats` — point de test supprimé après
+  vérification (`influx delete`).
+- PC Amiens et Pi : scripts mis à jour déployés (sauvegardes
+  `.bak_20260813_monitoring`), buffer MQTT vérifié vide avant coupure,
+  redémarrage propre (tâche planifiée / systemd) comme pour le chantier
+  précédent. **Battements de vie réels reçus des deux machines** dans les
+  secondes suivant le redémarrage — `machine: "PC-BLAIDOUDI"` (8 canaux
+  connus, registre API OK) et `machine: "murmetric-pi5"` (64 capteurs
+  connus, registre API OK).
+- **Comportement transitoire observé et attendu** : le tout premier
+  battement de chaque process affiche `mqtt_connecte: false` — il part
+  avant que la poignée de main MQTT asynchrone ne se termine (quelques
+  centièmes de seconde). Se corrige de lui-même au battement suivant
+  (300s plus tard) une fois `_mqtt_connecte` mis à jour par le callback de
+  connexion — pas un bug, juste une photo fidèle de l'instant du tout
+  premier envoi. Pas corrigé (retarder le premier envoi ajouterait de la
+  complexité pour un désagrément cosmétique qui se résorbe seul).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

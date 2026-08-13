@@ -5,6 +5,7 @@ import Assistant from "./pages/Assistant.jsx";
 import Capteurs from "./pages/Capteurs.jsx";
 import Grafana from "./pages/Grafana.jsx";
 import Login from "./pages/Login.jsx";
+import Monitoring from "./pages/Monitoring.jsx";
 import Parametres from "./pages/Parametres.jsx";
 import TeneurEau from "./pages/TeneurEau.jsx";
 import VueEnsemble from "./pages/VueEnsemble.jsx";
@@ -15,6 +16,7 @@ const ONGLETS = [
   { chemin: "/grafana", label: "Grafana" },
   { chemin: "/teneur-eau", label: "Teneur en eau" },
   { chemin: "/capteurs", label: "Capteurs" },
+  { chemin: "/monitoring", label: "Monitoring" },
   { chemin: "/assistant", label: "Assistant IA" },
   { chemin: "/parametres", label: "Paramètres" },
 ];
@@ -61,6 +63,7 @@ export default function App() {
           <Route path="/grafana" element={<EspaceProtege connecte={connecte}><Grafana /></EspaceProtege>} />
           <Route path="/teneur-eau" element={<EspaceProtege connecte={connecte}><TeneurEau /></EspaceProtege>} />
           <Route path="/capteurs" element={<EspaceProtege connecte={connecte}><Capteurs /></EspaceProtege>} />
+          <Route path="/monitoring" element={<EspaceProtege connecte={connecte}><Monitoring /></EspaceProtege>} />
           <Route path="/assistant" element={<EspaceProtege connecte={connecte}><Assistant /></EspaceProtege>} />
           <Route path="/parametres" element={<EspaceProtege connecte={connecte}><Parametres /></EspaceProtege>} />
           <Route path="*" element={<Navigate to="/" replace />} />
