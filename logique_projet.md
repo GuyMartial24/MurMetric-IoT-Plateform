@@ -3941,6 +3941,34 @@ jamais reconstruits pour du pur style dans cette session) :
   Kafka ; seul le `Dockerfile` racine legacy le référence encore, lui
   aussi hors service).
 
+### Boutons d'export sur une seule ligne + disclaimer IA isolé (14/08/2026, même jour)
+
+**Boutons d'export** : `BoutonsExport`/`BoutonsExportDonnees` gagnent une
+prop `imbrique` (rend juste les boutons, sans wrapper/marge propre) —
+`GraphiqueSVG.jsx` compose les 4 boutons (PNG/copie/CSV/Excel) sur une
+seule ligne avec un séparateur vertical entre le groupe image et le
+groupe données, plutôt que deux rangées qui s'empilaient de façon peu
+lisible. Déployé et vérifié (`/api/health` 200 OK).
+
+**Disclaimer IA isolé** : demande explicite de distinguer visuellement la
+phrase de rappel "lecture assistée par IA"/"brouillon à valider" du reste
+de la réponse de l'assistant. Deux volets :
+- `_SYSTEME`/`_SYSTEME_VISION` (`assistant.py`) : instruction ajoutée pour
+  que ce rappel forme toujours son propre paragraphe, commençant
+  littéralement par "Note : ".
+- `Assistant.jsx` : nouveau composant `TexteAssistant` — découpe la
+  réponse en paragraphes (séparateur `\n\n`), détecte celui qui commence
+  par "Note :" (insensible à la casse) et l'affiche en italique/discret,
+  scopé aux messages `role === "assistant"` (jamais aux messages de
+  l'utilisateur).
+
+**Non vérifié en conditions réelles** : le comportement du LLM (respect
+de la consigne "Note : " en début de paragraphe) n'a pas été retesté en
+direct — nécessiterait un identifiant webapp authentifié et un navigateur,
+aucun des deux disponible dans cet environnement. Build/lint/déploiement
+vérifiés ; **à confirmer par l'utilisateur** en testant une vraie réponse
+de l'assistant (mode "explain" ou "report", avec ou sans image).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

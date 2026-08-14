@@ -5,6 +5,22 @@ import SelecteurMesure from "../components/SelecteurMesure.jsx";
 import { svgVersDataUrl } from "../exportGraphique.js";
 import { libelleGrandeur } from "../nomogrammeAxes.js";
 
+// Le prompt système demande à l'assistant de toujours isoler son rappel
+// "lecture assistée par IA" / "brouillon à valider" dans son propre
+// paragraphe commençant par "Note : " — affiché ici en italique/discret
+// pour le distinguer visuellement du reste de la réponse.
+function TexteAssistant({ texte }) {
+  const paragraphes = texte.split(/\n{2,}/);
+  return paragraphes.map((paragraphe, i) => {
+    const estNote = /^note\s*:/i.test(paragraphe.trim());
+    return (
+      <p key={i} style={estNote ? { fontStyle: "italic", color: "#a0a6b5", fontSize: "0.85rem" } : undefined}>
+        {paragraphe}
+      </p>
+    );
+  });
+}
+
 export default function Assistant() {
   const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1", couche: "" });
   const [points, setPoints] = useState(null); // null = pas encore chargé, [] = chargé mais vide
@@ -108,7 +124,7 @@ export default function Assistant() {
                 graphique joint
               </span>
             )}
-            {m.texte}
+            {m.role === "assistant" ? <TexteAssistant texte={m.texte} /> : m.texte}
           </div>
         ))}
         {erreur && <p className="erreur">{erreur}</p>}
