@@ -58,9 +58,9 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from bleak import BleakScanner
 import paho.mqtt.client as mqtt
 import requests
+from bleak import BleakScanner
 
 # Requis pour afficher les emojis sous Windows (console cp1252 par défaut).
 sys.stdout.reconfigure(encoding="utf-8")
@@ -96,9 +96,7 @@ HEARTBEAT_INTERVAL_S = float(os.getenv("HEARTBEAT_INTERVAL_S", "300"))
 # ---------------------------------------------------------------------------
 
 # Chemin du fichier SQLite de buffer (même répertoire que ce script).
-SQLITE_BUFFER_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "murmetric_buffer.db"
-)
+SQLITE_BUFFER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "murmetric_buffer.db")
 
 # Durée maximale de rétention des mesures en attente (protection contre une
 # croissance illimitée du buffer en cas de longue indisponibilité cloud).
@@ -211,11 +209,18 @@ ELA_UUID_HUMIDITE = "00002a6f-0000-1000-8000-00805f9b34fb"
 # ---------------------------------------------------------------------------
 
 CAPTEURS_FILE = os.path.join(os.path.dirname(__file__), "capteurs.json")
-CAPTEURS_API_URL = os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/") + "/api/capteurs/hr_t"
+CAPTEURS_API_URL = (
+    os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/") + "/api/capteurs/hr_t"
+)
 INGESTION_API_KEY = os.getenv("INGESTION_API_KEY", "")
 CHAMPS_TECHNIQUES_LOCAUX = (
-    "famille_capteur", "mac_complete_connue", "numero_capteur_hr_t",
-    "lint_configure", "lint_max_confirme_s", "lint_gatt_absent", "lint_gatt_non_supporte",
+    "famille_capteur",
+    "mac_complete_connue",
+    "numero_capteur_hr_t",
+    "lint_configure",
+    "lint_max_confirme_s",
+    "lint_gatt_absent",
+    "lint_gatt_non_supporte",
 )
 
 # Regex de validation du format d'adresse MAC BLE (XX:XX:XX:XX:XX:XX).
@@ -246,6 +251,7 @@ CAPTEURS_CONNUS: dict = {}
 # ===========================================================================
 # Buffer SQLite local — résilience cloud.
 # ===========================================================================
+
 
 def initialiser_sqlite() -> None:
     """Créer la table de buffer si elle n'existe pas encore.
@@ -296,13 +302,9 @@ def purger_buffer_expire() -> int:
     Returns:
         Nombre de messages supprimés.
     """
-    limite = (
-        datetime.now() - timedelta(days=SQLITE_RETENTION_JOURS)
-    ).isoformat()
+    limite = (datetime.now() - timedelta(days=SQLITE_RETENTION_JOURS)).isoformat()
     with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-        cursor = conn.execute(
-            "DELETE FROM buffer_mqtt WHERE horodatage < ?", (limite,)
-        )
+        cursor = conn.execute("DELETE FROM buffer_mqtt WHERE horodatage < ?", (limite,))
         conn.commit()
         return cursor.rowcount
 
@@ -310,15 +312,14 @@ def purger_buffer_expire() -> int:
 def compter_messages_en_attente() -> int:
     """Retourner le nombre de messages SQLite non encore envoyés."""
     with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-        (count,) = conn.execute(
-            "SELECT COUNT(*) FROM buffer_mqtt"
-        ).fetchone()
+        (count,) = conn.execute("SELECT COUNT(*) FROM buffer_mqtt").fetchone()
         return count
 
 
 # ===========================================================================
 # Publication MQTT avec basculement automatique sur SQLite.
 # ===========================================================================
+
 
 def publier_ou_stocker(topic: str, payload_iot: dict) -> bool:
     """Publier un message MQTT ou le stocker localement si cloud indisponible.
@@ -344,10 +345,7 @@ def publier_ou_stocker(topic: str, payload_iot: dict) -> bool:
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
                 return True  # Publication cloud réussie.
             # Code d'erreur MQTT (buffer plein, non connecté…) → buffer local.
-            print(
-                f"⚠️ Publication MQTT cloud échouée (rc={result.rc}) "
-                "— stockage local SQLite."
-            )
+            print(f"⚠️ Publication MQTT cloud échouée (rc={result.rc}) " "— stockage local SQLite.")
         except Exception as exc:
             print(f"⚠️ Erreur publication MQTT : {exc} — stockage local SQLite.")
 
@@ -394,6 +392,7 @@ def publier_registre() -> None:
 # Tâche de synchronisation asynchrone du buffer SQLite.
 # ===========================================================================
 
+
 async def tache_sync_sqlite() -> None:
     """Pousser les messages SQLite en attente vers le broker MQTT cloud.
 
@@ -412,9 +411,7 @@ async def tache_sync_sqlite() -> None:
     while True:
         # Attendre soit la reconnexion MQTT, soit le prochain tick périodique.
         try:
-            await asyncio.wait_for(
-                _sync_event.wait(), timeout=SYNC_INTERVAL_SECONDES
-            )
+            await asyncio.wait_for(_sync_event.wait(), timeout=SYNC_INTERVAL_SECONDES)
             _sync_event.clear()
         except asyncio.TimeoutError:
             pass  # Tick périodique normal.
@@ -431,10 +428,7 @@ async def tache_sync_sqlite() -> None:
         if en_attente == 0:
             continue
 
-        print(
-            f"📤 Synchronisation SQLite → MQTT cloud : "
-            f"{en_attente} message(s) en attente."
-        )
+        print(f"📤 Synchronisation SQLite → MQTT cloud : " f"{en_attente} message(s) en attente.")
 
         envoyes = 0
         erreurs = 0
@@ -442,8 +436,7 @@ async def tache_sync_sqlite() -> None:
         with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
             # Lecture par batch, dans l'ordre chronologique.
             rows = conn.execute(
-                "SELECT id, topic, payload FROM buffer_mqtt "
-                "ORDER BY horodatage ASC LIMIT ?",
+                "SELECT id, topic, payload FROM buffer_mqtt " "ORDER BY horodatage ASC LIMIT ?",
                 (SYNC_BATCH_SIZE,),
             ).fetchall()
 
@@ -460,9 +453,7 @@ async def tache_sync_sqlite() -> None:
                 result.wait_for_publish(timeout=5.0)
                 # Suppression uniquement après confirmation.
                 with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
-                    conn.execute(
-                        "DELETE FROM buffer_mqtt WHERE id = ?", (row_id,)
-                    )
+                    conn.execute("DELETE FROM buffer_mqtt WHERE id = ?", (row_id,))
                     conn.commit()
                 envoyes += 1
                 # Pause légère pour ne pas saturer le broker.
@@ -485,6 +476,7 @@ async def tache_sync_sqlite() -> None:
 # ===========================================================================
 # Callbacks MQTT — connexion / déconnexion.
 # ===========================================================================
+
 
 def on_connect(client, userdata, flags, rc) -> None:
     """Gérer l'établissement de la connexion MQTT cloud.
@@ -514,15 +506,13 @@ def on_disconnect(client, userdata, rc) -> None:
     global _mqtt_connecte
     _mqtt_connecte = False
     if rc != 0:
-        print(
-            f"⚠️  Déconnecté du Broker MQTT cloud (rc={rc}) "
-            "— basculement sur SQLite local."
-        )
+        print(f"⚠️  Déconnecté du Broker MQTT cloud (rc={rc}) " "— basculement sur SQLite local.")
 
 
 # ===========================================================================
 # Gestion du registre capteurs (API webapp + fusion capteurs.json local).
 # ===========================================================================
+
 
 def _valider_entrees(donnees: dict) -> dict:
     """Valider chaque entrée d'un dict brut MAC → infos (même règles qu'avant
@@ -734,7 +724,10 @@ def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
             reponse.raise_for_status()
             entree = {**entree, **reponse.json()}
         except (requests.RequestException, ValueError) as exc:
-            print(f"⚠️ Enregistrement distant de {mac} impossible ({exc}) — retenté au prochain démarrage.")
+            print(
+                f"⚠️ Enregistrement distant de {mac} impossible ({exc}) — "
+                "retenté au prochain démarrage."
+            )
 
         CAPTEURS_CONNUS[mac] = entree
         # Trace locale aussi (repli hors-ligne + visible pour
@@ -753,6 +746,7 @@ def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
 # ===========================================================================
 # Décodage et calculs physiques.
 # ===========================================================================
+
 
 def calculer_point_de_rosee(
     temperature: float | str,
@@ -821,8 +815,7 @@ try:
     print(f"⏳ Tentative de connexion au Broker MQTT cloud ({MQTT_BROKER})...")
 except Exception as exc:
     print(
-        f"⚠️  Connexion MQTT cloud impossible au démarrage ({exc}) "
-        "— mode SQLite local activé."
+        f"⚠️  Connexion MQTT cloud impossible au démarrage ({exc}) " "— mode SQLite local activé."
     )
     # On ne lève pas SystemExit : le script démarre en mode dégradé et
     # paho tentera de se reconnecter automatiquement via reconnect_delay_set.
@@ -837,6 +830,7 @@ except Exception as exc:
 # humidite, batterie, intervalle_log_secondes} — batterie/intervalle_log_secondes
 # valent None si le protocole ne les transmet pas dans ce paquet.
 # ===========================================================================
+
 
 def _decoder_bluemaestro(payload_bytes: list) -> dict | None:
     """Décode une trame Blue Maestro (cf. section 5 logique_projet.md).
@@ -889,9 +883,7 @@ def _decoder_bluemaestro(payload_bytes: list) -> dict | None:
                 humidite = None
 
             if len(payload_bytes) >= 4:
-                intervalle_log_secondes = (
-                    (payload_bytes[2] << 8) + payload_bytes[3]
-                )
+                intervalle_log_secondes = (payload_bytes[2] << 8) + payload_bytes[3]
         else:
             temperature, humidite = "Trame tronquée", "Trame tronquée"
     except Exception:
@@ -989,6 +981,7 @@ def _decoder_ela_service(service_data: dict) -> dict | None:
 # Callback BLE — cœur de l'ingestion.
 # ===========================================================================
 
+
 def callback(device, advertising_data) -> None:
     """Traiter chaque paquet BLE advertising reçu par le scanner.
 
@@ -1028,9 +1021,7 @@ def callback(device, advertising_data) -> None:
 
     local_name = advertising_data.local_name
     infos_capteur = CAPTEURS_CONNUS.get(mac_adresse, {})
-    capteur_id = (
-        infos_capteur.get("nom") or local_name or f"Inconnu_{mac_adresse}"
-    )
+    capteur_id = infos_capteur.get("nom") or local_name or f"Inconnu_{mac_adresse}"
     emplacement = infos_capteur.get("emplacement") or "Emplacement inconnu"
 
     # Filtre 4 — ingestion désactivée (capteur hors-projet ou non validé).
@@ -1046,9 +1037,7 @@ def callback(device, advertising_data) -> None:
     derniere_fois = dernieres_detections.get(mac_adresse)
     dernieres_detections[mac_adresse] = maintenant
     intervalle = (
-        f"{maintenant - derniere_fois:.2f}s"
-        if derniere_fois is not None
-        else "premier paquet"
+        f"{maintenant - derniere_fois:.2f}s" if derniere_fois is not None else "premier paquet"
     )
     horodatage = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
@@ -1118,7 +1107,10 @@ def callback(device, advertising_data) -> None:
 # de mesure.
 # ===========================================================================
 
+
 async def tache_heartbeat() -> None:
+    """Tâche asyncio de fond : publie un battement de vie toutes les
+    HEARTBEAT_INTERVAL_S secondes."""
     while True:
         payload = {
             "pipeline": "hr_t",
@@ -1169,7 +1161,8 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
         # un capteur ELA apparaîtrait "non configuré" indéfiniment et
         # déclencherait un scan+pause GATT à chaque cycle pour rien.
         non_configures = [
-            m for m, i in donnees.items()
+            m
+            for m, i in donnees.items()
             if not m.startswith("_")
             and not i.get("lint_configure")
             and i.get("famille_capteur", "bluemaestro") == "bluemaestro"
@@ -1189,7 +1182,9 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
                     "configure_capteurs.py",
                 )
                 proc = await asyncio.create_subprocess_exec(
-                    sys.executable, "-u", script,
+                    sys.executable,
+                    "-u",
+                    script,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                 )
@@ -1215,6 +1210,7 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
 # ===========================================================================
 # Point d'entrée asyncio.
 # ===========================================================================
+
 
 async def demarrer_scanner_avec_repli(detection_callback) -> BleakScanner:
     """Démarrer le scanner BLE sur BLE_ADAPTER, avec repli automatique.
@@ -1289,4 +1285,3 @@ if __name__ == "__main__":
     finally:
         mqtt_client.loop_stop()
         mqtt_client.disconnect()
-

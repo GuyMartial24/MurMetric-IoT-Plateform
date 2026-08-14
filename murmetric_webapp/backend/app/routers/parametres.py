@@ -1,3 +1,6 @@
+"""Identifiants API des fournisseurs IA (Groq, Gemini), modifiables depuis
+l'interface — jamais réaffichés en clair (cf. parametres.masquer)."""
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -17,6 +20,9 @@ router = APIRouter(prefix="/api/parametres", tags=["parametres"])
 
 
 class ParametresIA(BaseModel):
+    """Identifiants/modèles des deux fournisseurs IA — tous les champs sont optionnels,
+    seuls ceux fournis sont mis à jour (cf. definir_parametres_groq/gemini)."""
+
     groq_api_key: str | None = None
     groq_model: str | None = None
     groq_api_key_expiration: str | None = None  # ISO 8601 (date), informative
@@ -26,6 +32,7 @@ class ParametresIA(BaseModel):
 
 @router.get("")
 def lire(_actuel: dict = Depends(utilisateur_courant)) -> dict:
+    """Retourne les paramètres IA actuels, clés API masquées."""
     return {
         "groq_api_key_masque": masquer(obtenir_cle_groq()),
         "groq_model": obtenir_modele_groq(),
@@ -37,6 +44,9 @@ def lire(_actuel: dict = Depends(utilisateur_courant)) -> dict:
 
 @router.put("")
 def modifier(parametres: ParametresIA, _actuel: dict = Depends(utilisateur_courant)) -> dict:
-    definir_parametres_groq(parametres.groq_api_key, parametres.groq_model, parametres.groq_api_key_expiration)
+    """Met à jour les paramètres des deux fournisseurs IA (champs non fournis inchangés)."""
+    definir_parametres_groq(
+        parametres.groq_api_key, parametres.groq_model, parametres.groq_api_key_expiration
+    )
     definir_parametres_gemini(parametres.gemini_api_key, parametres.gemini_model)
     return {"statut": "ok"}

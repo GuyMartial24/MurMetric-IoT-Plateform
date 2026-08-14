@@ -1,4 +1,5 @@
 """Client InfluxDB partagé + helpers de requêtage/écriture pour l'API."""
+
 from datetime import datetime, timezone
 from functools import lru_cache
 
@@ -15,36 +16,57 @@ MESURE_HEARTBEAT = "pipeline_heartbeat"
 
 @lru_cache
 def get_client() -> InfluxDBClient:
+    """Retourne le client InfluxDB partagé (mis en cache, une seule instance par process)."""
     # Timeout par défaut du client (10s) trop court pour une agrégation sur
     # mesures_dewesoft (retrait, ~1,5 milliard de points, échantillonnage
     # 100 Hz) — vérifié en conditions réelles le 12/08/2026 (read timeout à
     # 10s sur une requête aggregateWindow(1d) filtrée par canal seul, sur un
     # an). 30s laisse la marge nécessaire ; un filtre mur/couche/canal
     # réduit généralement bien plus vite en pratique.
-    return InfluxDBClient(url=config.INFLUX_URL, token=config.INFLUX_TOKEN, org=config.INFLUX_ORG, timeout=30_000)
+    return InfluxDBClient(
+        url=config.INFLUX_URL, token=config.INFLUX_TOKEN, org=config.INFLUX_ORG, timeout=30_000
+    )
 
 
 def query_api():
+    """Retourne l'API de requêtage Flux du client InfluxDB partagé."""
     return get_client().query_api()
 
 
 def write_point(line: str) -> None:
+    """Écrit une ligne au format Line Protocol, de façon synchrone (erreurs remontées)."""
     write_api = get_client().write_api(write_options=SYNCHRONOUS)
     try:
-        write_api.write(bucket=config.INFLUX_BUCKET, org=config.INFLUX_ORG, record=line, write_precision=WritePrecision.NS)
+        write_api.write(
+            bucket=config.INFLUX_BUCKET,
+            org=config.INFLUX_ORG,
+            record=line,
+            write_precision=WritePrecision.NS,
+        )
     finally:
         write_api.close()
 
 
 def delete_points(predicate: str, start: datetime, stop: datetime) -> None:
-    get_client().delete_api().delete(start, stop, predicate, bucket=config.INFLUX_BUCKET, org=config.INFLUX_ORG)
+    """Supprime les points InfluxDB correspondant au prédicat sur la fenêtre [start, stop]."""
+    get_client().delete_api().delete(
+        start, stop, predicate, bucket=config.INFLUX_BUCKET, org=config.INFLUX_ORG
+    )
 
 
 def echap_tag(valeur: str) -> str:
-    return str(valeur).replace("\\", "\\\\").replace(",", "\\,").replace("=", "\\=").replace(" ", "\\ ")
+    """Échappe une valeur de tag pour le format Line Protocol (virgule, égal, espace)."""
+    return (
+        str(valeur)
+        .replace("\\", "\\\\")
+        .replace(",", "\\,")
+        .replace("=", "\\=")
+        .replace(" ", "\\ ")
+    )
 
 
 def echap_field_str(valeur: str) -> str:
+    """Échappe une valeur de champ chaîne pour le format Line Protocol (guillemets)."""
     return str(valeur).replace("\\", "\\\\").replace('"', '\\"')
 
 
@@ -54,6 +76,7 @@ def flux_escape(valeur: str) -> str:
 
 
 def to_rfc3339(dt: datetime) -> str:
+    """Formate un datetime en RFC3339/UTC tel qu'attendu par les littéraux temporels Flux."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")

@@ -11,10 +11,10 @@ export default function Grafana() {
     <div>
       <div className="carte">
         <p style={{ margin: 0, color: "#a0a6b5", fontSize: "0.85rem" }}>
-          Vue intégrée en lecture seule (dashboard fixe). Pour composer tes propres graphiques
-          (choisir librement mur/couche/canal/champ, créer de nouveaux panels), ouvre Grafana en
-          plein écran et connecte-toi avec un compte admin — l'accès anonyme intégré ici reste
-          volontairement limité à la lecture (Grafana est public sur Internet).
+          Vue intégrée en lecture seule (dashboard fixe). Pour composer tes propres graphiques (choisir librement
+          mur/couche/canal/champ, créer de nouveaux panels), ouvre Grafana en plein écran et connecte-toi avec un compte
+          admin — l'accès anonyme intégré ici reste volontairement limité à la lecture (Grafana est public sur
+          Internet).
         </p>
         <a href={GRAFANA_BASE} target="_blank" rel="noreferrer">
           <button style={{ marginTop: "0.75rem" }}>Ouvrir Grafana en plein écran ↗</button>

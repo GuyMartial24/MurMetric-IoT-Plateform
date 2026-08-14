@@ -44,7 +44,13 @@ export default function TeneurEau() {
   const demarrerEdition = (ligne) => {
     setEnEdition({
       original: { mur: ligne.mur, couche: ligne.couche, date_mesure: ligne.time },
-      valeurs: { mur: ligne.mur, couche: ligne.couche, valeur_pourcent: ligne.value, commentaire: ligne.commentaire || "", date_mesure: ligne.time },
+      valeurs: {
+        mur: ligne.mur,
+        couche: ligne.couche,
+        valeur_pourcent: ligne.value,
+        commentaire: ligne.commentaire || "",
+        date_mesure: ligne.time,
+      },
     });
   };
 
@@ -88,26 +94,48 @@ export default function TeneurEau() {
         <form onSubmit={soumettre} className="selection-form">
           <div className="champ">
             <label>Mur</label>
-            <input required value={saisie.mur} onChange={(e) => setSaisie({ ...saisie, mur: e.target.value })} placeholder="SOCMA 1" />
+            <input
+              required
+              value={saisie.mur}
+              onChange={(e) => setSaisie({ ...saisie, mur: e.target.value })}
+              placeholder="SOCMA 1"
+            />
           </div>
           <div className="champ">
             <label>Couche</label>
-            <input required value={saisie.couche} onChange={(e) => setSaisie({ ...saisie, couche: e.target.value })} placeholder="carreau_ext" />
+            <input
+              required
+              value={saisie.couche}
+              onChange={(e) => setSaisie({ ...saisie, couche: e.target.value })}
+              placeholder="carreau_ext"
+            />
           </div>
           <div className="champ">
             <label>Valeur (%)</label>
-            <input required type="number" step="0.01" value={saisie.valeur_pourcent} onChange={(e) => setSaisie({ ...saisie, valeur_pourcent: e.target.value })} />
+            <input
+              required
+              type="number"
+              step="0.01"
+              value={saisie.valeur_pourcent}
+              onChange={(e) => setSaisie({ ...saisie, valeur_pourcent: e.target.value })}
+            />
           </div>
           <div className="champ">
             <label>Date de mesure</label>
-            <input type="datetime-local" value={saisie.date_mesure} onChange={(e) => setSaisie({ ...saisie, date_mesure: e.target.value })} />
+            <input
+              type="datetime-local"
+              value={saisie.date_mesure}
+              onChange={(e) => setSaisie({ ...saisie, date_mesure: e.target.value })}
+            />
           </div>
           <div className="champ" style={{ gridColumn: "1 / -1" }}>
             <label>Commentaire</label>
             <input value={saisie.commentaire} onChange={(e) => setSaisie({ ...saisie, commentaire: e.target.value })} />
           </div>
         </form>
-        <button onClick={soumettre} disabled={enCours}>{enCours ? "Envoi..." : "Enregistrer"}</button>
+        <button onClick={soumettre} disabled={enCours}>
+          {enCours ? "Envoi..." : "Enregistrer"}
+        </button>
         {erreur && <p className="erreur">{erreur}</p>}
       </div>
 
@@ -115,17 +143,59 @@ export default function TeneurEau() {
         <h2>Saisies existantes</h2>
         <table>
           <thead>
-            <tr><th>Mur</th><th>Couche</th><th>Valeur (%)</th><th>Date</th><th>Commentaire</th><th></th></tr>
+            <tr>
+              <th>Mur</th>
+              <th>Couche</th>
+              <th>Valeur (%)</th>
+              <th>Date</th>
+              <th>Commentaire</th>
+              <th></th>
+            </tr>
           </thead>
           <tbody>
             {groupes.map((g) => (
               <tr key={`${g.mur}|${g.couche}|${g.time}`}>
-                {enEdition?.original.mur === g.mur && enEdition.original.couche === g.couche && enEdition.original.date_mesure === g.time ? (
+                {enEdition?.original.mur === g.mur &&
+                enEdition.original.couche === g.couche &&
+                enEdition.original.date_mesure === g.time ? (
                   <>
-                    <td><input value={enEdition.valeurs.mur} onChange={(e) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, mur: e.target.value } })} /></td>
-                    <td><input value={enEdition.valeurs.couche} onChange={(e) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: e.target.value } })} /></td>
-                    <td><input type="number" step="0.01" value={enEdition.valeurs.valeur_pourcent} onChange={(e) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, valeur_pourcent: e.target.value } })} /></td>
-                    <td colSpan={2}><input value={enEdition.valeurs.commentaire} onChange={(e) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, commentaire: e.target.value } })} /></td>
+                    <td>
+                      <input
+                        value={enEdition.valeurs.mur}
+                        onChange={(e) =>
+                          setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, mur: e.target.value } })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        value={enEdition.valeurs.couche}
+                        onChange={(e) =>
+                          setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: e.target.value } })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={enEdition.valeurs.valeur_pourcent}
+                        onChange={(e) =>
+                          setEnEdition({
+                            ...enEdition,
+                            valeurs: { ...enEdition.valeurs, valeur_pourcent: e.target.value },
+                          })
+                        }
+                      />
+                    </td>
+                    <td colSpan={2}>
+                      <input
+                        value={enEdition.valeurs.commentaire}
+                        onChange={(e) =>
+                          setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, commentaire: e.target.value } })
+                        }
+                      />
+                    </td>
                     <td>
                       <button onClick={enregistrerCorrection}>Enregistrer</button>{" "}
                       <button onClick={() => setEnEdition(null)}>Annuler</button>
@@ -138,7 +208,9 @@ export default function TeneurEau() {
                     <td>{g.value?.toFixed(2)}</td>
                     <td>{new Date(g.time).toLocaleString("fr-FR")}</td>
                     <td>{g.commentaire}</td>
-                    <td><button onClick={() => demarrerEdition(g)}>Éditer</button></td>
+                    <td>
+                      <button onClick={() => demarrerEdition(g)}>Éditer</button>
+                    </td>
                   </>
                 )}
               </tr>

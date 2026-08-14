@@ -25,9 +25,10 @@ Horodatage : chaque échantillon est republié avec un horodatage ABSOLU
 reconstitué (horodatage_mesure_iso = début de fichier .dxd + temps relatif de
 l'échantillon, RAMENÉ À L'ORIGINE DU FICHIER — les horodatages relatifs du SDK
 sont comptés depuis le début de la session d'acquisition, pas du fichier ;
-cf. le bloc « Origine des horodatages relatifs » dans extraire_et_publier()). kafka_consumer_influx.py utilise ce champ pour dater le point
-InfluxDB avec l'horodatage réel de la mesure — l'import différé d'un .dxd
-ancien ne s'empile donc pas sur la date d'exécution du consumer.
+cf. le bloc « Origine des horodatages relatifs » dans extraire_et_publier()).
+kafka_consumer_influx.py utilise ce champ pour dater le point InfluxDB avec
+l'horodatage réel de la mesure — l'import différé d'un .dxd ancien ne
+s'empile donc pas sur la date d'exécution du consumer.
 
 Filtrage anti-vibration (Hampel) : les capteurs de retrait sont sensibles aux
 vibrations (choc/passage à proximité), ce qui crée des pics ponctuels dans les
@@ -83,8 +84,10 @@ Usage :
         SQLITE_RETENTION     Rétention du buffer local en jours (défaut : 7)
         SYNC_BATCH_SIZE      Messages envoyés par batch de rattrapage (défaut : 50)
         SYNC_INTERVAL        Intervalle entre deux tentatives de sync en secondes (défaut : 30)
-        HAMPEL_FENETRE       Demi-largeur de la fenêtre glissante, en échantillons (défaut : 10)
-        HAMPEL_SEUIL_K       Multiplicateur du MAD au-delà duquel un point est aberrant (défaut : 8.0)
+        HAMPEL_FENETRE       Demi-largeur de la fenêtre glissante, en échantillons
+                             (défaut : 10)
+        HAMPEL_SEUIL_K       Multiplicateur du MAD au-delà duquel un point est aberrant
+                             (défaut : 8.0)
         DXD_BATCH_SIZE       Échantillons regroupés par message MQTT (défaut : 600)
         TOLERANCE_PAS_S      Écart max à la grille t0+k*dt avant de couper un lot (défaut : 1e-6)
 """
@@ -120,16 +123,18 @@ sys.stdout.reconfigure(encoding="utf-8")
 # ---------------------------------------------------------------------------
 _SDK_PYTHON_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "DWDataReader_v5_0_8", "examples", "Python",
+    "DWDataReader_v5_0_8",
+    "examples",
+    "Python",
 )
 sys.path.insert(0, _SDK_PYTHON_DIR)
 
 try:
     from DWDataReaderHeader import (
+        READER_HANDLE,
         DWChannel,
         DWFileInfo,
         DWMeasurementInfo,
-        READER_HANDLE,
         check_error,
         decode_bytes,
         load_library,
@@ -250,7 +255,9 @@ MQTT_ATTENTE_TIMEOUT = float(os.getenv("MQTT_ATTENTE_TIMEOUT", "60"))
 # injoignable au démarrage ou lors d'un rafraîchissement — panne réseau,
 # webapp temporairement indisponible), jamais la source primaire.
 # ---------------------------------------------------------------------------
-CAPTEURS_RETRAIT_API_URL = os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/") + "/api/capteurs/retrait"
+CAPTEURS_RETRAIT_API_URL = (
+    os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/") + "/api/capteurs/retrait"
+)
 INGESTION_API_KEY = os.getenv("INGESTION_API_KEY", "")
 CAPTEURS_RETRAIT_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "capteurs_retrait_cache.json"
@@ -371,9 +378,7 @@ HAMPEL_SEUIL_K = float(os.getenv("HAMPEL_SEUIL_K", "8.0"))
 # Configuration buffer SQLite local (résilience cloud) — même schéma que
 # ingestion_capteurs_bluetooth.py.
 # ---------------------------------------------------------------------------
-SQLITE_BUFFER_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "murmetric_buffer.db"
-)
+SQLITE_BUFFER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "murmetric_buffer.db")
 
 SQLITE_RETENTION_JOURS = int(os.getenv("SQLITE_RETENTION", "7"))
 
@@ -451,8 +456,7 @@ _verrou_sqlite = threading.Lock()
 def initialiser_sqlite() -> None:
     """Ouvrir la connexion partagée et créer la table de buffer."""
     global _conn_sqlite
-    _conn_sqlite = sqlite3.connect(
-        SQLITE_BUFFER_FILE, check_same_thread=False, timeout=60.0)
+    _conn_sqlite = sqlite3.connect(SQLITE_BUFFER_FILE, check_same_thread=False, timeout=60.0)
     with _verrou_sqlite:
         # WAL : un écrivain n'empêche plus les lecteurs (et inversement).
         _conn_sqlite.execute("PRAGMA journal_mode=WAL")
@@ -492,8 +496,7 @@ def purger_buffer_expire() -> int:
     """
     limite = (datetime.now() - timedelta(days=SQLITE_RETENTION_JOURS)).isoformat()
     with _verrou_sqlite:
-        cursor = _conn_sqlite.execute(
-            "DELETE FROM buffer_mqtt WHERE horodatage < ?", (limite,))
+        cursor = _conn_sqlite.execute("DELETE FROM buffer_mqtt WHERE horodatage < ?", (limite,))
         _conn_sqlite.commit()
         return cursor.rowcount
 
@@ -668,7 +671,9 @@ def charger_capteurs_retrait_connus() -> None:
     global _capteurs_retrait_prochain_rafraichissement
     with _fichier_retrait_lock:
         _rafraichir_capteurs_retrait_connus()
-        _capteurs_retrait_prochain_rafraichissement = time.monotonic() + CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S
+        _capteurs_retrait_prochain_rafraichissement = (
+            time.monotonic() + CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S
+        )
 
 
 def verifier_et_recharger_capteurs_retrait() -> None:
@@ -682,8 +687,13 @@ def verifier_et_recharger_capteurs_retrait() -> None:
         avant = len(CAPTEURS_RETRAIT_CONNUS)
         _rafraichir_capteurs_retrait_connus()
         if len(CAPTEURS_RETRAIT_CONNUS) != avant:
-            print(f"🔄 Registre capteurs_retrait rechargé ({len(CAPTEURS_RETRAIT_CONNUS)} canal(aux) connus)")
-        _capteurs_retrait_prochain_rafraichissement = time.monotonic() + CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S
+            print(
+                f"🔄 Registre capteurs_retrait rechargé "
+                f"({len(CAPTEURS_RETRAIT_CONNUS)} canal(aux) connus)"
+            )
+        _capteurs_retrait_prochain_rafraichissement = (
+            time.monotonic() + CAPTEURS_RETRAIT_RAFRAICHISSEMENT_S
+        )
 
 
 def enregistrer_canal_si_inconnu(canal_nom: str) -> None:
@@ -721,7 +731,10 @@ def enregistrer_canal_si_inconnu(canal_nom: str) -> None:
         reponse.raise_for_status()
         entree = reponse.json()
     except (requests.RequestException, ValueError) as exc:
-        print(f"⚠️  Enregistrement distant du canal {canal_nom} impossible ({exc}) — retenté au prochain démarrage.")
+        print(
+            f"⚠️  Enregistrement distant du canal {canal_nom} impossible ({exc}) — "
+            "retenté au prochain démarrage."
+        )
 
     CAPTEURS_RETRAIT_CONNUS[canal_nom] = entree
     print(
@@ -742,6 +755,7 @@ _heartbeat_prochain_envoi: float = 0.0
 
 
 def envoyer_heartbeat_si_du() -> None:
+    """Publie un battement de vie si HEARTBEAT_INTERVAL_S s'est écoulé depuis le dernier."""
     global _heartbeat_prochain_envoi
     if time.monotonic() < _heartbeat_prochain_envoi:
         return
@@ -764,7 +778,9 @@ def envoyer_heartbeat_si_du() -> None:
 # Callbacks MQTT.
 # ===========================================================================
 
+
 def on_connect(client, userdata, flags, rc) -> None:
+    """Callback paho-mqtt appelé à la (re)connexion au broker."""
     global _mqtt_connecte
     if rc == 0:
         _mqtt_connecte = True
@@ -790,6 +806,7 @@ def on_publish(client, userdata, mid) -> None:
 
 
 def on_disconnect(client, userdata, rc) -> None:
+    """Callback paho-mqtt appelé à la déconnexion du broker."""
     global _mqtt_connecte, _en_attente
     _mqtt_connecte = False
     # La session est propre (clean_session par défaut) : les messages encore
@@ -806,6 +823,7 @@ def on_disconnect(client, userdata, rc) -> None:
 # ===========================================================================
 # Tâche de resynchronisation du buffer SQLite → MQTT cloud.
 # ===========================================================================
+
 
 def tache_sync_sqlite() -> None:
     """Pousser les messages SQLite en attente vers le broker MQTT cloud.
@@ -903,8 +921,7 @@ def tache_sync_sqlite() -> None:
 
         if ids_confirmes:
             with _verrou_sqlite:
-                _conn_sqlite.executemany(
-                    "DELETE FROM buffer_mqtt WHERE id = ?", ids_confirmes)
+                _conn_sqlite.executemany("DELETE FROM buffer_mqtt WHERE id = ?", ids_confirmes)
                 _conn_sqlite.commit()
             envoyes = len(ids_confirmes)
 
@@ -932,12 +949,18 @@ _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _CreateFileW = ctypes.windll.kernel32.CreateFileW
 _CreateFileW.restype = ctypes.c_void_p
 _CreateFileW.argtypes = [
-    ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
-    ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+    ctypes.c_wchar_p,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    ctypes.c_void_p,
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    ctypes.c_void_p,
 ]
 _CloseHandle = ctypes.windll.kernel32.CloseHandle
 _CloseHandle.restype = ctypes.c_int
 _CloseHandle.argtypes = [ctypes.c_void_p]
+
 
 def fichier_est_verrouille(chemin: str) -> bool:
     """Détecter si un processus tient encore le fichier ouvert (écriture en cours).
@@ -957,7 +980,7 @@ def fichier_est_verrouille(chemin: str) -> bool:
     handle = _CreateFileW(
         chemin,
         _GENERIC_READ,
-        0,                  # aucun partage : détecte tout autre ouvreur
+        0,  # aucun partage : détecte tout autre ouvreur
         None,
         _OPEN_EXISTING,
         0,
@@ -1014,6 +1037,7 @@ def attendre_fichier_stable(chemin: str) -> bool:
 # ===========================================================================
 # Filtre de Hampel (médiane + MAD glissantes) — rejette les pics de vibration.
 # ===========================================================================
+
 
 def decouper_lot(timestamps, debut: int, fin_max: int) -> int:
     """Déterminer où s'arrête un lot à pas d'échantillonnage constant.
@@ -1105,7 +1129,9 @@ def _filtrer_hampel_python(
         mad_diff = 0.0
         if diffs_fenetre:
             mediane_diff = statistics.median(diffs_fenetre)
-            mad_diff = statistics.median([abs(d - mediane_diff) for d in diffs_fenetre]) * facteur_mad
+            mad_diff = (
+                statistics.median([abs(d - mediane_diff) for d in diffs_fenetre]) * facteur_mad
+            )
 
         mad_effectif = max(mad, mad_diff)
         if mad_effectif > 0 and abs(valeurs[i] - mediane) > seuil_k * mad_effectif:
@@ -1158,19 +1184,17 @@ def _filtrer_hampel_numpy(
         # traiter d'un coup demanderait plusieurs Go.
         bloc = 65_536
         for debut in range(0, vues.shape[0], bloc):
-            fen = vues[debut:debut + bloc]
+            fen = vues[debut : debut + bloc]
             mediane = np.median(fen, axis=1)
             mad = np.median(np.abs(fen - mediane[:, None]), axis=1) * facteur_mad
 
             diffs = np.diff(fen, axis=1)
             mediane_diff = np.median(diffs, axis=1)
-            mad_diff = np.median(
-                np.abs(diffs - mediane_diff[:, None]), axis=1) * facteur_mad
+            mad_diff = np.median(np.abs(diffs - mediane_diff[:, None]), axis=1) * facteur_mad
 
             mad_effectif = np.maximum(mad, mad_diff)
-            centre = v[debut + demi_fenetre:debut + demi_fenetre + fen.shape[0]]
-            masque = (mad_effectif > 0) & (
-                np.abs(centre - mediane) > seuil_k * mad_effectif)
+            centre = v[debut + demi_fenetre : debut + demi_fenetre + fen.shape[0]]
+            masque = (mad_effectif > 0) & (np.abs(centre - mediane) > seuil_k * mad_effectif)
 
             positions = np.nonzero(masque)[0]
             if positions.size:
@@ -1192,8 +1216,9 @@ def _filtrer_hampel_numpy(
         mad_diff = 0.0
         if diffs_fenetre:
             mediane_diff = statistics.median(diffs_fenetre)
-            mad_diff = statistics.median(
-                [abs(d - mediane_diff) for d in diffs_fenetre]) * facteur_mad
+            mad_diff = (
+                statistics.median([abs(d - mediane_diff) for d in diffs_fenetre]) * facteur_mad
+            )
 
         mad_effectif = max(mad, mad_diff)
         if mad_effectif > 0 and abs(valeurs[i] - mediane) > seuil_k * mad_effectif:
@@ -1223,6 +1248,7 @@ def filtrer_hampel(
 # ===========================================================================
 # Extraction .dxd → publication MQTT.
 # ===========================================================================
+
 
 def extraire_et_publier(chemin: str) -> tuple[int, int]:
     """Extraire tous les canaux d'un fichier .dxd et publier chaque échantillon.
@@ -1256,9 +1282,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
         # gestionnaire d'erreur de boucle_surveillance() — tuait le processus.
         # Constaté le 07/08/2026 : backfill mort au 10e fichier sur 949.
         try:
-            check_error(
-                lib, lib.DWIOpenDataFile(reader, c_filename, ctypes.byref(file_info))
-            )
+            check_error(lib, lib.DWIOpenDataFile(reader, c_filename, ctypes.byref(file_info)))
         except Exception:
             try:
                 lib.DWICloseDataFile(reader)
@@ -1329,9 +1353,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
                 hor_1 = (ctypes.c_double * 1)()
                 check_error(
                     lib,
-                    lib.DWIGetScaledSamples(
-                        reader, channel_list[k].index, 0, un, ech_1, hor_1
-                    ),
+                    lib.DWIGetScaledSamples(reader, channel_list[k].index, 0, un, ech_1, hor_1),
                 )
                 premiers_horodatages.append(hor_1[0])
 
@@ -1349,17 +1371,20 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
                 if occurrences <= 1:
                     continue
                 print(
-                    f"🚨 COLLISION DE CANAL : \"{nom_duplique}\" apparaît "
+                    f'🚨 COLLISION DE CANAL : "{nom_duplique}" apparaît '
                     f"{occurrences} fois dans {nom_fichier} — étiquetage "
                     "mur/couche/position potentiellement incorrect pour ce canal."
                 )
-                publier_ou_stocker(MQTT_TOPIC_ALERTES, {
-                    "type": "collision_canal",
-                    "canal_nom": nom_duplique,
-                    "fichier_source": nom_fichier,
-                    "occurrences": occurrences,
-                    "horodatage": horodatage_lecture,
-                })
+                publier_ou_stocker(
+                    MQTT_TOPIC_ALERTES,
+                    {
+                        "type": "collision_canal",
+                        "canal_nom": nom_duplique,
+                        "fichier_source": nom_fichier,
+                        "occurrences": occurrences,
+                        "horodatage": horodatage_lecture,
+                    },
+                )
 
             for i in range(ch_count.value):
                 ch = channel_list[i]
@@ -1448,9 +1473,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
                     payload["valeurs"] = [samples[k] for k in range(debut_lot, fin_lot)]
                     payload["valeurs_filtrees"] = valeurs_filtrees[debut_lot:fin_lot]
                     payload["indices_aberrants"] = [
-                        k - debut_lot
-                        for k in range(debut_lot, fin_lot)
-                        if k in indices_aberrants
+                        k - debut_lot for k in range(debut_lot, fin_lot) if k in indices_aberrants
                     ]
 
                     publier_ou_stocker(MQTT_TOPIC_DEWESOFT, payload)
@@ -1475,6 +1498,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
 # ===========================================================================
 # Déplacement des fichiers traités / en erreur.
 # ===========================================================================
+
 
 def initialiser_registre() -> None:
     """Créer le registre des fichiers déjà traités (hors dossier surveillé).
@@ -1503,8 +1527,7 @@ def charger_registre() -> set[str]:
     ce qui reste à faire, y compris après un redémarrage du processus.
     """
     with sqlite3.connect(DXD_REGISTRE_FILE) as conn:
-        return {nom for (nom,) in conn.execute(
-            "SELECT nom_fichier FROM fichiers_traites")}
+        return {nom for (nom,) in conn.execute("SELECT nom_fichier FROM fichiers_traites")}
 
 
 def enregistrer_fichier(
@@ -1532,6 +1555,7 @@ def enregistrer_fichier(
 # ===========================================================================
 # Boucle de surveillance du dossier.
 # ===========================================================================
+
 
 def boucle_surveillance() -> None:
     """Scanner le dossier surveillé en continu et traiter chaque .dxd détecté."""
@@ -1629,7 +1653,10 @@ if __name__ == "__main__":
 
     if not DXD_WATCH_FOLDER:
         print("❌ DXD_WATCH_FOLDER non défini. Exemple :")
-        print(r'   set DXD_WATCH_FOLDER=C:\Users\Public\Documents\Dewesoft\Data && python ingestion_dewesoft_dxd.py')
+        print(
+            r"   set DXD_WATCH_FOLDER=C:\Users\Public\Documents\Dewesoft\Data && "
+            r"python ingestion_dewesoft_dxd.py"
+        )
         sys.exit(1)
 
     # Aucun os.makedirs() ici : le dossier surveillé appartient à DeweSoftX et

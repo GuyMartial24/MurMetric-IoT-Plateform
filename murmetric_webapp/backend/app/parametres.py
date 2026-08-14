@@ -3,6 +3,7 @@ côté de users.json sur le même volume persistant, pas seulement en variable
 d'environnement figée au déploiement. Les valeurs d'environnement
 (GROQ_API_KEY/GROQ_MODEL) ne servent plus que de valeur de secours initiale
 si rien n'a encore été défini depuis l'interface."""
+
 import json
 import threading
 
@@ -26,10 +27,12 @@ def _ecrire(parametres: dict) -> None:
 
 
 def obtenir_cle_groq() -> str:
+    """Clé Groq active : valeur définie depuis l'interface sinon repli sur l'environnement."""
     return _lire().get("groq_api_key") or config.GROQ_API_KEY
 
 
 def obtenir_modele_groq() -> str:
+    """Modèle Groq actif : valeur définie depuis l'interface sinon repli sur l'environnement."""
     return _lire().get("groq_model") or config.GROQ_MODEL
 
 
@@ -40,7 +43,10 @@ def obtenir_expiration_groq() -> str | None:
     return _lire().get("groq_api_key_expiration")
 
 
-def definir_parametres_groq(cle_api: str | None, modele: str | None, expiration: str | None) -> None:
+def definir_parametres_groq(
+    cle_api: str | None, modele: str | None, expiration: str | None
+) -> None:
+    """Met à jour les paramètres Groq (chaque champ ne change que s'il est fourni)."""
     with _verrou:
         parametres = _lire()
         if cle_api:
@@ -53,14 +59,17 @@ def definir_parametres_groq(cle_api: str | None, modele: str | None, expiration:
 
 
 def obtenir_cle_gemini() -> str:
+    """Clé Gemini active : valeur définie depuis l'interface sinon repli sur l'environnement."""
     return _lire().get("gemini_api_key") or config.GEMINI_API_KEY
 
 
 def obtenir_modele_gemini() -> str:
+    """Modèle Gemini actif : valeur définie depuis l'interface sinon repli sur l'environnement."""
     return _lire().get("gemini_model") or config.GEMINI_MODEL
 
 
 def definir_parametres_gemini(cle_api: str | None, modele: str | None) -> None:
+    """Met à jour les paramètres Gemini (chaque champ ne change que s'il est fourni)."""
     with _verrou:
         parametres = _lire()
         if cle_api:
@@ -71,6 +80,7 @@ def definir_parametres_gemini(cle_api: str | None, modele: str | None) -> None:
 
 
 def masquer(valeur: str) -> str:
+    """Masque une clé API pour l'affichage (ne garde que les 4 derniers caractères)."""
     if not valeur:
         return ""
     return f"...{valeur[-4:]}" if len(valeur) > 4 else "****"

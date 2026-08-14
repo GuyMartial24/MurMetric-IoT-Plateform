@@ -110,10 +110,10 @@ MQTT_SHARE_GROUP = os.getenv("MQTT_SHARE_GROUP", "bridge")
 
 # Mapping topic MQTT → topic Kafka (namespaced par tenant pour le SaaS).
 TOPIC_MAP: dict[str, str] = {
-    "frd/capteurs/bruts":    f"murmetric.{TENANT_ID}.capteurs.bruts",
+    "frd/capteurs/bruts": f"murmetric.{TENANT_ID}.capteurs.bruts",
     "frd/capteurs/registre": f"murmetric.{TENANT_ID}.capteurs.registre",
-    "frd/dewesoft/bruts":    f"murmetric.{TENANT_ID}.dewesoft.bruts",
-    "frd/dewesoft/alertes":  f"murmetric.{TENANT_ID}.dewesoft.alertes",
+    "frd/dewesoft/bruts": f"murmetric.{TENANT_ID}.dewesoft.bruts",
+    "frd/dewesoft/alertes": f"murmetric.{TENANT_ID}.dewesoft.alertes",
 }
 
 
@@ -251,9 +251,7 @@ def on_connect(client, userdata, flags, rc) -> None:
         # toutes les replicas abonnées au même groupe au lieu de les envoyer
         # à chacune — c'est ce qui permet à ce bridge de tourner en plusieurs
         # exemplaires sans dupliquer les messages vers Kafka.
-        souscriptions = [
-            (f"$share/{MQTT_SHARE_GROUP}/{topic}", 1) for topic in TOPIC_MAP
-        ]
+        souscriptions = [(f"$share/{MQTT_SHARE_GROUP}/{topic}", 1) for topic in TOPIC_MAP]
         client.subscribe(souscriptions)
         print(
             f"📥 MQTT connecté ({MQTT_BROKER}) — "

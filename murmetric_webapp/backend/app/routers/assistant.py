@@ -15,6 +15,7 @@ Architecture tranchée en section 32 de logique_projet.md :
 - Ancrage explicite sur la sélection affichée côté frontend (mur/couche/
   période) — fournie ici via `selection`, pas déduite du texte du prompt.
 """
+
 import json
 from typing import Literal
 
@@ -24,8 +25,19 @@ from pydantic import BaseModel
 
 from .. import config
 from ..auth import utilisateur_courant
-from ..parametres import obtenir_cle_gemini, obtenir_cle_groq, obtenir_modele_gemini, obtenir_modele_groq
-from .mesures import TypeMesure, _valider_bornes, calculer_statistiques, comparer_periodes, ecart_brut_filtre
+from ..parametres import (
+    obtenir_cle_gemini,
+    obtenir_cle_groq,
+    obtenir_modele_gemini,
+    obtenir_modele_groq,
+)
+from .mesures import (
+    TypeMesure,
+    _valider_bornes,
+    calculer_statistiques,
+    comparer_periodes,
+    ecart_brut_filtre,
+)
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
@@ -35,6 +47,8 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
 class Selection(BaseModel):
+    """Sélection mur/couche/période sur laquelle porte la question de l'utilisateur."""
+
     type: TypeMesure
     mur: str | None = None
     couche: str | None = None
@@ -45,12 +59,16 @@ class Selection(BaseModel):
 
 
 class DemandeChat(BaseModel):
+    """Question texte adressée à l'assistant sur une sélection donnée."""
+
     mode: Mode
     prompt: str
     selection: Selection
 
 
 class DemandeChatImage(BaseModel):
+    """Question adressée à l'assistant, accompagnée d'une image de graphique (mode vision)."""
+
     mode: Mode
     prompt: str
     image_data_uri: str
@@ -191,15 +209,31 @@ def _executer_tool(nom: str, entree: dict) -> dict:
     if nom == "interroger_statistiques_mesures":
         debut_iso, fin_iso = _valider_bornes(entree.get("debut"), entree.get("fin"), entree["type"])
         return calculer_statistiques(
-            entree["type"], entree.get("mur"), entree.get("couche"),
-            entree.get("position"), entree.get("canal_nom"), debut_iso, fin_iso,
+            entree["type"],
+            entree.get("mur"),
+            entree.get("couche"),
+            entree.get("position"),
+            entree.get("canal_nom"),
+            debut_iso,
+            fin_iso,
         )
     if nom == "comparer_deux_periodes":
-        debut1_iso, fin1_iso = _valider_bornes(entree.get("debut_1"), entree.get("fin_1"), entree["type"])
-        debut2_iso, fin2_iso = _valider_bornes(entree.get("debut_2"), entree.get("fin_2"), entree["type"])
+        debut1_iso, fin1_iso = _valider_bornes(
+            entree.get("debut_1"), entree.get("fin_1"), entree["type"]
+        )
+        debut2_iso, fin2_iso = _valider_bornes(
+            entree.get("debut_2"), entree.get("fin_2"), entree["type"]
+        )
         return comparer_periodes(
-            entree["type"], entree.get("mur"), entree.get("couche"), entree.get("position"), entree.get("canal_nom"),
-            debut1_iso, fin1_iso, debut2_iso, fin2_iso,
+            entree["type"],
+            entree.get("mur"),
+            entree.get("couche"),
+            entree.get("position"),
+            entree.get("canal_nom"),
+            debut1_iso,
+            fin1_iso,
+            debut2_iso,
+            fin2_iso,
         )
     if nom == "ecart_brut_filtre_retrait":
         debut_iso, fin_iso = _valider_bornes(entree.get("debut"), entree.get("fin"), "retrait")
@@ -219,7 +253,9 @@ def _completer_avec_outils(client: OpenAI, modele: str, messages: list[dict]) ->
     compatibles avec un autre.
     """
     for _ in range(4):
-        reponse = client.chat.completions.create(model=modele, max_tokens=2000, messages=messages, tools=_TOOLS)
+        reponse = client.chat.completions.create(
+            model=modele, max_tokens=2000, messages=messages, tools=_TOOLS
+        )
         choix = reponse.choices[0]
         if choix.finish_reason != "tool_calls" or not choix.message.tool_calls:
             return choix.message.content
@@ -246,10 +282,18 @@ def _messages_initiaux(demande: DemandeChat, stats_initiales: dict) -> list[dict
 
 @router.post("/chat")
 def chat(demande: DemandeChat, _actuel: dict = Depends(utilisateur_courant)) -> dict:
-    debut_iso, fin_iso = _valider_bornes(demande.selection.debut, demande.selection.fin, demande.selection.type)
+    """Chat texte — Gemini en premier, repli automatique sur Groq si Gemini échoue."""
+    debut_iso, fin_iso = _valider_bornes(
+        demande.selection.debut, demande.selection.fin, demande.selection.type
+    )
     stats_initiales = calculer_statistiques(
-        demande.selection.type, demande.selection.mur, demande.selection.couche,
-        demande.selection.position, demande.selection.canal_nom, debut_iso, fin_iso,
+        demande.selection.type,
+        demande.selection.mur,
+        demande.selection.couche,
+        demande.selection.position,
+        demande.selection.canal_nom,
+        debut_iso,
+        fin_iso,
     )
 
     erreurs: list[str] = []
@@ -258,7 +302,9 @@ def chat(demande: DemandeChat, _actuel: dict = Depends(utilisateur_courant)) -> 
     if cle_gemini:
         try:
             client = OpenAI(api_key=cle_gemini, base_url=config.GEMINI_BASE_URL)
-            reponse = _completer_avec_outils(client, obtenir_modele_gemini(), _messages_initiaux(demande, stats_initiales))
+            reponse = _completer_avec_outils(
+                client, obtenir_modele_gemini(), _messages_initiaux(demande, stats_initiales)
+            )
             return {"reponse": reponse, "fournisseur": "gemini"}
         except Exception as exc:
             erreurs.append(f"Gemini : {exc}")
@@ -267,14 +313,20 @@ def chat(demande: DemandeChat, _actuel: dict = Depends(utilisateur_courant)) -> 
     if cle_groq:
         try:
             client = OpenAI(api_key=cle_groq, base_url=GROQ_BASE_URL)
-            reponse = _completer_avec_outils(client, obtenir_modele_groq(), _messages_initiaux(demande, stats_initiales))
+            reponse = _completer_avec_outils(
+                client, obtenir_modele_groq(), _messages_initiaux(demande, stats_initiales)
+            )
             return {"reponse": reponse, "fournisseur": "groq"}
         except Exception as exc:
             erreurs.append(f"Groq : {exc}")
 
     if not erreurs:
-        raise HTTPException(status_code=500, detail="Aucun fournisseur IA configuré (ni Gemini ni Groq).")
-    raise HTTPException(status_code=502, detail="Tous les fournisseurs IA ont échoué : " + " | ".join(erreurs))
+        raise HTTPException(
+            status_code=500, detail="Aucun fournisseur IA configuré (ni Gemini ni Groq)."
+        )
+    raise HTTPException(
+        status_code=502, detail="Tous les fournisseurs IA ont échoué : " + " | ".join(erreurs)
+    )
 
 
 @router.post("/chat-image")
@@ -285,20 +337,34 @@ def chat_image(demande: DemandeChatImage, _actuel: dict = Depends(utilisateur_co
     if not cle_gemini:
         raise HTTPException(
             status_code=500,
-            detail="Clé API Gemini non configurée — requise pour l'analyse d'image (Groq n'a pas de modèle vision disponible).",
+            detail=(
+                "Clé API Gemini non configurée — requise pour l'analyse d'image "
+                "(Groq n'a pas de modèle vision disponible)."
+            ),
         )
 
     contexte_stats = ""
     if demande.selection is not None:
         try:
-            debut_iso, fin_iso = _valider_bornes(demande.selection.debut, demande.selection.fin, demande.selection.type)
-            stats = calculer_statistiques(
-                demande.selection.type, demande.selection.mur, demande.selection.couche,
-                demande.selection.position, demande.selection.canal_nom, debut_iso, fin_iso,
+            debut_iso, fin_iso = _valider_bornes(
+                demande.selection.debut, demande.selection.fin, demande.selection.type
             )
-            contexte_stats = f"Statistiques précises de cette sélection (pour ancrer ton interprétation visuelle) : {stats}\n\n"
+            stats = calculer_statistiques(
+                demande.selection.type,
+                demande.selection.mur,
+                demande.selection.couche,
+                demande.selection.position,
+                demande.selection.canal_nom,
+                debut_iso,
+                fin_iso,
+            )
+            contexte_stats = (
+                "Statistiques précises de cette sélection "
+                f"(pour ancrer ton interprétation visuelle) : {stats}\n\n"
+            )
         except Exception:
-            pass  # l'image seule suffit à répondre si les stats échouent — pas bloquant pour ce mode
+            # L'image seule suffit à répondre si les stats échouent — pas bloquant pour ce mode.
+            pass
 
     client = OpenAI(api_key=cle_gemini, base_url=config.GEMINI_BASE_URL)
     messages = [
@@ -306,13 +372,23 @@ def chat_image(demande: DemandeChatImage, _actuel: dict = Depends(utilisateur_co
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": f"{contexte_stats}Question de l'utilisateur ({demande.mode}) : {demande.prompt}"},
+                {
+                    "type": "text",
+                    "text": (
+                        f"{contexte_stats}Question de l'utilisateur "
+                        f"({demande.mode}) : {demande.prompt}"
+                    ),
+                },
                 {"type": "image_url", "image_url": {"url": demande.image_data_uri}},
             ],
         },
     ]
     try:
-        reponse = client.chat.completions.create(model=obtenir_modele_gemini(), max_tokens=2000, messages=messages)
+        reponse = client.chat.completions.create(
+            model=obtenir_modele_gemini(), max_tokens=2000, messages=messages
+        )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Analyse d'image échouée (Gemini) : {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Analyse d'image échouée (Gemini) : {exc}"
+        ) from exc
     return {"reponse": reponse.choices[0].message.content, "fournisseur": "gemini"}

@@ -29,10 +29,10 @@ SDK_PYTHON_DIR = os.path.join(BASE, "DWDataReader_v5_0_8", "examples", "Python")
 sys.path.insert(0, SDK_PYTHON_DIR)
 
 from DWDataReaderHeader import (  # noqa: E402
+    READER_HANDLE,
     DWChannel,
     DWFileInfo,
     DWMeasurementInfo,
-    READER_HANDLE,
     check_error,
     decode_bytes,
     load_library,
@@ -58,6 +58,7 @@ def resoudre_fichier_test(argv: list[str]) -> str:
 
 
 def main() -> None:
+    """Point d'entrée : lit un fichier .dxd et affiche le détail de chaque canal."""
     chemin = resoudre_fichier_test(sys.argv)
     print("=" * 60)
     print("  MurMetric — Test de lecture .dxd (SDK DWDataReader officiel)")
@@ -69,7 +70,9 @@ def main() -> None:
     ver_major, ver_minor, ver_patch = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
     check_error(
         lib,
-        lib.DWGetVersionEx(ctypes.byref(ver_major), ctypes.byref(ver_minor), ctypes.byref(ver_patch)),
+        lib.DWGetVersionEx(
+            ctypes.byref(ver_major), ctypes.byref(ver_minor), ctypes.byref(ver_patch)
+        ),
     )
     print(f"DWDataReader version : {ver_major.value}.{ver_minor.value}.{ver_patch.value}")
 
@@ -102,9 +105,14 @@ def main() -> None:
             unite = decode_bytes(ch.unit)
 
             sample_cnt = ctypes.c_longlong()
-            check_error(lib, lib.DWIGetScaledSamplesCount(reader, ch.index, ctypes.byref(sample_cnt)))
+            check_error(
+                lib, lib.DWIGetScaledSamplesCount(reader, ch.index, ctypes.byref(sample_cnt))
+            )
 
-            print(f"\n--- Canal {ch.index} : {nom!r} ({unite}) — {sample_cnt.value} échantillon(s) ---")
+            print(
+                f"\n--- Canal {ch.index} : {nom!r} ({unite}) — "
+                f"{sample_cnt.value} échantillon(s) ---"
+            )
 
             if sample_cnt.value == 0:
                 continue

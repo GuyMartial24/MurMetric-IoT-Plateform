@@ -4,7 +4,11 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
   background: #0f1117;
   color: #e6e6e6;
 }
@@ -69,7 +73,10 @@ body {
   color: #a0a6b5;
 }
 
-input, select, textarea, button {
+input,
+select,
+textarea,
+button {
   font: inherit;
   background: #0f1117;
   color: #e6e6e6;
@@ -108,7 +115,8 @@ table {
   font-size: 0.9rem;
 }
 
-th, td {
+th,
+td {
   text-align: left;
   padding: 0.4rem 0.6rem;
   border-bottom: 1px solid #2a2e3a;

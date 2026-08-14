@@ -32,7 +32,8 @@ Usage :
         INFLUX_TOKEN     Token API InfluxDB
         INFLUX_ORG       Organisation InfluxDB                 (défaut : FRD_CODEM)
         INFLUX_BUCKET    Bucket de destination                 (défaut : Test_Capteurs)
-        HR_T_SOURCE_DIR  Dossier des prélèvements              (défaut : data_HR_T/T et HR à côté de ce script)
+        HR_T_SOURCE_DIR  Dossier des prélèvements              (défaut : data_HR_T/T
+                                                                 et HR à côté de ce script)
         HR_T_DATE_DEBUT  Date ISO (AAAA-MM-JJ) de début retenue (défaut : 2025-12-01)
 
     IMPORTANT — HR_T_DATE_DEBUT est une fenêtre GLOBALE approximative (début
@@ -42,6 +43,7 @@ Usage :
     date par position avant une écriture réelle si une source plus précise
     est disponible (PowerPoint des maquettes, équipe terrain).
 """
+
 import csv
 import json
 import os
@@ -63,14 +65,12 @@ INFLUX_ORG = os.getenv("INFLUX_ORG", "FRD_CODEM")
 INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "Test_Capteurs")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-HR_T_SOURCE_DIR = os.getenv(
-    "HR_T_SOURCE_DIR", os.path.join(SCRIPT_DIR, "data_HR_T", "T et HR")
-)
+HR_T_SOURCE_DIR = os.getenv("HR_T_SOURCE_DIR", os.path.join(SCRIPT_DIR, "data_HR_T", "T et HR"))
 CAPTEURS_FILE = os.path.join(SCRIPT_DIR, "capteurs.json")
 
-DATE_DEBUT = datetime.strptime(
-    os.getenv("HR_T_DATE_DEBUT", "2025-12-01"), "%Y-%m-%d"
-).replace(tzinfo=timezone.utc)
+DATE_DEBUT = datetime.strptime(os.getenv("HR_T_DATE_DEBUT", "2025-12-01"), "%Y-%m-%d").replace(
+    tzinfo=timezone.utc
+)
 
 CONFIRMER = "--confirmer" in sys.argv
 
@@ -92,6 +92,7 @@ def _echap_tag(valeur: str) -> str:
 # Registre des capteurs HR/T (sous-ensemble de capteurs.json).
 # ---------------------------------------------------------------------------
 
+
 def charger_registre_hr_t() -> dict:
     """Charge capteurs.json, ne garde que les entrées HR/T (marquées par le
     champ numero_capteur_hr_t, absent des autres capteurs BLE du fichier)."""
@@ -107,6 +108,7 @@ def charger_registre_hr_t() -> dict:
 # ---------------------------------------------------------------------------
 # Localisation du dernier prélèvement disponible par capteur.
 # ---------------------------------------------------------------------------
+
 
 def _date_dossier(nom: str) -> str:
     """'prélèvement 21-01-2026' -> '2026-01-21' (triable chronologiquement)."""
@@ -151,6 +153,7 @@ def trouver_dernier_fichier_par_slot() -> dict:
 # Lecture des mesures (les deux formats de CSV).
 # ---------------------------------------------------------------------------
 
+
 def _parser_date_ancien(chaine: str):
     """Format ancien : date locale + fuseau explicite en texte, ex.
     'Mon Mar 17 2025 17:24:43 GMT+0100 (heure normale d'Europe centrale)'.
@@ -194,17 +197,17 @@ def lire_mesures(chemin: str, fmt: str):
     if fmt == "nouveau":
         delimiteur = None
         idx_data = None
-        for i, l in enumerate(lignes):
-            if l.startswith("index,"):
+        for i, ligne in enumerate(lignes):
+            if ligne.startswith("index,"):
                 delimiteur, idx_data = ",", i
                 break
-            if l.startswith("index;"):
+            if ligne.startswith("index;"):
                 delimiteur, idx_data = ";", i
                 break
         if idx_data is None:
             return
         decimale_virgule = delimiteur == ";"
-        for ligne in lignes[idx_data + 1:]:
+        for ligne in lignes[idx_data + 1 :]:
             parts = next(csv.reader([ligne], delimiter=delimiteur), None)
             if not parts or len(parts) < 5:
                 continue
@@ -246,6 +249,7 @@ def lire_mesures(chemin: str, fmt: str):
 # Construction des lignes InfluxDB (line protocol).
 # ---------------------------------------------------------------------------
 
+
 def construire_ligne(infos: dict, d: datetime, t: float, h: float, dp) -> str:
     """Même structure de tags que construire_point_capteurs()
     (kafka_consumer_influx.py) — garantit des points compatibles avec le
@@ -271,7 +275,10 @@ def construire_ligne(infos: dict, d: datetime, t: float, h: float, dp) -> str:
 # Programme principal.
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
+    """Point d'entrée : lit les CSV HR/T, résume les points trouvés, écrit dans InfluxDB
+    seulement si --confirmer est passé (dry-run par défaut)."""
     registre = charger_registre_hr_t()
     print(f"{len(registre)} capteurs HR/T dans capteurs.json.")
 
@@ -298,7 +305,10 @@ def main() -> None:
             f"{n} points ({os.path.basename(os.path.dirname(chemin))})"
         )
 
-    print(f"\nTotal : {len(lignes)} points à écrire dans '{MESURE_CAPTEURS}' (bucket {INFLUX_BUCKET}).")
+    print(
+        f"\nTotal : {len(lignes)} points à écrire dans '{MESURE_CAPTEURS}' "
+        f"(bucket {INFLUX_BUCKET})."
+    )
 
     if not CONFIRMER:
         print("\nAperçu uniquement (dry-run) — rien n'a été écrit dans InfluxDB.")
@@ -314,9 +324,11 @@ def main() -> None:
     TAILLE_LOT = 5000
     try:
         for i in range(0, len(lignes), TAILLE_LOT):
-            lot = lignes[i:i + TAILLE_LOT]
+            lot = lignes[i : i + TAILLE_LOT]
             write_api.write(
-                bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=lot,
+                bucket=INFLUX_BUCKET,
+                org=INFLUX_ORG,
+                record=lot,
                 write_precision=WritePrecision.NS,
             )
             print(f"  {min(i + TAILLE_LOT, len(lignes))}/{len(lignes)} points écrits.")

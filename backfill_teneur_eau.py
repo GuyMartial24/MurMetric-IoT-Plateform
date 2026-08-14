@@ -27,8 +27,10 @@ Usage :
 
     Variables d'environnement (mêmes défauts que backfill_hr_t.py) :
         INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, INFLUX_BUCKET
-        TENEUR_EAU_SOURCE  Chemin du classeur (défaut : data_teneur/Teneur en eau Paroi.xlsx à côté de ce script)
+        TENEUR_EAU_SOURCE  Chemin du classeur (défaut : data_teneur/Teneur en eau
+                           Paroi.xlsx à côté de ce script)
 """
+
 import os
 import sys
 from datetime import datetime, timezone
@@ -104,7 +106,8 @@ def lire_mesures():
     ligne_dates, colonnes = None, None
     for r in range(1, ws.max_row + 1):
         cols_dates = [
-            c for c in range(1, ws.max_column + 1)
+            c
+            for c in range(1, ws.max_column + 1)
             if hasattr(ws.cell(row=r, column=c).value, "year")
         ]
         if len(cols_dates) >= 2:
@@ -114,8 +117,7 @@ def lire_mesures():
         raise RuntimeError("Ligne d'en-tête des dates introuvable dans Feuil1.")
 
     dates = {
-        c: ws.cell(row=ligne_dates, column=c).value.replace(tzinfo=timezone.utc)
-        for c in colonnes
+        c: ws.cell(row=ligne_dates, column=c).value.replace(tzinfo=timezone.utc) for c in colonnes
     }
 
     non_reconnues = []
@@ -148,6 +150,7 @@ def lire_mesures():
 
 
 def construire_ligne(d: datetime, mur: str, couche: str, valeur: float) -> str:
+    """Construit une ligne au format Line Protocol pour un point de teneur en eau."""
     tags = (
         f"utilisateur_id={_echap_tag(UTILISATEUR_ID)},"
         f"utilisateur_nom={_echap_tag(UTILISATEUR_NOM)},"
@@ -155,15 +158,14 @@ def construire_ligne(d: datetime, mur: str, couche: str, valeur: float) -> str:
         f"couche={_echap_tag(couche)},"
         f"prestation={_echap_tag('Non défini')}"
     )
-    fields = (
-        f"teneur_eau_pourcent={valeur},"
-        f'commentaire="{_echap_field_str(COMMENTAIRE)}"'
-    )
+    fields = f"teneur_eau_pourcent={valeur}," f'commentaire="{_echap_field_str(COMMENTAIRE)}"'
     ts_ns = int(d.timestamp() * 1_000_000_000)
     return f"{MESURE_TENEUR_EAU},{tags} {fields} {ts_ns}"
 
 
 def main() -> None:
+    """Point d'entrée : lit le classeur Excel, résume les points trouvés, écrit dans
+    InfluxDB seulement si --confirmer est passé (dry-run par défaut)."""
     print(f"Source : {TENEUR_EAU_SOURCE}")
     mesures = list(lire_mesures())
 
@@ -178,7 +180,10 @@ def main() -> None:
         dates_str = ", ".join(f"{dt}={v}%" for dt, v in points)
         print(f"  {mur} / {couche} ({len(points)} points) : {dates_str}")
 
-    print(f"\nTotal : {len(lignes)} points à écrire dans '{MESURE_TENEUR_EAU}' (bucket {INFLUX_BUCKET}).")
+    print(
+        f"\nTotal : {len(lignes)} points à écrire dans '{MESURE_TENEUR_EAU}' "
+        f"(bucket {INFLUX_BUCKET})."
+    )
 
     if not CONFIRMER:
         print("\nAperçu uniquement (dry-run) — rien n'a été écrit dans InfluxDB.")
@@ -193,7 +198,9 @@ def main() -> None:
     write_api = client.write_api(write_options=SYNCHRONOUS)
     try:
         write_api.write(
-            bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=lignes,
+            bucket=INFLUX_BUCKET,
+            org=INFLUX_ORG,
+            record=lignes,
             write_precision=WritePrecision.NS,
         )
     finally:

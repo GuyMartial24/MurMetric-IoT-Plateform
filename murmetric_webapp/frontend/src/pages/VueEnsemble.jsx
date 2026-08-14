@@ -47,8 +47,8 @@ export default function VueEnsemble() {
       {points && points.length === 0 && (
         <div className="carte">
           <p>
-            Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie
-            le mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
+            Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie le
+            mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
           </p>
         </div>
       )}
@@ -57,8 +57,12 @@ export default function VueEnsemble() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ margin: 0 }}>Nomogramme — grandeurs croisées</h3>
             <div>
-              <button onClick={() => setMode3D(false)} disabled={!mode3D} style={{ marginRight: "0.5rem" }}>2D</button>
-              <button onClick={() => setMode3D(true)} disabled={mode3D}>3D (HR/T + retrait)</button>
+              <button onClick={() => setMode3D(false)} disabled={!mode3D} style={{ marginRight: "0.5rem" }}>
+                2D
+              </button>
+              <button onClick={() => setMode3D(true)} disabled={mode3D}>
+                3D (HR/T + retrait)
+              </button>
             </div>
           </div>
           <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>

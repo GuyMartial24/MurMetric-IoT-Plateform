@@ -11,6 +11,7 @@ kafka-consumer-influx) : ce chemin existe pour la fiabilité/le volume des
 mesures réelles, disproportionné pour un signal de supervision à faible
 fréquence (quelques messages/minute) et à faible enjeu (un battement perdu
 n'a aucune conséquence, contrairement à un point de mesure)."""
+
 import json
 import threading
 
@@ -25,15 +26,17 @@ _client: mqtt.Client | None = None
 def _traiter_message(payload: dict) -> None:
     pipeline = echap_tag(payload.get("pipeline") or "inconnu")
     machine = echap_tag(payload.get("machine") or "inconnu")
-    champs = ",".join([
-        f"mqtt_connecte={1 if payload.get('mqtt_connecte') else 0}i",
-        f"buffer_sqlite_en_attente={int(payload.get('buffer_sqlite_en_attente') or 0)}i",
-        f"registre_api_ok={1 if payload.get('registre_api_ok') else 0}i",
-        f"nb_capteurs_connus={int(payload.get('nb_capteurs_connus') or 0)}i",
-        f'demarre_le="{echap_field_str(payload.get("demarre_le") or "")}"',
-        f"nb_points_publies={int(payload.get('nb_points_publies') or 0)}i",
-        f"nb_points_bufferises={int(payload.get('nb_points_bufferises') or 0)}i",
-    ])
+    champs = ",".join(
+        [
+            f"mqtt_connecte={1 if payload.get('mqtt_connecte') else 0}i",
+            f"buffer_sqlite_en_attente={int(payload.get('buffer_sqlite_en_attente') or 0)}i",
+            f"registre_api_ok={1 if payload.get('registre_api_ok') else 0}i",
+            f"nb_capteurs_connus={int(payload.get('nb_capteurs_connus') or 0)}i",
+            f'demarre_le="{echap_field_str(payload.get("demarre_le") or "")}"',
+            f"nb_points_publies={int(payload.get('nb_points_publies') or 0)}i",
+            f"nb_points_bufferises={int(payload.get('nb_points_bufferises') or 0)}i",
+        ]
+    )
     write_point(f"{MESURE_HEARTBEAT},pipeline={pipeline},machine={machine} {champs}")
 
 
@@ -82,6 +85,7 @@ def demarrer() -> None:
 
 
 def arreter() -> None:
+    """Arrête proprement le client MQTT de monitoring (appelé à l'arrêt de la webapp)."""
     if _client is not None:
         _client.loop_stop()
         _client.disconnect()

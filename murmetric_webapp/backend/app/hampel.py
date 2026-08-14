@@ -7,12 +7,17 @@ demande explicite de l'utilisateur (13/08/2026) : le réglage
 HAMPEL_SEUIL_K/HAMPEL_FENETRE d'ingestion est fixe, pas ajustable depuis
 l'interface. Ne modifie jamais les données stockées (`valeur_filtree`
 reste tel quel en base) — un recalcul strictement pour l'affichage."""
+
 import numpy as np
 
 FACTEUR_MAD = 1.4826
 
 
-def filtrer_hampel(valeurs: list[float], demi_fenetre: int, seuil_k: float) -> tuple[list[float], list[bool]]:
+def filtrer_hampel(
+    valeurs: list[float], demi_fenetre: int, seuil_k: float
+) -> tuple[list[float], list[bool]]:
+    """Filtre de Hampel vectorisé (médiane + MAD glissantes) : retourne les valeurs
+    corrigées et le masque des points jugés aberrants."""
     n = len(valeurs)
     v = np.asarray(valeurs, dtype=np.float64)
     filtrees = v.copy()
@@ -29,7 +34,7 @@ def filtrer_hampel(valeurs: list[float], demi_fenetre: int, seuil_k: float) -> t
         mad_diff = np.median(np.abs(diffs - mediane_diff[:, None]), axis=1) * FACTEUR_MAD
 
         mad_effectif = np.maximum(mad, mad_diff)
-        centre = v[demi_fenetre:demi_fenetre + vues.shape[0]]
+        centre = v[demi_fenetre : demi_fenetre + vues.shape[0]]
         masque = (mad_effectif > 0) & (np.abs(centre - mediane) > seuil_k * mad_effectif)
 
         indices = np.nonzero(masque)[0] + demi_fenetre
@@ -59,7 +64,10 @@ def filtrer_hampel(valeurs: list[float], demi_fenetre: int, seuil_k: float) -> t
 
 
 def appliquer_bornes_physiques(
-    valeurs: list[float], aberrants: list[bool], borne_min: float, borne_max: float,
+    valeurs: list[float],
+    aberrants: list[bool],
+    borne_min: float,
+    borne_max: float,
 ) -> tuple[list[float], list[bool]]:
     """Deuxième couche, complémentaire du Hampel — demande explicite du
     13/08/2026, après avoir constaté sur données réelles qu'un pic positif

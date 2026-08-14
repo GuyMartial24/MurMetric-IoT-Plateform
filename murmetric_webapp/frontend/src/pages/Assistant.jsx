@@ -58,9 +58,9 @@ export default function Assistant() {
       <div className="carte">
         <h2>Assistant IA</h2>
         <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
-          Ancré sur la sélection ci-dessous — jamais sur des points bruts, uniquement sur des statistiques
-          pré-agrégées (ou, si tu joins le graphique, sur l'image déjà tracée par l'appli). Les brouillons de
-          rapport sont à relire avant usage.
+          Ancré sur la sélection ci-dessous — jamais sur des points bruts, uniquement sur des statistiques pré-agrégées
+          (ou, si tu joins le graphique, sur l'image déjà tracée par l'appli). Les brouillons de rapport sont à relire
+          avant usage.
         </p>
         <SelecteurMesure valeur={selection} onChange={setSelection} />
         <div className="champ" style={{ marginTop: "0.75rem", maxWidth: "260px" }}>
@@ -84,8 +84,8 @@ export default function Assistant() {
       {points && points.length === 0 && (
         <div className="carte">
           <p>
-            Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie
-            le mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
+            Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie le
+            mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
           </p>
         </div>
       )}
@@ -94,7 +94,17 @@ export default function Assistant() {
         {historique.map((m, i) => (
           <div key={i} className={`chat-message ${m.role}`}>
             {m.avecGraphique && (
-              <span style={{ display: "inline-block", fontSize: "0.72rem", color: "#a0a6b5", border: "1px solid #3a4152", borderRadius: "4px", padding: "0 0.35rem", marginRight: "0.4rem" }}>
+              <span
+                style={{
+                  display: "inline-block",
+                  fontSize: "0.72rem",
+                  color: "#a0a6b5",
+                  border: "1px solid #3a4152",
+                  borderRadius: "4px",
+                  padding: "0 0.35rem",
+                  marginRight: "0.4rem",
+                }}
+              >
                 graphique joint
               </span>
             )}
@@ -110,11 +120,17 @@ export default function Assistant() {
           placeholder="ex. Explique l'évolution de la température sur cette sélection"
         />
         <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
-          <button onClick={() => envoyer(false)} disabled={enCours}>{enCours ? "Réflexion..." : "Envoyer"}</button>
+          <button onClick={() => envoyer(false)} disabled={enCours}>
+            {enCours ? "Réflexion..." : "Envoyer"}
+          </button>
           <button
             onClick={() => envoyer(true)}
             disabled={enCours || !points || points.length === 0}
-            title={!points || points.length === 0 ? "Charge d'abord la courbe ci-dessus" : "Envoie l'image du graphique à l'IA (analyse visuelle)"}
+            title={
+              !points || points.length === 0
+                ? "Charge d'abord la courbe ci-dessus"
+                : "Envoie l'image du graphique à l'IA (analyse visuelle)"
+            }
           >
             {enCours ? "Réflexion..." : "Envoyer avec le graphique"}
           </button>

@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
-import { AXES_DISPONIBLES, AXES_GRANDEURS, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe, trouverCroisements } from "../nomogrammeAxes.js";
+import {
+  AXES_DISPONIBLES,
+  AXES_GRANDEURS,
+  CANAUX_RETRAIT,
+  TYPES_TRACE,
+  UNITES_TEMPS,
+  construireParamAxe,
+  trouverCroisements,
+} from "../nomogrammeAxes.js";
 import BoutonsExport from "./BoutonsExport.jsx";
 
 // Nomogramme 3D — composition libre d'axes entre HR/T et retrait, y compris
@@ -21,8 +29,10 @@ const VUES_PREREGLEES = {
 };
 
 function projeter(nx, ny, nz, yaw, pitch, zoom, w, h) {
-  const cy = Math.cos(yaw), sy = Math.sin(yaw);
-  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const cy = Math.cos(yaw),
+    sy = Math.sin(yaw);
+  const cp = Math.cos(pitch),
+    sp = Math.sin(pitch);
   const x1 = nx * cy + nz * sy;
   const z1 = -nx * sy + nz * cy;
   const y1 = ny * cp - z1 * sp;
@@ -34,12 +44,20 @@ function projeter(nx, ny, nz, yaw, pitch, zoom, w, h) {
 
 const SOMMETS_CUBE = [];
 for (let cx = -1; cx <= 1; cx += 2)
-  for (let cy = -1; cy <= 1; cy += 2)
-    for (let cz = -1; cz <= 1; cz += 2)
-      SOMMETS_CUBE.push([cx, cy, cz]);
+  for (let cy = -1; cy <= 1; cy += 2) for (let cz = -1; cz <= 1; cz += 2) SOMMETS_CUBE.push([cx, cy, cz]);
 const ARETES_CUBE = [
-  [0, 1], [0, 2], [0, 4], [3, 1], [3, 2], [3, 7],
-  [5, 1], [5, 4], [5, 7], [6, 2], [6, 4], [6, 7],
+  [0, 1],
+  [0, 2],
+  [0, 4],
+  [3, 1],
+  [3, 2],
+  [3, 7],
+  [5, 1],
+  [5, 4],
+  [5, 7],
+  [6, 2],
+  [6, 4],
+  [6, 7],
 ];
 
 const ROLES = ["x", "y", "z"];
@@ -134,11 +152,16 @@ export default function Nomogramme3D({ mur, couche }) {
 
   const bornes = useMemo(() => {
     if (points.length === 0) return null;
-    const xs = points.map((p) => p.x), ys = points.map((p) => p.y), zs = points.map((p) => p.z);
+    const xs = points.map((p) => p.x),
+      ys = points.map((p) => p.y),
+      zs = points.map((p) => p.z);
     return {
-      xMin: Math.min(...xs), xMax: Math.max(...xs),
-      yMin: Math.min(...ys), yMax: Math.max(...ys),
-      zMin: Math.min(...zs), zMax: Math.max(...zs),
+      xMin: Math.min(...xs),
+      xMax: Math.max(...xs),
+      yMin: Math.min(...ys),
+      yMax: Math.max(...ys),
+      zMin: Math.min(...zs),
+      zMax: Math.max(...zs),
     };
   }, [points]);
 
@@ -160,7 +183,8 @@ export default function Nomogramme3D({ mur, couche }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !bornes) return;
-    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const w = canvas.clientWidth,
+      h = canvas.clientHeight;
     canvas.width = w * devicePixelRatio;
     canvas.height = h * devicePixelRatio;
     const ctx = canvas.getContext("2d");
@@ -183,7 +207,9 @@ export default function Nomogramme3D({ mur, couche }) {
     ctx.fillStyle = "#a0a6b5";
     ctx.font = "11px system-ui";
     const origine = proj(-1, -1, -1);
-    const boutX = proj(1, -1, -1), boutY = proj(-1, 1, -1), boutZ = proj(-1, -1, 1);
+    const boutX = proj(1, -1, -1),
+      boutY = proj(-1, 1, -1),
+      boutZ = proj(-1, -1, 1);
     ctx.fillText(`${libelleAxe("x")}: ${bornes.xMin.toFixed(1)} → ${bornes.xMax.toFixed(1)}`, boutX.x, boutX.y);
     ctx.fillText(`${libelleAxe("y")}: ${bornes.yMin.toFixed(1)} → ${bornes.yMax.toFixed(1)}`, boutY.x, boutY.y);
     ctx.fillText(`${libelleAxe("z")}: ${bornes.zMin.toFixed(1)} → ${bornes.zMax.toFixed(1)}`, boutZ.x, boutZ.y);
@@ -279,9 +305,13 @@ export default function Nomogramme3D({ mur, couche }) {
     if (points.length === 0 || !bornes) return;
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const w = canvas.clientWidth, h = canvas.clientHeight;
-    let plusProche = null, distanceMin = Infinity, meilleurProj = null;
+    const mx = e.clientX - rect.left,
+      my = e.clientY - rect.top;
+    const w = canvas.clientWidth,
+      h = canvas.clientHeight;
+    let plusProche = null,
+      distanceMin = Infinity,
+      meilleurProj = null;
     for (const p of points) {
       const [nx, ny, nz] = normaliser(p, bornes);
       const pp = projeter(nx, ny, nz, yaw, pitch, zoom, w, h);
@@ -313,19 +343,31 @@ export default function Nomogramme3D({ mur, couche }) {
         <div className="champ">
           <label>Axe X</label>
           <select value={axeX} onChange={(e) => setAxeX(e.target.value)}>
-            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
+            {AXES_DISPONIBLES.map((a) => (
+              <option key={a.valeur} value={a.valeur}>
+                {a.label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="champ">
           <label>Axe Y</label>
           <select value={axeY} onChange={(e) => setAxeY(e.target.value)}>
-            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
+            {AXES_DISPONIBLES.map((a) => (
+              <option key={a.valeur} value={a.valeur}>
+                {a.label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="champ">
           <label>Axe Z</label>
           <select value={axeZ} onChange={(e) => setAxeZ(e.target.value)}>
-            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
+            {AXES_DISPONIBLES.map((a) => (
+              <option key={a.valeur} value={a.valeur}>
+                {a.label}
+              </option>
+            ))}
           </select>
         </div>
         {necessiteUniteTemps && (
@@ -344,30 +386,64 @@ export default function Nomogramme3D({ mur, couche }) {
           <div className="champ">
             <label>Canal retrait</label>
             <select value={canal} onChange={(e) => setCanal(e.target.value)}>
-              {CANAUX_RETRAIT.map((c) => <option key={c} value={c}>{c}</option>)}
+              {CANAUX_RETRAIT.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
             </select>
           </div>
         )}
         <div className="champ">
           <label>Type de tracé</label>
           <select value={typeTrace} onChange={(e) => setTypeTrace(e.target.value)}>
-            {TYPES_TRACE.map((t) => <option key={t.valeur} value={t.valeur}>{t.label}</option>)}
+            {TYPES_TRACE.map((t) => (
+              <option key={t.valeur} value={t.valeur}>
+                {t.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>
 
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.5rem" }}>
-        <button type="button" onClick={() => appliquerVue("face")}>Face</button>
-        <button type="button" onClick={() => appliquerVue("dessus")}>Dessus</button>
-        <button type="button" onClick={() => appliquerVue("profil")}>Profil</button>
-        <button type="button" onClick={() => appliquerVue("isometrique")}>Isométrique</button>
+        <button type="button" onClick={() => appliquerVue("face")}>
+          Face
+        </button>
+        <button type="button" onClick={() => appliquerVue("dessus")}>
+          Dessus
+        </button>
+        <button type="button" onClick={() => appliquerVue("profil")}>
+          Profil
+        </button>
+        <button type="button" onClick={() => appliquerVue("isometrique")}>
+          Isométrique
+        </button>
         <button type="button" onClick={() => setRotationAuto((v) => !v)}>
           {rotationAuto ? "⏸ Arrêter la rotation" : "▶ Rotation automatique"}
         </button>
-        <button type="button" onClick={() => setZoom(1)}>Réinitialiser le zoom</button>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", color: "#a0a6b5" }}>
+        <button type="button" onClick={() => setZoom(1)}>
+          Réinitialiser le zoom
+        </button>
+        <div
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            fontSize: "0.78rem",
+            color: "#a0a6b5",
+          }}
+        >
           <span>ancien</span>
-          <div style={{ width: "60px", height: "8px", borderRadius: "4px", background: "linear-gradient(90deg, hsl(220,80%,60%), hsl(0,80%,60%))" }} />
+          <div
+            style={{
+              width: "60px",
+              height: "8px",
+              borderRadius: "4px",
+              background: "linear-gradient(90deg, hsl(220,80%,60%), hsl(0,80%,60%))",
+            }}
+          />
           <span>récent</span>
         </div>
       </div>
@@ -400,7 +476,9 @@ export default function Nomogramme3D({ mur, couche }) {
       )}
       {erreur && <p className="erreur">{erreur}</p>}
       {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
-      {!enCours && points.length === 0 && !erreur && <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>}
+      {!enCours && points.length === 0 && !erreur && (
+        <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>
+      )}
       <canvas
         ref={canvasRef}
         style={{ width: "100%", height: "480px", cursor: glisseRef.current ? "grabbing" : "grab" }}

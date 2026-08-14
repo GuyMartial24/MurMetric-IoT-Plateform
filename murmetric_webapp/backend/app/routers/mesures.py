@@ -1,6 +1,7 @@
 """Requêtage InfluxDB générique pour les 3 types de mesures du projet
 (HR/T capteurs BLE, retrait DeweSoft, teneur en eau) — alimente à la fois
 l'abaque (vue d'ensemble) et l'agrégation utilisée par l'assistant IA."""
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -37,7 +38,9 @@ _CHAMPS_PAR_TYPE = {
 _FENETRE_DEFAUT_JOURS = {"hr_t": 365, "retrait": 30, "teneur_eau": 365}
 
 
-def _valider_bornes(debut: str | None, fin: str | None, type_mesure: TypeMesure = "hr_t") -> tuple[str, str]:
+def _valider_bornes(
+    debut: str | None, fin: str | None, type_mesure: TypeMesure = "hr_t"
+) -> tuple[str, str]:
     """Retourne (debut, fin) en RFC3339 complet (avec fuseau) — les champs
     <input type="date"> du frontend (ex. "2026-06-01") produisent un
     datetime NAÏF via fromisoformat() (pas de composante horaire/fuseau) :
@@ -47,11 +50,17 @@ def _valider_bornes(debut: str | None, fin: str | None, type_mesure: TypeMesure 
     compilation Flux en cascade dès qu'une période était choisie via les
     champs Début/Fin). Toute date/heure naïve est donc explicitement
     fixée en UTC avant sérialisation."""
-    fin_dt = datetime.fromisoformat(fin.replace("Z", "+00:00")) if fin else datetime.now(timezone.utc)
+    fin_dt = (
+        datetime.fromisoformat(fin.replace("Z", "+00:00")) if fin else datetime.now(timezone.utc)
+    )
     if fin_dt.tzinfo is None:
         fin_dt = fin_dt.replace(tzinfo=timezone.utc)
     jours = _FENETRE_DEFAUT_JOURS[type_mesure]
-    debut_dt = datetime.fromisoformat(debut.replace("Z", "+00:00")) if debut else fin_dt - timedelta(days=jours)
+    debut_dt = (
+        datetime.fromisoformat(debut.replace("Z", "+00:00"))
+        if debut
+        else fin_dt - timedelta(days=jours)
+    )
     if debut_dt.tzinfo is None:
         debut_dt = debut_dt.replace(tzinfo=timezone.utc)
     return debut_dt.isoformat(), fin_dt.isoformat()
@@ -67,22 +76,33 @@ def construire_requete_flux(
     fin: str,
     fenetre: str | None,
 ) -> str:
+    """Construit la requête Flux de courbe pour une sélection mur/couche/position/canal."""
     mesure = _MESURE_PAR_TYPE[type_mesure]
     champs = _CHAMPS_PAR_TYPE[type_mesure]
 
     filtres = [f'r._measurement == "{mesure}"']
     filtres.append("(" + " or ".join(f'r._field == "{c}"' for c in champs) + ")")
     if mur:
-        filtres.append(f'r.nom_mur == "{flux_escape(mur)}"' if type_mesure != "teneur_eau" else f'r.mur == "{flux_escape(mur)}"')
+        filtres.append(
+            f'r.nom_mur == "{flux_escape(mur)}"'
+            if type_mesure != "teneur_eau"
+            else f'r.mur == "{flux_escape(mur)}"'
+        )
     if couche:
-        filtres.append(f'r.nom_couche == "{flux_escape(couche)}"' if type_mesure != "teneur_eau" else f'r.couche == "{flux_escape(couche)}"')
+        filtres.append(
+            f'r.nom_couche == "{flux_escape(couche)}"'
+            if type_mesure != "teneur_eau"
+            else f'r.couche == "{flux_escape(couche)}"'
+        )
     if position and type_mesure in ("hr_t", "retrait"):
         filtres.append(f'r.position == "{flux_escape(position)}"')
     if canal_nom and type_mesure == "retrait":
         filtres.append(f'r.canal_nom == "{flux_escape(canal_nom)}"')
 
     clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
-    agregation = f'\n  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)' if fenetre else ""
+    agregation = (
+        f"\n  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)" if fenetre else ""
+    )
 
     # group(columns: ["_field"]) : sans position/canal_nom précisé, une
     # sélection mur+couche peut recouper plusieurs capteurs physiques
@@ -112,6 +132,8 @@ def construire_requete_flux(
 
 
 def executer_requete(flux: str) -> list[dict]:
+    """Exécute une requête Flux et aplatit les résultats en liste de dicts (une erreur
+    InfluxDB devient une 502, jamais une 500 brute)."""
     try:
         tables = query_api().query(flux, org=config.INFLUX_ORG)
     except Exception as exc:  # connexion InfluxDB indisponible, requête invalide...
@@ -126,7 +148,16 @@ def executer_requete(flux: str) -> list[dict]:
                 "field": record.get_field(),
                 "value": record.get_value(),
             }
-            for tag in ("nom_mur", "mur", "nom_couche", "couche", "position", "canal_nom", "utilisateur_nom", "commentaire"):
+            for tag in (
+                "nom_mur",
+                "mur",
+                "nom_couche",
+                "couche",
+                "position",
+                "canal_nom",
+                "utilisateur_nom",
+                "commentaire",
+            ):
                 if tag in valeurs:
                     point[tag] = valeurs[tag]
             resultats.append(point)
@@ -134,16 +165,30 @@ def executer_requete(flux: str) -> list[dict]:
 
 
 _AGREGATS_NATIFS = (
-    ("minimum", "min"), ("maximum", "max"), ("moyenne", "mean"), ("mediane", "median"), ("nombre_points", "count"),
+    ("minimum", "min"),
+    ("maximum", "max"),
+    ("moyenne", "mean"),
+    ("mediane", "median"),
+    ("nombre_points", "count"),
 )
 
 
-def _construire_filtres_communs(type_mesure: TypeMesure, mur, couche, position, canal_nom) -> list[str]:
+def _construire_filtres_communs(
+    type_mesure: TypeMesure, mur, couche, position, canal_nom
+) -> list[str]:
     filtres = []
     if mur:
-        filtres.append(f'r.nom_mur == "{flux_escape(mur)}"' if type_mesure != "teneur_eau" else f'r.mur == "{flux_escape(mur)}"')
+        filtres.append(
+            f'r.nom_mur == "{flux_escape(mur)}"'
+            if type_mesure != "teneur_eau"
+            else f'r.mur == "{flux_escape(mur)}"'
+        )
     if couche:
-        filtres.append(f'r.nom_couche == "{flux_escape(couche)}"' if type_mesure != "teneur_eau" else f'r.couche == "{flux_escape(couche)}"')
+        filtres.append(
+            f'r.nom_couche == "{flux_escape(couche)}"'
+            if type_mesure != "teneur_eau"
+            else f'r.couche == "{flux_escape(couche)}"'
+        )
     if position and type_mesure in ("hr_t", "retrait"):
         filtres.append(f'r.position == "{flux_escape(position)}"')
     if canal_nom and type_mesure == "retrait":
@@ -151,7 +196,9 @@ def _construire_filtres_communs(type_mesure: TypeMesure, mur, couche, position, 
     return filtres
 
 
-def _valeur_agregat(mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str, nom_fonction: str):
+def _valeur_agregat(
+    mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str, nom_fonction: str
+):
     """Un agrégat natif InfluxDB (min/max/mean/median/count) — nettement
     plus rapide qu'un reduce() générique passé par la VM Flux point par
     point, testé en conditions réelles le 12/08/2026 sur mesures_dewesoft/
@@ -185,7 +232,9 @@ def _valeur_agregat(mesure: str, champ: str, filtres_communs: list[str], debut: 
     return None
 
 
-def _tendance(mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str) -> dict | None:
+def _tendance(
+    mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str
+) -> dict | None:
     """Moyenne de la première moitié vs deuxième moitié de la période —
     indicateur de tendance simple (pas une vraie régression linéaire,
     volontairement : reste une comparaison de 2 agrégats natifs, pas un
@@ -200,7 +249,9 @@ def _tendance(mesure: str, champ: str, filtres_communs: list[str], debut: str, f
     return {"premiere_moitie": premiere, "deuxieme_moitie": seconde, "delta": seconde - premiere}
 
 
-def _amplitude_jour_nuit(mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str) -> dict | None:
+def _amplitude_jour_nuit(
+    mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str
+) -> dict | None:
     """Moyenne "jour" (8h-19h) vs "nuit" (20h-7h) — approximé en heures
     UTC (pas de conversion de fuseau horaire : décalage de 1-2h selon
     l'heure d'été/hiver par rapport à l'heure locale d'Amiens, acceptable
@@ -211,13 +262,17 @@ def _amplitude_jour_nuit(mesure: str, champ: str, filtres_communs: list[str], de
     nulle part plutôt que de compter une heure sur les deux périodes.
     "Nuit" = union de deux plages : hourSelection() ne boucle pas
     nativement à travers minuit."""
-    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(
-        [f'r._measurement == "{mesure}"', f'r._field == "{champ}"', *filtres_communs]
-    ) + ")"
+    clause_filtre = (
+        "\n  |> filter(fn: (r) => "
+        + ")\n  |> filter(fn: (r) => ".join(
+            [f'r._measurement == "{mesure}"', f'r._field == "{champ}"', *filtres_communs]
+        )
+        + ")"
+    )
     # group() avant chaque mean() : même correctif que _valeur_agregat
     # (fusionner toutes les tables — un capteur par "position"/adresse_mac
     # différente — avant l'agrégat, pas seulement lire la première).
-    flux = f'''
+    flux = f"""
 jour = from(bucket: "{config.INFLUX_BUCKET}")
   |> range(start: {debut}, stop: {fin})
   {clause_filtre}
@@ -242,7 +297,7 @@ nuit = union(tables: [nuit1, nuit2])
   |> set(key: "periode", value: "nuit")
 
 union(tables: [jour, nuit])
-'''
+"""
     valeurs: dict = {}
     tables = query_api().query(flux, org=config.INFLUX_ORG)
     for table in tables:
@@ -250,7 +305,11 @@ union(tables: [jour, nuit])
             valeurs[record.values.get("periode")] = record.get_value()
     if "jour" not in valeurs or "nuit" not in valeurs:
         return None
-    return {"moyenne_jour": valeurs["jour"], "moyenne_nuit": valeurs["nuit"], "amplitude": abs(valeurs["jour"] - valeurs["nuit"])}
+    return {
+        "moyenne_jour": valeurs["jour"],
+        "moyenne_nuit": valeurs["nuit"],
+        "amplitude": abs(valeurs["jour"] - valeurs["nuit"]),
+    }
 
 
 def calculer_statistiques(
@@ -289,14 +348,25 @@ def calculer_statistiques(
     try:
         with ThreadPoolExecutor(max_workers=8 * len(champs)) as executor:
             futurs_agregats = {
-                (champ, nom): executor.submit(_valeur_agregat, mesure, champ, filtres_communs, debut, fin, fn)
+                (champ, nom): executor.submit(
+                    _valeur_agregat, mesure, champ, filtres_communs, debut, fin, fn
+                )
                 for champ in champs
                 for nom, fn in _AGREGATS_NATIFS
             }
-            futurs_tendance = {champ: executor.submit(_tendance, mesure, champ, filtres_communs, debut, fin) for champ in champs}
+            futurs_tendance = {
+                champ: executor.submit(_tendance, mesure, champ, filtres_communs, debut, fin)
+                for champ in champs
+            }
             futurs_amplitude = (
-                {champ: executor.submit(_amplitude_jour_nuit, mesure, champ, filtres_communs, debut, fin) for champ in champs}
-                if type_mesure == "hr_t" else {}
+                {
+                    champ: executor.submit(
+                        _amplitude_jour_nuit, mesure, champ, filtres_communs, debut, fin
+                    )
+                    for champ in champs
+                }
+                if type_mesure == "hr_t"
+                else {}
             )
 
             for (champ, nom), futur in futurs_agregats.items():
@@ -334,7 +404,11 @@ def comparer_periodes(
         m1 = periode1["champs"][champ].get("moyenne")
         m2 = periode2["champs"][champ].get("moyenne")
         deltas_moyenne[champ] = (m2 - m1) if (m1 is not None and m2 is not None) else None
-    return {"periode_1": periode1, "periode_2": periode2, "delta_moyenne_periode2_moins_periode1": deltas_moyenne}
+    return {
+        "periode_1": periode1,
+        "periode_2": periode2,
+        "delta_moyenne_periode2_moins_periode1": deltas_moyenne,
+    }
 
 
 def ecart_brut_filtre(canal_nom: str | None, debut: str, fin: str) -> dict:
@@ -348,7 +422,7 @@ def ecart_brut_filtre(canal_nom: str | None, debut: str, fin: str) -> dict:
     réseau vers le process Python."""
     if not canal_nom:
         return {"erreur": "canal_nom requis (retrait uniquement, un seul canal à la fois)."}
-    flux = f'''
+    flux = f"""
 import "math"
 
 from(bucket: "{config.INFLUX_BUCKET}")
@@ -359,14 +433,21 @@ from(bucket: "{config.INFLUX_BUCKET}")
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> map(fn: (r) => ({{_time: r._time, _value: math.abs(x: r.valeur - r.valeur_filtree)}}))
   |> mean()
-'''
+"""
     try:
         tables = query_api().query(flux, org=config.INFLUX_ORG)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Requête écart brut/filtré échouée : {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Requête écart brut/filtré échouée : {exc}"
+        ) from exc
     for table in tables:
         for record in table.records:
-            return {"canal_nom": canal_nom, "ecart_moyen_absolu": record.get_value(), "debut": debut, "fin": fin}
+            return {
+                "canal_nom": canal_nom,
+                "ecart_moyen_absolu": record.get_value(),
+                "debut": debut,
+                "fin": fin,
+            }
     return {"canal_nom": canal_nom, "ecart_moyen_absolu": None, "debut": debut, "fin": fin}
 
 
@@ -419,7 +500,9 @@ def valeurs_tags(type: TypeMesure = Query(...)) -> dict:
     mesure = _MESURE_PAR_TYPE[type]
     champ_principal = _CHAMPS_PAR_TYPE[type][0]
     tags = _TAGS_PAR_TYPE[type]
-    colonnes_flux = "[" + ", ".join(f'"{t}"' for t in tags) + "]"  # Flux veut des guillemets doubles, pas le repr() Python
+    colonnes_flux = (
+        "[" + ", ".join(f'"{t}"' for t in tags) + "]"
+    )  # Flux veut des guillemets doubles, pas le repr() Python
 
     flux = (
         f'from(bucket: "{config.INFLUX_BUCKET}")\n'
@@ -454,6 +537,7 @@ def statistiques(
     debut: str | None = None,
     fin: str | None = None,
 ):
+    """Statistiques agrégées (min/max/moyenne/médiane/tendance...) pour une sélection."""
     debut_iso, fin_iso = _valider_bornes(debut, fin, type)
     return calculer_statistiques(type, mur, couche, position, canal_nom, debut_iso, fin_iso)
 
@@ -465,27 +549,52 @@ def lister_mesures(
     couche: str | None = None,
     position: str | None = None,
     canal_nom: str | None = None,
-    debut: str | None = Query(None, description="ISO 8601, défaut : 1 an avant fin (30 jours si type=retrait)"),
+    debut: str | None = Query(
+        None, description="ISO 8601, défaut : 1 an avant fin (30 jours si type=retrait)"
+    ),
     fin: str | None = Query(None, description="ISO 8601, défaut : maintenant"),
-    fenetre: str | None = Query(None, description="Fenêtre d'agrégation Flux, ex. '1h', '1d' — absent = points bruts"),
+    fenetre: str | None = Query(
+        None, description="Fenêtre d'agrégation Flux, ex. '1h', '1d' — absent = points bruts"
+    ),
 ):
+    """Points de courbe (bruts ou agrégés) pour une sélection mur/couche/position/canal."""
     debut_iso, fin_iso = _valider_bornes(debut, fin, type)
-    flux = construire_requete_flux(type, mur, couche, position, canal_nom, debut_iso, fin_iso, fenetre)
+    flux = construire_requete_flux(
+        type, mur, couche, position, canal_nom, debut_iso, fin_iso, fenetre
+    )
     return {"requete_flux": flux, "points": executer_requete(flux)}
 
 
 @router.get("/croisement")
 def croisement(
-    type: TypeMesure = Query(..., description="hr_t | retrait — champs de la même mesure uniquement (ex. temperature/humidite/point_de_rosee)"),
+    type: TypeMesure = Query(
+        ...,
+        description=(
+            "hr_t | retrait — champs de la même mesure uniquement "
+            "(ex. temperature/humidite/point_de_rosee)"
+        ),
+    ),
     mur: str | None = None,
     couche: str | None = None,
     position: str | None = None,
     champ_x: str = Query(...),
     champ_y: str = Query(...),
-    champ_z: str | None = Query(None, description="Optionnel — 3e grandeur pour un nomogramme 3D (ex. hr_t : temperature/humidite/point_de_rosee)"),
+    champ_z: str | None = Query(
+        None,
+        description=(
+            "Optionnel — 3e grandeur pour un nomogramme 3D "
+            "(ex. hr_t : temperature/humidite/point_de_rosee)"
+        ),
+    ),
     debut: str | None = None,
     fin: str | None = None,
-    fenetre: str | None = Query("10m", description="Fenêtre d'agrégation avant croisement — évite des milliers de points bruts non alignés dans le temps"),
+    fenetre: str | None = Query(
+        "10m",
+        description=(
+            "Fenêtre d'agrégation avant croisement — évite des milliers de points "
+            "bruts non alignés dans le temps"
+        ),
+    ),
 ) -> dict:
     """Points appariés (x, y[, z]) au même horodatage — nomogramme
     (section 32 : portage scopé au croisement de champs d'une même mesure,
@@ -494,7 +603,10 @@ def croisement(
     plus proche dans le temps" cf. section 16, n'est pas dans ce périmètre)."""
     champs_demandes = [champ_x, champ_y] + ([champ_z] if champ_z else [])
     if type == "teneur_eau" or any(c not in _CHAMPS_PAR_TYPE[type] for c in champs_demandes):
-        raise HTTPException(status_code=400, detail="champ_x/champ_y/champ_z doivent appartenir à la même mesure (hr_t ou retrait).")
+        raise HTTPException(
+            status_code=400,
+            detail="champ_x/champ_y/champ_z doivent appartenir à la même mesure (hr_t ou retrait).",
+        )
 
     debut_iso, fin_iso = _valider_bornes(debut, fin, type)
     mesure = _MESURE_PAR_TYPE[type]
@@ -535,7 +647,11 @@ def croisement(
     for table in tables:
         for record in table.records:
             valeurs = record.values
-            point = {"time": record.get_time().isoformat(), "x": valeurs.get(champ_x), "y": valeurs.get(champ_y)}
+            point = {
+                "time": record.get_time().isoformat(),
+                "x": valeurs.get(champ_x),
+                "y": valeurs.get(champ_y),
+            }
             if champ_z:
                 point["z"] = valeurs.get(champ_z)
             points.append(point)
@@ -546,14 +662,17 @@ _MESURES_LIBRES = {"hr_t": MESURE_CAPTEURS, "retrait": MESURE_DEWESOFT}
 
 
 def _parser_axe(spec: str) -> tuple[str, str, str | None]:
-    """"hr_t:temperature" ou "retrait:valeur_filtree:HA1" -> (mesure, champ, canal)."""
+    """ "hr_t:temperature" ou "retrait:valeur_filtree:HA1" -> (mesure, champ, canal)."""
     morceaux = spec.split(":")
     if len(morceaux) == 2:
         mesure, champ, canal = morceaux[0], morceaux[1], None
     elif len(morceaux) == 3:
         mesure, champ, canal = morceaux
     else:
-        raise HTTPException(status_code=400, detail=f"Axe invalide : {spec!r} (attendu 'mesure:champ' ou 'mesure:champ:canal')")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Axe invalide : {spec!r} (attendu 'mesure:champ' ou 'mesure:champ:canal')",
+        )
     if mesure not in _MESURES_LIBRES or champ not in _CHAMPS_PAR_TYPE[mesure]:
         raise HTTPException(status_code=400, detail=f"Axe invalide : {spec!r}")
     if mesure == "retrait" and not canal:
@@ -561,7 +680,16 @@ def _parser_axe(spec: str) -> tuple[str, str, str | None]:
     return mesure, champ, canal
 
 
-def _requeter_axe(mesure: str, champ: str, canal: str | None, mur: str, couche: str | None, debut: str, fin: str, fenetre: str) -> dict[str, float]:
+def _requeter_axe(
+    mesure: str,
+    champ: str,
+    canal: str | None,
+    mur: str,
+    couche: str | None,
+    debut: str,
+    fin: str,
+    fenetre: str,
+) -> dict[str, float]:
     filtres = [f'r._measurement == "{_MESURES_LIBRES[mesure]}"', f'r._field == "{champ}"']
     if mur:
         filtres.append(f'r.nom_mur == "{flux_escape(mur)}"')
@@ -598,11 +726,19 @@ def croisement_libre(
     mur: str = Query(...),
     couche: str | None = None,
     axe_x: str = Query(..., description="'hr_t:champ' ou 'retrait:champ:canal'"),
-    axe_y: str | None = Query(None, description="Optionnel — un axe peut être 'temps', calculé côté frontend, pas ici"),
+    axe_y: str | None = Query(
+        None, description="Optionnel — un axe peut être 'temps', calculé côté frontend, pas ici"
+    ),
     axe_z: str | None = Query(None),
     debut: str | None = None,
     fin: str | None = None,
-    fenetre: str = Query("1h", description="Fenêtre d'agrégation commune — aligne les points des deux mesures sur la même grille temporelle"),
+    fenetre: str = Query(
+        "1h",
+        description=(
+            "Fenêtre d'agrégation commune — aligne les points des deux mesures "
+            "sur la même grille temporelle"
+        ),
+    ),
 ) -> dict:
     """Croisement libre entre grandeurs de mesures DIFFÉRENTES (HR/T et
     retrait), demandé explicitement le 13/08/2026 — contrairement à
@@ -621,13 +757,17 @@ def croisement_libre(
     # plafonnée à 90 jours (cf. section 32) — appliquée à TOUS les axes pour
     # qu'ils restent alignés sur la même période (comparer deux grandeurs
     # sur des fenêtres différentes n'aurait de toute façon aucun sens).
-    type_borne: TypeMesure = "retrait" if any(p[0] == "retrait" for p in parses.values()) else "hr_t"
+    type_borne: TypeMesure = (
+        "retrait" if any(p[0] == "retrait" for p in parses.values()) else "hr_t"
+    )
     debut_iso, fin_iso = _valider_bornes(debut, fin, type_borne)
 
     try:
         with ThreadPoolExecutor(max_workers=3) as executor:
             futurs = {
-                nom: executor.submit(_requeter_axe, mesure, champ, canal, mur, couche, debut_iso, fin_iso, fenetre)
+                nom: executor.submit(
+                    _requeter_axe, mesure, champ, canal, mur, couche, debut_iso, fin_iso, fenetre
+                )
                 for nom, (mesure, champ, canal) in parses.items()
             }
             series = {nom: futur.result() for nom, futur in futurs.items()}
@@ -660,9 +800,19 @@ def hampel(
     canal_nom: str = Query(...),
     debut: str = Query(...),
     fin: str = Query(...),
-    fenetre: int = Query(10, ge=1, le=200, description="Demi-largeur de la fenêtre glissante, en échantillons"),
-    seuil_k: float = Query(8.0, gt=0, description="Multiplicateur du MAD au-delà duquel un point est aberrant"),
-    borne_min: float | None = Query(None, description="Borne physique basse optionnelle — rattrape les rafales trop longues pour le Hampel seul"),
+    fenetre: int = Query(
+        10, ge=1, le=200, description="Demi-largeur de la fenêtre glissante, en échantillons"
+    ),
+    seuil_k: float = Query(
+        8.0, gt=0, description="Multiplicateur du MAD au-delà duquel un point est aberrant"
+    ),
+    borne_min: float | None = Query(
+        None,
+        description=(
+            "Borne physique basse optionnelle — rattrape les rafales trop "
+            "longues pour le Hampel seul"
+        ),
+    ),
     borne_max: float | None = Query(None, description="Borne physique haute optionnelle"),
 ) -> dict:
     """Filtre de Hampel recalculé à la volée sur les valeurs BRUTES (jamais
@@ -682,7 +832,13 @@ def hampel(
     debut_dt = datetime.fromisoformat(debut.replace("Z", "+00:00"))
     fin_dt = datetime.fromisoformat(fin.replace("Z", "+00:00"))
     if fin_dt - debut_dt > _HAMPEL_DUREE_MAX:
-        raise HTTPException(status_code=400, detail=f"Période trop longue pour un recalcul point par point (max {_HAMPEL_DUREE_MAX}).")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Période trop longue pour un recalcul point par point "
+                f"(max {_HAMPEL_DUREE_MAX})."
+            ),
+        )
 
     flux = (
         f'from(bucket: "{config.INFLUX_BUCKET}")\n'
@@ -705,7 +861,13 @@ def hampel(
             valeurs.append(record.get_value())
 
     if not valeurs:
-        return {"points": [], "nb_points": 0, "nb_aberrants": 0, "fenetre": fenetre, "seuil_k": seuil_k}
+        return {
+            "points": [],
+            "nb_points": 0,
+            "nb_aberrants": 0,
+            "fenetre": fenetre,
+            "seuil_k": seuil_k,
+        }
 
     filtrees, aberrants = filtrer_hampel(valeurs, fenetre, seuil_k)
     if borne_min is not None and borne_max is not None:

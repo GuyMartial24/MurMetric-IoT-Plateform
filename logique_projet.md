@@ -3779,6 +3779,63 @@ correctif.
 - Mot de passe SSH fourni en session (identique pour les deux comptes),
   jamais stocké.
 
+### Mise en conformité PEP 8 + docstrings, tout le code Python + équivalent JS (14/08/2026, même jour)
+
+**Origine.** Demande explicite de l'utilisateur : "tous les codes doivent
+être bien commentés et conformes PEP 8". Portée précisée par échange :
+tout le code Python existant (pas seulement les nouveaux fichiers), et un
+équivalent côté JS/React (commentaires utiles + formatage cohérent).
+
+**Outillage retenu** :
+- Python : `black` (formatage automatique) + `ruff` (règles `E`/`W`
+  pycodestyle, `F` pyflakes, `I` tri des imports, `D100`-`D103` docstrings
+  manquantes). Limite de ligne fixée à **100 caractères**, pas les 79
+  stricts de PEP 8 — le volume de commentaires en français déjà présent
+  dans ce dépôt aurait rendu un retour à la ligne à 79 caractères illisible
+  (79 reste une déviation possible si demandé explicitement, cf. PEP 8
+  lui-même qui autorise des dérogations documentées).
+- JS/React : `prettier` (nouveau, ajouté à `devDependencies` avec un
+  `.prettierrc.json` — largeur 120, cohérent avec le choix de 100 pour
+  Python). `oxlint` était déjà en place comme linter (`npm run lint`) et
+  passait déjà à 0 erreur, réutilisé tel quel plutôt que d'ajouter ESLint
+  en double.
+
+**Réalisé** :
+- Les 26 fichiers Python du dépôt (hors `DWDataReader_v5_0_8/`, SDK vendor
+  tiers non touché) reformatés avec `black`, puis 0 erreur restante sur
+  `ruff check --select E,W,F,I` (quelques correctifs manuels : lignes trop
+  longues dans des docstrings/f-strings/descriptions FastAPI, une variable
+  ambiguë `l` renommée `ligne` dans `backfill_hr_t.py`).
+- ~70 fonctions/classes/modules publics sans docstring identifiés via
+  `ruff --select D100,D101,D102,D103` et complétés — une ligne de résumé
+  concise par élément (pas de pavé de prose), cohérent avec le style de
+  commentaires déjà établi dans ce dépôt (expliquer le "pourquoi" quand il
+  n'est pas évident, pas reformuler ce que le code dit déjà). Les fonctions
+  privées (préfixe `_`) et les scripts autonomes ne sont pas concernés par
+  cette règle (convention PEP 257 standard).
+- Côté frontend : 17 fichiers reformatés avec Prettier (0 changement de
+  logique). Ajout de quelques commentaires ciblés là où un fichier entier
+  n'en avait aucun et contenait une logique non triviale (`App.jsx` :
+  garde de route ; `Monitoring.jsx` : mise à l'échelle SVG des graphiques,
+  commentaire d'en-tête de page ; `Parametres.jsx` : pourquoi un nouveau
+  jeton JWT est réappliqué après modification du compte, commentaire
+  d'en-tête). Les fichiers déjà bien commentés (nomogramme, sélecteur de
+  mesure, export graphique) laissés tels quels — pas de sur-commentaire.
+- Aucun changement de comportement : uniquement formatage + docstrings/
+  commentaires. Vérifié par syntax-check (`ast.parse`) sur les 26 fichiers
+  Python, build frontend (`npm run build`) + lint (`oxlint`) + vérification
+  de formatage (`prettier --check`), tous passants avant déploiement.
+
+**Déployé et vérifié réel** (avec confirmation explicite de l'utilisateur,
+séparée pour le webapp et pour les process de prod PC Amiens/Pi vu que ces
+derniers n'avaient aucune raison fonctionnelle d'être touchés) :
+- Webapp (VPS) : rebuild image + rollout, `/api/health` → 200 OK,
+  `/api/monitoring/etat` répond normalement après redéploiement.
+- PC Amiens (`ingestion_dewesoft_dxd.py`) et Pi
+  (`ingestion_capteurs_bluetooth.py`) : buffer SQLite vérifié vide avant
+  chaque redémarrage, reprise confirmée (nouveau PID/heure de démarrage,
+  heartbeat reçu après redéploiement).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

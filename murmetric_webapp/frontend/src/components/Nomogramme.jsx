@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
-import { AXES_DISPONIBLES, CANAUX_RETRAIT, TYPES_TRACE, UNITES_TEMPS, construireParamAxe, libelleGrandeur, trouverCroisements } from "../nomogrammeAxes.js";
+import {
+  AXES_DISPONIBLES,
+  CANAUX_RETRAIT,
+  TYPES_TRACE,
+  UNITES_TEMPS,
+  construireParamAxe,
+  libelleGrandeur,
+  trouverCroisements,
+} from "../nomogrammeAxes.js";
 import BoutonsExport from "./BoutonsExport.jsx";
 
 // Portage scopé du "nomogramme" de l'ancien POC (data_reel_compile/
@@ -239,7 +247,8 @@ export default function Nomogramme({ mur, couche }) {
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const w = canvas.clientWidth,
+      h = canvas.clientHeight;
     const marge = 50;
     const { xMin, xMax, yMin, yMax } = bornes;
     const padX = (xMax - xMin) * 0.08 || 1;
@@ -265,13 +274,21 @@ export default function Nomogramme({ mur, couche }) {
         <div className="champ">
           <label>Axe X</label>
           <select value={axeX} onChange={(e) => setAxeX(e.target.value)}>
-            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
+            {AXES_DISPONIBLES.map((a) => (
+              <option key={a.valeur} value={a.valeur}>
+                {a.label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="champ">
           <label>Axe Y</label>
           <select value={axeY} onChange={(e) => setAxeY(e.target.value)}>
-            {AXES_DISPONIBLES.map((a) => <option key={a.valeur} value={a.valeur}>{a.label}</option>)}
+            {AXES_DISPONIBLES.map((a) => (
+              <option key={a.valeur} value={a.valeur}>
+                {a.label}
+              </option>
+            ))}
           </select>
         </div>
         {necessiteUniteTemps && (
@@ -290,24 +307,36 @@ export default function Nomogramme({ mur, couche }) {
           <div className="champ">
             <label>Canal retrait</label>
             <select value={canal} onChange={(e) => setCanal(e.target.value)}>
-              {CANAUX_RETRAIT.map((c) => <option key={c} value={c}>{c}</option>)}
+              {CANAUX_RETRAIT.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
             </select>
           </div>
         )}
         <div className="champ">
           <label>Type de tracé</label>
           <select value={typeTrace} onChange={(e) => setTypeTrace(e.target.value)}>
-            {TYPES_TRACE.map((t) => <option key={t.valeur} value={t.valeur}>{t.label}</option>)}
+            {TYPES_TRACE.map((t) => (
+              <option key={t.valeur} value={t.valeur}>
+                {t.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>
       <div className="selection-form" style={{ marginBottom: "0.75rem" }}>
         <div className="champ">
-          <label>Trouver {libelleAxe("y")} pour {libelleAxe("x")} =</label>
+          <label>
+            Trouver {libelleAxe("y")} pour {libelleAxe("x")} =
+          </label>
           <input value={valeurCibleX} onChange={(e) => setValeurCibleX(e.target.value)} placeholder="ex. 20" />
         </div>
         <div className="champ">
-          <label>Trouver {libelleAxe("x")} pour {libelleAxe("y")} =</label>
+          <label>
+            Trouver {libelleAxe("x")} pour {libelleAxe("y")} =
+          </label>
           <input value={valeurCibleY} onChange={(e) => setValeurCibleY(e.target.value)} placeholder="ex. 65" />
         </div>
       </div>
@@ -337,7 +366,9 @@ export default function Nomogramme({ mur, couche }) {
       )}
       {erreur && <p className="erreur">{erreur}</p>}
       {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
-      {!enCours && points.length === 0 && !erreur && <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>}
+      {!enCours && points.length === 0 && !erreur && (
+        <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>
+      )}
       <canvas
         ref={canvasRef}
         style={{ width: "100%", height: "420px" }}

@@ -98,9 +98,7 @@ def construire_point(data: dict) -> Point | None:
 
     # Les mesures principales doivent être numériques pour que le point
     # soit utile. Les autres champs sont ajoutés s'ils sont disponibles.
-    if not isinstance(temperature, (int, float)) or not isinstance(
-        humidite, (int, float)
-    ):
+    if not isinstance(temperature, (int, float)) or not isinstance(humidite, (int, float)):
         return None
 
     mac = data.get("mac", "inconnu")
@@ -260,4 +258,3 @@ finally:
         write_api.close()
     finally:
         influx_client.close()
-

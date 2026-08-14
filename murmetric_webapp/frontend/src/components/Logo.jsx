@@ -4,9 +4,18 @@
 // figée, pas de dépendance à un fichier statique pour ce composant).
 export default function Logo({ taille = 32, centre = false }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", justifyContent: centre ? "center" : "flex-start" }}>
+    <div
+      style={{ display: "flex", alignItems: "center", gap: "0.6rem", justifyContent: centre ? "center" : "flex-start" }}
+    >
       <svg width={taille} height={taille} viewBox="0 0 64 64" aria-hidden="true">
-        <path d="M8 46 L22 18 L32 34 L46 10 L58 46" fill="none" stroke="#7fd4ff" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
+        <path
+          d="M8 46 L22 18 L32 34 L46 10 L58 46"
+          fill="none"
+          stroke="#7fd4ff"
+          strokeWidth="7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
         <circle cx="46" cy="10" r="4.5" fill="#7fd4ff" />
       </svg>
       <div style={{ lineHeight: 1.15 }}>

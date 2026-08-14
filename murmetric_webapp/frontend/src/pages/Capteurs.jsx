@@ -25,10 +25,7 @@ export default function Capteurs() {
     charger();
   }, []);
 
-  const lignes = (donnees) =>
-    donnees
-      ? Object.entries(donnees).filter(([cle]) => cle !== "_schema")
-      : [];
+  const lignes = (donnees) => (donnees ? Object.entries(donnees).filter(([cle]) => cle !== "_schema") : []);
 
   return (
     <div>
@@ -73,7 +70,12 @@ function TableauCapteurs({ titre, lignes, colonnes, champsEditables, cleColonne,
 
   const demarrerEdition = (cle, c) => {
     setErreur(null);
-    setEnEdition({ cle, valeurs: Object.fromEntries(champsEditables.map((champ) => [champ, c[champ] ?? (champ === "ingestion" ? false : "")])) });
+    setEnEdition({
+      cle,
+      valeurs: Object.fromEntries(
+        champsEditables.map((champ) => [champ, c[champ] ?? (champ === "ingestion" ? false : "")]),
+      ),
+    });
   };
 
   const valider = async () => {
@@ -92,13 +94,17 @@ function TableauCapteurs({ titre, lignes, colonnes, champsEditables, cleColonne,
 
   return (
     <div className="carte">
-      <h2>{titre} ({lignes.length})</h2>
+      <h2>
+        {titre} ({lignes.length})
+      </h2>
       {erreur && <p className="erreur">{erreur}</p>}
       <table>
         <thead>
           <tr>
             <th>{cleColonne}</th>
-            {colonnes.map((champ) => <th key={champ}>{LIBELLES[champ]}</th>)}
+            {colonnes.map((champ) => (
+              <th key={champ}>{LIBELLES[champ]}</th>
+            ))}
             <th></th>
           </tr>
         </thead>
@@ -115,16 +121,27 @@ function TableauCapteurs({ titre, lignes, colonnes, champsEditables, cleColonne,
                         <input
                           type="checkbox"
                           checked={enEdition.valeurs.ingestion}
-                          onChange={(e) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, ingestion: e.target.checked } })}
+                          onChange={(e) =>
+                            setEnEdition({
+                              ...enEdition,
+                              valeurs: { ...enEdition.valeurs, ingestion: e.target.checked },
+                            })
+                          }
                         />
                       ) : (
                         <input
                           value={enEdition.valeurs[champ]}
-                          onChange={(e) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, [champ]: e.target.value } })}
+                          onChange={(e) =>
+                            setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, [champ]: e.target.value } })
+                          }
                         />
                       )
                     ) : champ === "ingestion" ? (
-                      c.ingestion ? <Pastille etat="ok" texte="Oui" /> : "—"
+                      c.ingestion ? (
+                        <Pastille etat="ok" texte="Oui" />
+                      ) : (
+                        "—"
+                      )
                     ) : (
                       c[champ]
                     )}
@@ -133,8 +150,12 @@ function TableauCapteurs({ titre, lignes, colonnes, champsEditables, cleColonne,
                 <td>
                   {edition ? (
                     <>
-                      <button onClick={valider} disabled={enCours}>{enCours ? "..." : "Enregistrer"}</button>{" "}
-                      <button onClick={() => setEnEdition(null)} disabled={enCours}>Annuler</button>
+                      <button onClick={valider} disabled={enCours}>
+                        {enCours ? "..." : "Enregistrer"}
+                      </button>{" "}
+                      <button onClick={() => setEnEdition(null)} disabled={enCours}>
+                        Annuler
+                      </button>
                     </>
                   ) : (
                     <button onClick={() => demarrerEdition(cle, c)}>Éditer</button>

@@ -16,6 +16,7 @@ Un pipeline sans aucune source active (aucun capteur/canal à
 `ingestion: true`) est signalé "inactif", pas "critique" : ce n'est pas une
 panne, juste rien à surveiller pour l'instant.
 """
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -52,14 +53,14 @@ def _macs_hrt_actifs() -> list[str]:
 
 def _dernier_point(mesure: str, champ: str, tag: str, valeurs: list[str]) -> datetime | None:
     filtre_valeurs = " or ".join(f'r.{tag} == "{flux_escape(v)}"' for v in valeurs)
-    flux = f'''
+    flux = f"""
 from(bucket: "{config.INFLUX_BUCKET}")
   |> range(start: -90d)
   |> filter(fn: (r) => r._measurement == "{mesure}")
   |> filter(fn: (r) => r._field == "{champ}")
   |> filter(fn: (r) => {filtre_valeurs})
   |> last()
-'''
+"""
     dernier = None
     for table in query_api().query(flux, org=config.INFLUX_ORG):
         for record in table.records:
@@ -69,7 +70,9 @@ from(bucket: "{config.INFLUX_BUCKET}")
     return dernier
 
 
-def _points_recus_fenetre(mesure: str, champ: str, tag: str, valeurs: list[str], heures: int) -> int | None:
+def _points_recus_fenetre(
+    mesure: str, champ: str, tag: str, valeurs: list[str], heures: int
+) -> int | None:
     """Nombre de points reçus sur une fenêtre bornée (défaut 24h) — débit
     mesuré depuis InfluxDB (la vérité terrain), complémentaire du compteur
     en mémoire du process transmis par le heartbeat (nb_points_publies) :
@@ -81,7 +84,7 @@ def _points_recus_fenetre(mesure: str, champ: str, tag: str, valeurs: list[str],
     if not valeurs:
         return None
     filtre_valeurs = " or ".join(f'r.{tag} == "{flux_escape(v)}"' for v in valeurs)
-    flux = f'''
+    flux = f"""
 from(bucket: "{config.INFLUX_BUCKET}")
   |> range(start: -{int(heures)}h)
   |> filter(fn: (r) => r._measurement == "{mesure}")
@@ -89,7 +92,7 @@ from(bucket: "{config.INFLUX_BUCKET}")
   |> filter(fn: (r) => {filtre_valeurs})
   |> group()
   |> count()
-'''
+"""
     for table in query_api().query(flux, org=config.INFLUX_ORG):
         for record in table.records:
             return record.get_value()
@@ -113,14 +116,14 @@ def _dernier_heartbeat_par_pipeline() -> dict[str, dict]:
     """Best-effort : une erreur ici ne doit jamais faire échouer /etat, le
     heartbeat n'est qu'un enrichissement diagnostique, pas la donnée
     principale."""
-    flux = f'''
+    flux = f"""
 from(bucket: "{config.INFLUX_BUCKET}")
   |> range(start: -6h)
   |> filter(fn: (r) => r._measurement == "{MESURE_HEARTBEAT}")
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> group(columns: ["pipeline"])
   |> last(column: "_time")
-'''
+"""
     resultat: dict[str, dict] = {}
     try:
         tables = query_api().query(flux, org=config.INFLUX_ORG)
@@ -149,6 +152,7 @@ from(bucket: "{config.INFLUX_BUCKET}")
 
 @router.get("/etat")
 def etat() -> dict:
+    """État courant des deux pipelines (fraîcheur, débit 24h, dernier battement de vie)."""
     resultat = {}
     heartbeats = _dernier_heartbeat_par_pipeline()
 
@@ -157,7 +161,9 @@ def etat() -> dict:
         if canaux_actifs:
             dernier = _dernier_point(MESURE_DEWESOFT, "valeur", "canal_nom", canaux_actifs)
             statut, age_h = _statut(dernier, SEUILS_HEURES["retrait"])
-            points_24h = _points_recus_fenetre(MESURE_DEWESOFT, "valeur", "canal_nom", canaux_actifs, 24)
+            points_24h = _points_recus_fenetre(
+                MESURE_DEWESOFT, "valeur", "canal_nom", canaux_actifs, 24
+            )
         else:
             dernier, statut, age_h, points_24h = None, "inactif", None, None
         resultat["retrait"] = {
@@ -173,7 +179,9 @@ def etat() -> dict:
         if macs_actifs:
             dernier = _dernier_point(MESURE_CAPTEURS, "temperature", "adresse_mac", macs_actifs)
             statut, age_h = _statut(dernier, SEUILS_HEURES["hr_t"])
-            points_24h = _points_recus_fenetre(MESURE_CAPTEURS, "temperature", "adresse_mac", macs_actifs, 24)
+            points_24h = _points_recus_fenetre(
+                MESURE_CAPTEURS, "temperature", "adresse_mac", macs_actifs, 24
+            )
         else:
             dernier, statut, age_h, points_24h = None, "inactif", None, None
         resultat["hr_t"] = {
@@ -192,14 +200,16 @@ def etat() -> dict:
 
 @router.get("/heartbeats")
 def heartbeats(pipeline: str, heures: int = 24) -> list[dict]:
-    flux = f'''
+    """Historique du buffer local en attente pour un pipeline — alimente le graphique
+    de tendance de la page Monitoring."""
+    flux = f"""
 from(bucket: "{config.INFLUX_BUCKET}")
   |> range(start: -{int(heures)}h)
   |> filter(fn: (r) => r._measurement == "{MESURE_HEARTBEAT}")
   |> filter(fn: (r) => r.pipeline == "{flux_escape(pipeline)}")
   |> filter(fn: (r) => r._field == "buffer_sqlite_en_attente")
   |> sort(columns: ["_time"])
-'''
+"""
     try:
         points = [
             {"time": record.get_time().isoformat(), "buffer_sqlite_en_attente": record.get_value()}
@@ -220,13 +230,13 @@ def espace_disque(jours: int = 30) -> dict:
     webapp elle-même — aucun accès au système de fichiers du pod InfluxDB
     (pod séparé), et lui donner cet accès demanderait des permissions RBAC
     plus larges que nécessaire."""
-    flux = f'''
+    flux = f"""
 from(bucket: "{config.INFLUX_BUCKET}")
   |> range(start: -{int(jours)}d)
   |> filter(fn: (r) => r._measurement == "disk_usage_bytes")
   |> filter(fn: (r) => r._field == "value")
   |> sort(columns: ["_time"])
-'''
+"""
     try:
         points = [
             {"time": record.get_time().isoformat(), "octets": record.get_value()}
@@ -236,4 +246,8 @@ from(bucket: "{config.INFLUX_BUCKET}")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
     dernier = points[-1] if points else None
-    return {"dernier_octets": dernier["octets"] if dernier else None, "mesure_le": dernier["time"] if dernier else None, "points": points}
+    return {
+        "dernier_octets": dernier["octets"] if dernier else None,
+        "mesure_le": dernier["time"] if dernier else None,
+        "points": points,
+    }

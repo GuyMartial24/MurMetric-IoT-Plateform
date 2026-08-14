@@ -35,7 +35,10 @@ export default function SelecteurMesure({ valeur, onChange }) {
   const [combinaisons, setCombinaisons] = useState([]);
 
   useEffect(() => {
-    api.mesuresValeursTags({ type: valeur.type }).then((r) => setCombinaisons(r.combinaisons)).catch(() => setCombinaisons([]));
+    api
+      .mesuresValeursTags({ type: valeur.type })
+      .then((r) => setCombinaisons(r.combinaisons))
+      .catch(() => setCombinaisons([]));
   }, [valeur.type]);
 
   const definir = (champ, val) => onChange({ ...valeur, [champ]: val });
@@ -58,7 +61,9 @@ export default function SelecteurMesure({ valeur, onChange }) {
         <label>Grandeur</label>
         <select value={grandeurActuelle} onChange={(e) => definirGrandeur(e.target.value)}>
           {GRANDEURS_MESURABLES.map((g) => (
-            <option key={g.valeur} value={g.valeur}>{g.label}</option>
+            <option key={g.valeur} value={g.valeur}>
+              {g.label}
+            </option>
           ))}
         </select>
       </div>
@@ -66,20 +71,32 @@ export default function SelecteurMesure({ valeur, onChange }) {
         <label>Mur</label>
         <select value={valeur.mur || ""} onChange={(e) => definir("mur", e.target.value)}>
           {murs.length === 0 && <option value={valeur.mur || ""}>{valeur.mur || "Chargement..."}</option>}
-          {murs.map((m) => <option key={m} value={m}>{m}</option>)}
+          {murs.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
         </select>
       </div>
       <div className="champ">
         <label>Couche</label>
         <select value={valeur.couche || ""} onChange={(e) => definir("couche", e.target.value)}>
           <option value="">— toutes —</option>
-          {couches.map((c) => <option key={c} value={c}>{c}</option>)}
+          {couches.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
         </select>
       </div>
       {valeur.type === "retrait" && (
         <div className="champ">
           <label>Canal</label>
-          <input value={valeur.canal_nom || ""} onChange={(e) => definir("canal_nom", e.target.value)} placeholder="ex. HA1" />
+          <input
+            value={valeur.canal_nom || ""}
+            onChange={(e) => definir("canal_nom", e.target.value)}
+            placeholder="ex. HA1"
+          />
         </div>
       )}
       <div className="champ">

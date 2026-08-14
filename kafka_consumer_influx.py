@@ -124,6 +124,7 @@ TOPICS = [
 # aussi bien qu'un objet Point — cf. logique_projet.md, 07/08/2026.
 # ---------------------------------------------------------------------------
 
+
 def _echap_tag(valeur: str) -> str:
     """Échapper une clé/valeur de tag pour le line protocol (virgule, égal, espace)."""
     return valeur.replace("\\", "\\\\").replace(",", "\\,").replace("=", "\\=").replace(" ", "\\ ")
@@ -147,9 +148,7 @@ def construire_point_capteurs(data: dict) -> str | None:
     temperature = data.get("temperature_c")
     humidite = data.get("humidite_percent")
 
-    if not isinstance(temperature, (int, float)) or not isinstance(
-        humidite, (int, float)
-    ):
+    if not isinstance(temperature, (int, float)) or not isinstance(humidite, (int, float)):
         return None
 
     # Tags dans l'ordre alphabétique — le SDK Point() les triait ainsi ;
@@ -279,7 +278,9 @@ def construire_point_dewesoft(data: dict) -> str | None:
     # l'historique sur la date d'exécution du consumer.
     horodatage_mesure_iso = data.get("horodatage_mesure_iso")
     timestamp_ns = ""
-    horodatage_mesure_iso_str = horodatage_mesure_iso if isinstance(horodatage_mesure_iso, str) else None
+    horodatage_mesure_iso_str = (
+        horodatage_mesure_iso if isinstance(horodatage_mesure_iso, str) else None
+    )
     if horodatage_mesure_iso_str:
         try:
             horodatage_mesure = datetime.fromisoformat(horodatage_mesure_iso_str)
@@ -292,9 +293,7 @@ def construire_point_dewesoft(data: dict) -> str | None:
             # déterministe indépendant de la machine.
             if horodatage_mesure.tzinfo is None:
                 horodatage_mesure = horodatage_mesure.replace(tzinfo=timezone.utc)
-            fields += (
-                f',horodatage_lisible="{horodatage_mesure.strftime("%d/%m/%Y %H:%M:%S")}"'
-            )
+            fields += f',horodatage_lisible="{horodatage_mesure.strftime("%d/%m/%Y %H:%M:%S")}"'
             timestamp_ns = f" {int(horodatage_mesure.timestamp() * 1_000_000) * 1_000}"
         except ValueError:
             pass
@@ -344,9 +343,7 @@ def construire_points_dewesoft_lot(data: dict) -> list[str]:
 
     canal_index = int(data.get("canal_index", 0))
     taux = data.get("taux_echantillonnage")
-    suffixe_taux = (
-        f",taux_echantillonnage={float(taux)}" if isinstance(taux, (int, float)) else ""
-    )
+    suffixe_taux = f",taux_echantillonnage={float(taux)}" if isinstance(taux, (int, float)) else ""
 
     filtrees = data.get("valeurs_filtrees")
     if not isinstance(filtrees, list) or len(filtrees) != len(valeurs):
@@ -409,6 +406,7 @@ def construire_point_alerte(data: dict) -> str | None:
 # Router : topic Kafka → constructeur de point InfluxDB.
 # ---------------------------------------------------------------------------
 
+
 def construire_points_dewesoft(data: dict) -> list[str]:
     """Router un message DeweSoft vers le constructeur de son format.
 
@@ -428,17 +426,19 @@ def construire_points_dewesoft(data: dict) -> list[str]:
 
 def _un_point(constructeur):
     """Adapter un constructeur mono-point à l'interface « liste de lignes »."""
+
     def adapte(data: dict) -> list[str]:
         ligne = constructeur(data)
         return [ligne] if ligne else []
+
     return adapte
 
 
 CONSTRUCTEURS = {
-    f"murmetric.{TENANT_ID}.capteurs.bruts":    _un_point(construire_point_capteurs),
+    f"murmetric.{TENANT_ID}.capteurs.bruts": _un_point(construire_point_capteurs),
     f"murmetric.{TENANT_ID}.capteurs.registre": _un_point(construire_point_registre),
-    f"murmetric.{TENANT_ID}.dewesoft.bruts":    construire_points_dewesoft,
-    f"murmetric.{TENANT_ID}.dewesoft.alertes":  _un_point(construire_point_alerte),
+    f"murmetric.{TENANT_ID}.dewesoft.bruts": construire_points_dewesoft,
+    f"murmetric.{TENANT_ID}.dewesoft.alertes": _un_point(construire_point_alerte),
 }
 
 # ---------------------------------------------------------------------------
@@ -473,7 +473,9 @@ def ecrire_ou_mourir(lignes: list[str]) -> None:
     for tentative in range(1, ECRITURE_MAX_TENTATIVES + 1):
         try:
             write_api.write(
-                bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=lignes,
+                bucket=INFLUX_BUCKET,
+                org=INFLUX_ORG,
+                record=lignes,
                 write_precision=WritePrecision.NS,
             )
             return
@@ -502,6 +504,7 @@ print(f"✅ InfluxDB prêt ({INFLUX_URL}) — écriture SYNCHRONE")
 # ---------------------------------------------------------------------------
 # Initialisation consommateur Kafka.
 # ---------------------------------------------------------------------------
+
 
 def _connecter_consommateur_kafka() -> KafkaConsumer:
     """Créer le consumer Kafka, en réessayant tant que le bootstrap échoue.
@@ -591,8 +594,10 @@ try:
         # qu'à un REJEU (messages déjà écrits rejoués après un incident), sans
         # danger puisque l'écriture est idempotente — alors que l'anticiper
         # exposerait à une PERTE, ce qu'on refuse.
-        if (messages_non_valides >= COMMIT_TOUS_LES_N
-                or maintenant - dernier_commit >= COMMIT_INTERVAL):
+        if (
+            messages_non_valides >= COMMIT_TOUS_LES_N
+            or maintenant - dernier_commit >= COMMIT_INTERVAL
+        ):
             consommateur.commit()
             messages_non_valides = 0
             dernier_commit = maintenant
@@ -608,8 +613,11 @@ try:
             print(
                 f"💾 {delta} point(s) écrit(s) en {maintenant - dernier_log:.0f}s "
                 f"({delta / (maintenant - dernier_log):.0f}/s) — cumul {nb_ecrits}"
-                + (f" — {_nb_reessais_ecriture} ré-essai(s) d'écriture"
-                   if _nb_reessais_ecriture else ""),
+                + (
+                    f" — {_nb_reessais_ecriture} ré-essai(s) d'écriture"
+                    if _nb_reessais_ecriture
+                    else ""
+                ),
                 flush=True,
             )
             dernier_log = maintenant
@@ -623,8 +631,10 @@ except KeyboardInterrupt:
         consommateur.commit()
         print("✅ Offsets Kafka validés avant l'arrêt.")
     except Exception as exc:
-        print(f"⚠️  Validation finale des offsets impossible ({exc}) — "
-              "les derniers messages seront rejoués (sans perte).")
+        print(
+            f"⚠️  Validation finale des offsets impossible ({exc}) — "
+            "les derniers messages seront rejoués (sans perte)."
+        )
 finally:
     # Surtout PAS de commit() ici : ce bloc s'exécute aussi quand
     # ecrire_ou_mourir() a levé. Valider à cet instant reviendrait à déclarer
@@ -633,6 +643,8 @@ finally:
     write_api.close()
     influx_client.close()
     consommateur.close()
-    print(f"👋 Consommateur Kafka → InfluxDB arrêté. "
-          f"{nb_ecrits} point(s) écrit(s), "
-          f"{_nb_reessais_ecriture} ré-essai(s) d'écriture.")
+    print(
+        f"👋 Consommateur Kafka → InfluxDB arrêté. "
+        f"{nb_ecrits} point(s) écrit(s), "
+        f"{_nb_reessais_ecriture} ré-essai(s) d'écriture."
+    )

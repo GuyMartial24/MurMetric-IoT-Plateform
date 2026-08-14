@@ -1,3 +1,7 @@
+// Page "Monitoring" — santé des deux pipelines d'ingestion (retrait, hr_t) :
+// fraîcheur des données InfluxDB + dernier battement de vie MQTT de chaque
+// process, plus l'évolution de l'espace disque InfluxDB (section 32 de
+// logique_projet.md pour le détail complet de l'architecture).
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import Pastille from "../components/Pastille.jsx";
@@ -67,14 +71,15 @@ export default function Monitoring() {
         </div>
       </div>
       <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
-        Fraîcheur des données réellement écrites en InfluxDB (seules les sources avec "ingestion" activé sont
-        prises en compte) + dernier battement de vie reçu du process d'ingestion lui-même. Rafraîchi automatiquement
-        toutes les 30s.
+        Fraîcheur des données réellement écrites en InfluxDB (seules les sources avec "ingestion" activé sont prises en
+        compte) + dernier battement de vie reçu du process d'ingestion lui-même. Rafraîchi automatiquement toutes les
+        30s.
       </p>
       {erreur && <p className="erreur">{erreur}</p>}
-      {etat && Object.entries(etat).map(([pipeline, infos]) => (
-        <CartePipeline key={pipeline} pipeline={pipeline} infos={infos} />
-      ))}
+      {etat &&
+        Object.entries(etat).map(([pipeline, infos]) => (
+          <CartePipeline key={pipeline} pipeline={pipeline} infos={infos} />
+        ))}
       <CarteEspaceDisque />
     </div>
   );
@@ -90,7 +95,10 @@ function CarteEspaceDisque() {
   const [erreur, setErreur] = useState(null);
 
   useEffect(() => {
-    api.monitoringEspaceDisque(30).then(setDonnees).catch((e) => setErreur(e.message));
+    api
+      .monitoringEspaceDisque(30)
+      .then(setDonnees)
+      .catch((e) => setErreur(e.message));
   }, []);
 
   return (
@@ -125,11 +133,15 @@ function GraphiqueEspaceDisque({ points }) {
     );
   }
 
-  const largeur = 900, hauteur = 120, marge = 30;
+  const largeur = 900,
+    hauteur = 120,
+    marge = 30;
   const temps = points.map((p) => new Date(p.time).getTime());
   const valeurs = points.map((p) => p.octets);
-  const tMin = Math.min(...temps), tMax = Math.max(...temps);
-  const vMin = Math.min(...valeurs), vMax = Math.max(...valeurs);
+  const tMin = Math.min(...temps),
+    tMax = Math.max(...temps);
+  const vMin = Math.min(...valeurs),
+    vMax = Math.max(...valeurs);
 
   const x = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (largeur - 2 * marge);
   const y = (v) => hauteur - marge - ((v - vMin) / (vMax - vMin || 1)) * (hauteur - 2 * marge);
@@ -154,15 +166,23 @@ function CartePipeline({ pipeline, infos }) {
   return (
     <div className="carte">
       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" }}>
-        <span style={{ width: "12px", height: "12px", borderRadius: "50%", background: couleur, display: "inline-block" }} />
+        <span
+          style={{ width: "12px", height: "12px", borderRadius: "50%", background: couleur, display: "inline-block" }}
+        />
         <h3 style={{ margin: 0 }}>{LIBELLES_PIPELINE[pipeline] || pipeline}</h3>
-        <span style={{ color: couleur, fontWeight: 600, fontSize: "0.9rem" }}>{LIBELLES_STATUT[infos.statut] || infos.statut}</span>
+        <span style={{ color: couleur, fontWeight: 600, fontSize: "0.9rem" }}>
+          {LIBELLES_STATUT[infos.statut] || infos.statut}
+        </span>
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "2rem", fontSize: "0.88rem" }}>
         <div>
           <div style={{ color: "#a0a6b5" }}>Dernière donnée reçue</div>
-          <div>{infos.dernier_point ? `${new Date(infos.dernier_point).toLocaleString("fr-FR")} (${ilYA(infos.dernier_point)})` : "aucune"}</div>
+          <div>
+            {infos.dernier_point
+              ? `${new Date(infos.dernier_point).toLocaleString("fr-FR")} (${ilYA(infos.dernier_point)})`
+              : "aucune"}
+          </div>
         </div>
         <div>
           <div style={{ color: "#a0a6b5" }}>Sources actives (ingestion activée)</div>
@@ -180,7 +200,13 @@ function CartePipeline({ pipeline, infos }) {
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Connexion MQTT</div>
-              <div>{hb.mqtt_connecte ? <Pastille etat="ok" texte="Connecté" /> : <Pastille etat="erreur" texte="Déconnecté" />}</div>
+              <div>
+                {hb.mqtt_connecte ? (
+                  <Pastille etat="ok" texte="Connecté" />
+                ) : (
+                  <Pastille etat="erreur" texte="Déconnecté" />
+                )}
+              </div>
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Buffer local en attente</div>
@@ -188,7 +214,13 @@ function CartePipeline({ pipeline, infos }) {
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Registre capteurs (API)</div>
-              <div>{hb.registre_api_ok ? <Pastille etat="ok" texte="À jour" /> : <Pastille etat="attention" texte="Dernier appel en échec" />}</div>
+              <div>
+                {hb.registre_api_ok ? (
+                  <Pastille etat="ok" texte="À jour" />
+                ) : (
+                  <Pastille etat="attention" texte="Dernier appel en échec" />
+                )}
+              </div>
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Points publiés / bufferisés (cumul process)</div>
@@ -203,7 +235,9 @@ function CartePipeline({ pipeline, infos }) {
             </div>
           </>
         ) : (
-          <div style={{ color: "#a0a6b5" }}>Aucun battement de vie reçu (process jamais démarré depuis le déploiement du monitoring, ou trop ancien).</div>
+          <div style={{ color: "#a0a6b5" }}>
+            Aucun battement de vie reçu (process jamais démarré depuis le déploiement du monitoring, ou trop ancien).
+          </div>
         )}
       </div>
 
@@ -217,17 +251,26 @@ function GraphiqueBuffer({ pipeline }) {
   const svgRef = useRef(null);
 
   useEffect(() => {
-    api.monitoringHeartbeats(pipeline, 24).then(setPoints).catch(() => setPoints([]));
+    api
+      .monitoringHeartbeats(pipeline, 24)
+      .then(setPoints)
+      .catch(() => setPoints([]));
   }, [pipeline]);
 
   if (!points || points.length < 2) return null;
 
-  const largeur = 900, hauteur = 120, marge = 30;
+  const largeur = 900,
+    hauteur = 120,
+    marge = 30;
   const temps = points.map((p) => new Date(p.time).getTime());
   const valeurs = points.map((p) => p.buffer_sqlite_en_attente ?? 0);
-  const tMin = Math.min(...temps), tMax = Math.max(...temps);
+  const tMin = Math.min(...temps),
+    tMax = Math.max(...temps);
   const vMax = Math.max(1, ...valeurs);
 
+  // Mise à l'échelle linéaire min/max (temps -> x, valeur -> y) dans le
+  // viewBox SVG ; vMax borné à 1 pour éviter une division par zéro quand
+  // le buffer est resté vide sur toute la fenêtre.
   const x = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (largeur - 2 * marge);
   const y = (v) => hauteur - marge - (v / vMax) * (hauteur - 2 * marge);
   const chemin = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(temps[i])},${y(valeurs[i])}`).join(" ");

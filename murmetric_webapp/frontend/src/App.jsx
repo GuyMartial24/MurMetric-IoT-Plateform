@@ -21,6 +21,9 @@ const ONGLETS = [
   { chemin: "/parametres", label: "Paramètres" },
 ];
 
+// Garde de route simple : redirige vers /login plutôt que de rendre la page
+// protégée si l'utilisateur n'est pas connecté (état géré au niveau App, pas
+// de contexte React dédié — un seul niveau d'imbrication, pas nécessaire).
 function EspaceProtege({ connecte, children }) {
   return connecte ? children : <Navigate to="/login" replace />;
 }
@@ -59,13 +62,62 @@ export default function App() {
       </header>
       <main className="app-main">
         <Routes>
-          <Route path="/" element={<EspaceProtege connecte={connecte}><VueEnsemble /></EspaceProtege>} />
-          <Route path="/grafana" element={<EspaceProtege connecte={connecte}><Grafana /></EspaceProtege>} />
-          <Route path="/teneur-eau" element={<EspaceProtege connecte={connecte}><TeneurEau /></EspaceProtege>} />
-          <Route path="/capteurs" element={<EspaceProtege connecte={connecte}><Capteurs /></EspaceProtege>} />
-          <Route path="/monitoring" element={<EspaceProtege connecte={connecte}><Monitoring /></EspaceProtege>} />
-          <Route path="/assistant" element={<EspaceProtege connecte={connecte}><Assistant /></EspaceProtege>} />
-          <Route path="/parametres" element={<EspaceProtege connecte={connecte}><Parametres /></EspaceProtege>} />
+          <Route
+            path="/"
+            element={
+              <EspaceProtege connecte={connecte}>
+                <VueEnsemble />
+              </EspaceProtege>
+            }
+          />
+          <Route
+            path="/grafana"
+            element={
+              <EspaceProtege connecte={connecte}>
+                <Grafana />
+              </EspaceProtege>
+            }
+          />
+          <Route
+            path="/teneur-eau"
+            element={
+              <EspaceProtege connecte={connecte}>
+                <TeneurEau />
+              </EspaceProtege>
+            }
+          />
+          <Route
+            path="/capteurs"
+            element={
+              <EspaceProtege connecte={connecte}>
+                <Capteurs />
+              </EspaceProtege>
+            }
+          />
+          <Route
+            path="/monitoring"
+            element={
+              <EspaceProtege connecte={connecte}>
+                <Monitoring />
+              </EspaceProtege>
+            }
+          />
+          <Route
+            path="/assistant"
+            element={
+              <EspaceProtege connecte={connecte}>
+                <Assistant />
+              </EspaceProtege>
+            }
+          />
+          <Route
+            path="/parametres"
+            element={
+              <EspaceProtege connecte={connecte}>
+                <Parametres />
+              </EspaceProtege>
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

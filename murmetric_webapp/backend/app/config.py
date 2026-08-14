@@ -1,5 +1,6 @@
 """Configuration centralisée — mêmes variables d'environnement que le reste
 du pipeline (backfill_hr_t.py, backfill_teneur_eau.py, kafka_consumer_influx.py)."""
+
 import os
 from pathlib import Path
 
@@ -75,10 +76,18 @@ USERS_JSON = Path(os.getenv("USERS_DIR", str(Path(__file__).resolve().parent))) 
 _ICI = Path(__file__).resolve()
 _PARENTS = _ICI.parents
 _RACINE_DEPOT_LOCAL = _PARENTS[3] if len(_PARENTS) > 3 else None
-_UTILISER_RACINE_LOCALE = _RACINE_DEPOT_LOCAL is not None and (_RACINE_DEPOT_LOCAL / "capteurs.json").exists()
+_UTILISER_RACINE_LOCALE = (
+    _RACINE_DEPOT_LOCAL is not None and (_RACINE_DEPOT_LOCAL / "capteurs.json").exists()
+)
 _VOLUME_PERSISTANT = os.getenv("USERS_DIR")
-CAPTEURS_DIR = Path(_VOLUME_PERSISTANT) if _VOLUME_PERSISTANT else Path(
-    os.getenv("CAPTEURS_DIR", str(_RACINE_DEPOT_LOCAL if _UTILISER_RACINE_LOCALE else _ICI.parent))
+CAPTEURS_DIR = (
+    Path(_VOLUME_PERSISTANT)
+    if _VOLUME_PERSISTANT
+    else Path(
+        os.getenv(
+            "CAPTEURS_DIR", str(_RACINE_DEPOT_LOCAL if _UTILISER_RACINE_LOCALE else _ICI.parent)
+        )
+    )
 )
 CAPTEURS_JSON = CAPTEURS_DIR / "capteurs.json"
 CAPTEURS_RETRAIT_JSON = CAPTEURS_DIR / "capteurs_retrait.json"
@@ -112,4 +121,3 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_TOPIC_HEARTBEAT = os.getenv("MQTT_TOPIC_HEARTBEAT", "frd/monitoring/heartbeat")
-

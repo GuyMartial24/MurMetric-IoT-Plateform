@@ -1,5 +1,6 @@
 """Point d'entrée FastAPI — squelette de l'interface applicative unifiée
 (section 32 de logique_projet.md)."""
+
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,6 +32,8 @@ def _amorcer_capteurs() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    """Démarrage/arrêt de l'application : bootstrap admin, amorçage des fichiers
+    capteurs, abonné MQTT de monitoring."""
     initialiser_bootstrap()
     _amorcer_capteurs()
     monitoring_mqtt.demarrer()
@@ -61,6 +64,7 @@ app.include_router(monitoring.router)
 
 @app.get("/api/health")
 def health() -> dict:
+    """Vérification de vie basique, sans dépendance externe (pas d'appel InfluxDB)."""
     return {"statut": "ok"}
 
 
@@ -73,6 +77,8 @@ if _DIST_DIR.is_dir():
 
     @app.get("/{chemin_complet:path}")
     def servir_frontend(chemin_complet: str):
+        """Sert le build React — fichier statique demandé s'il existe, sinon
+        index.html (routage côté client)."""
         # Fichiers statiques à la racine du build (favicon.svg, etc.) —
         # sans ce cas, la route générique interceptait tout et renvoyait
         # index.html même pour /favicon.svg (bug trouvé le 12/08/2026).

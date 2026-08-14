@@ -44,10 +44,15 @@ export const api = {
   creerTeneurEau: (saisie) => requete("/api/teneur_eau", { method: "POST", body: JSON.stringify(saisie) }),
   corrigerTeneurEau: (correction) => requete("/api/teneur_eau", { method: "PUT", body: JSON.stringify(correction) }),
   chatAssistant: (demande) => requete("/api/assistant/chat", { method: "POST", body: JSON.stringify(demande) }),
-  chatAssistantImage: (demande) => requete("/api/assistant/chat-image", { method: "POST", body: JSON.stringify(demande) }),
-  login: (username, password) => requete("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+  chatAssistantImage: (demande) =>
+    requete("/api/assistant/chat-image", { method: "POST", body: JSON.stringify(demande) }),
+  login: (username, password) =>
+    requete("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   register: (username, password, nomAffiche) =>
-    requete("/api/auth/register", { method: "POST", body: JSON.stringify({ username, password, nom_affiche: nomAffiche }) }),
+    requete("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ username, password, nom_affiche: nomAffiche }),
+    }),
   modifierCompte: (modification) => requete("/api/auth/me", { method: "PUT", body: JSON.stringify(modification) }),
   lireParametres: () => requete("/api/parametres"),
   modifierParametres: (parametres) => requete("/api/parametres", { method: "PUT", body: JSON.stringify(parametres) }),

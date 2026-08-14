@@ -29,14 +29,20 @@ const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ }, ref) {
   const x = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (largeur - 2 * marge);
   const y = (v) => hauteur - marge - ((v - vMin) / (vMax - vMin || 1)) * (hauteur - 2 * marge);
 
-  const chemin = valeurs.map((p, i) => `${i === 0 ? "M" : "L"}${x(new Date(p.time).getTime())},${y(p.value)}`).join(" ");
+  const chemin = valeurs
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(new Date(p.time).getTime())},${y(p.value)}`)
+    .join(" ");
 
   return (
     <div>
       <svg ref={svgRef} viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
         <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
-        <text x={marge} y={16} fill="#a0a6b5" fontSize="12">{champ} — max {vMax.toFixed(2)}</text>
-        <text x={marge} y={hauteur - 8} fill="#a0a6b5" fontSize="12">min {vMin.toFixed(2)} — {valeurs.length} points</text>
+        <text x={marge} y={16} fill="#a0a6b5" fontSize="12">
+          {champ} — max {vMax.toFixed(2)}
+        </text>
+        <text x={marge} y={hauteur - 8} fill="#a0a6b5" fontSize="12">
+          min {vMin.toFixed(2)} — {valeurs.length} points
+        </text>
       </svg>
       <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier={`courbe-${champ}`} />
     </div>

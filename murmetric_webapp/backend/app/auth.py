@@ -4,6 +4,7 @@ SaaS multi-tenant — cf. logique_projet.md section 32). Pas d'auto-
 inscription ouverte : le tout premier compte est créé au démarrage via
 ADMIN_BOOTSTRAP_USERNAME/PASSWORD (même logique que GF_SECURITY_ADMIN_PASSWORD
 pour Grafana), les suivants sont créés par un utilisateur déjà connecté."""
+
 import json
 import threading
 from datetime import datetime, timedelta, timezone
@@ -38,10 +39,16 @@ def initialiser_bootstrap() -> None:
     pas une erreur : permet de démarrer sans auth configurée pendant le dev)."""
     with _verrou:
         utilisateurs = _lire_utilisateurs()
-        if utilisateurs or not config.ADMIN_BOOTSTRAP_USERNAME or not config.ADMIN_BOOTSTRAP_PASSWORD:
+        if (
+            utilisateurs
+            or not config.ADMIN_BOOTSTRAP_USERNAME
+            or not config.ADMIN_BOOTSTRAP_PASSWORD
+        ):
             return
         utilisateurs[config.ADMIN_BOOTSTRAP_USERNAME] = {
-            "mot_de_passe_hash": bcrypt.hashpw(config.ADMIN_BOOTSTRAP_PASSWORD.encode(), bcrypt.gensalt()).decode(),
+            "mot_de_passe_hash": bcrypt.hashpw(
+                config.ADMIN_BOOTSTRAP_PASSWORD.encode(), bcrypt.gensalt()
+            ).decode(),
             "nom_affiche": config.ADMIN_BOOTSTRAP_USERNAME,
             "cree_le": datetime.now(timezone.utc).isoformat(),
         }
@@ -49,6 +56,7 @@ def initialiser_bootstrap() -> None:
 
 
 def creer_utilisateur(username: str, password: str, nom_affiche: str) -> None:
+    """Crée un compte (appelé par un utilisateur déjà connecté, pas d'auto-inscription)."""
     with _verrou:
         utilisateurs = _lire_utilisateurs()
         if username in utilisateurs:
@@ -74,11 +82,15 @@ def modifier_compte(
     with _verrou:
         utilisateurs = _lire_utilisateurs()
         compte = utilisateurs.get(username_actuel)
-        if not compte or not bcrypt.checkpw(mot_de_passe_actuel.encode(), compte["mot_de_passe_hash"].encode()):
+        if not compte or not bcrypt.checkpw(
+            mot_de_passe_actuel.encode(), compte["mot_de_passe_hash"].encode()
+        ):
             raise HTTPException(status_code=401, detail="Mot de passe actuel incorrect.")
 
         if nouveau_password:
-            compte["mot_de_passe_hash"] = bcrypt.hashpw(nouveau_password.encode(), bcrypt.gensalt()).decode()
+            compte["mot_de_passe_hash"] = bcrypt.hashpw(
+                nouveau_password.encode(), bcrypt.gensalt()
+            ).decode()
         if nouveau_nom_affiche:
             compte["nom_affiche"] = nouveau_nom_affiche
 
@@ -95,6 +107,7 @@ def modifier_compte(
 
 
 def verifier_identifiants(username: str, password: str) -> dict | None:
+    """Vérifie un couple username/mot de passe, retourne le compte si valide sinon None."""
     utilisateurs = _lire_utilisateurs()
     compte = utilisateurs.get(username)
     if not compte or not bcrypt.checkpw(password.encode(), compte["mot_de_passe_hash"].encode()):
@@ -103,15 +116,20 @@ def verifier_identifiants(username: str, password: str) -> dict | None:
 
 
 def creer_jeton(username: str) -> str:
+    """Génère un jeton JWT signé, valide JWT_EXPIRATION_HEURES heures."""
     expiration = datetime.now(timezone.utc) + timedelta(hours=config.JWT_EXPIRATION_HEURES)
-    return jwt.encode({"sub": username, "exp": expiration}, config.JWT_SECRET_KEY, algorithm=config.JWT_ALGORITHM)
+    return jwt.encode(
+        {"sub": username, "exp": expiration}, config.JWT_SECRET_KEY, algorithm=config.JWT_ALGORITHM
+    )
 
 
 def utilisateur_courant(identifiants: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
     """Dépendance FastAPI — protège une route (`Depends(utilisateur_courant)`),
     retourne {"username": ..., "nom_affiche": ...} si le jeton est valide."""
     try:
-        payload = jwt.decode(identifiants.credentials, config.JWT_SECRET_KEY, algorithms=[config.JWT_ALGORITHM])
+        payload = jwt.decode(
+            identifiants.credentials, config.JWT_SECRET_KEY, algorithms=[config.JWT_ALGORITHM]
+        )
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="Jeton invalide ou expiré.") from exc
 

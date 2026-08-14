@@ -14,6 +14,7 @@ webapp (cf. config.py) et sont la source de vérité :
   scripts d'ingestion via une clé partagée (INGESTION_API_KEY), pas de
   session utilisateur possible pour un process qui tourne sans surveillance.
 """
+
 import json
 import threading
 
@@ -45,11 +46,13 @@ def _ecrire_json(chemin, donnees: dict) -> None:
 
 @router.get("/hr_t")
 def capteurs_hr_t() -> dict:
+    """Registre complet des capteurs BLE (humidité/température), public."""
     return _lire_json(config.CAPTEURS_JSON)
 
 
 @router.get("/retrait")
 def capteurs_retrait() -> dict:
+    """Registre complet des canaux DeweSoft (retrait), public."""
     return _lire_json(config.CAPTEURS_RETRAIT_JSON)
 
 
@@ -61,7 +64,10 @@ def capteurs_retrait() -> dict:
 # split-brain mur/couche/position qui a motivé ce chantier).
 # ===========================================================================
 
+
 class ModificationCapteur(BaseModel):
+    """Champs d'identité/étiquetage modifiables par un utilisateur connecté."""
+
     nom: str | None = None
     emplacement: str | None = None
     nom_mur: str | None = None
@@ -76,6 +82,7 @@ _ALIAS_CHAMPS = {"categorie_rd": "categorie R&D"}
 
 
 def _modifier_entree(chemin, cle: str, modification: ModificationCapteur) -> dict:
+    """Applique les champs fournis (exclude_unset) à l'entrée `cle` du registre `chemin`."""
     with _verrou:
         donnees = _lire_json(chemin)
         if cle not in donnees:
@@ -91,6 +98,7 @@ def _modifier_entree(chemin, cle: str, modification: ModificationCapteur) -> dic
 def modifier_capteur_hr_t(
     mac: str, modification: ModificationCapteur, _utilisateur: dict = Depends(utilisateur_courant)
 ) -> dict:
+    """Édite l'étiquetage d'un capteur HR/T existant (réservé aux utilisateurs connectés)."""
     return _modifier_entree(config.CAPTEURS_JSON, mac, modification)
 
 
@@ -98,6 +106,7 @@ def modifier_capteur_hr_t(
 def modifier_capteur_retrait(
     canal: str, modification: ModificationCapteur, _utilisateur: dict = Depends(utilisateur_courant)
 ) -> dict:
+    """Édite l'étiquetage d'un canal retrait existant (réservé aux utilisateurs connectés)."""
     return _modifier_entree(config.CAPTEURS_RETRAIT_JSON, canal, modification)
 
 
@@ -110,22 +119,30 @@ def modifier_capteur_retrait(
 # encore non étiqueté. Idempotent : no-op si déjà connu.
 # ===========================================================================
 
+
 def _verifier_cle_ingestion(x_ingestion_key: str | None = Header(default=None)) -> None:
+    """Dépendance FastAPI : exige l'en-tête X-Ingestion-Key (404 générique si absent/faux,
+    pas 401/403 — ne pas révéler l'existence de la route à un appelant non autorisé)."""
     if not config.INGESTION_API_KEY or x_ingestion_key != config.INGESTION_API_KEY:
         raise HTTPException(status_code=404)
 
 
 class EnregistrementHrT(BaseModel):
+    """Déclaration d'un capteur BLE inconnu par un script d'ingestion."""
+
     mac: str
     famille_capteur: str = "bluemaestro"
 
 
 class EnregistrementRetrait(BaseModel):
+    """Déclaration d'un canal DeweSoft inconnu par un script d'ingestion."""
+
     canal: str
 
 
 @router.post("/hr_t/enregistrer", dependencies=[Depends(_verifier_cle_ingestion)])
 def enregistrer_capteur_hr_t(enregistrement: EnregistrementHrT) -> dict:
+    """Crée l'entrée d'un capteur BLE inconnu (ingestion=false) — idempotent."""
     with _verrou:
         donnees = _lire_json(config.CAPTEURS_JSON)
         mac = enregistrement.mac.upper()
@@ -151,6 +168,7 @@ def enregistrer_capteur_hr_t(enregistrement: EnregistrementHrT) -> dict:
 
 @router.post("/retrait/enregistrer", dependencies=[Depends(_verifier_cle_ingestion)])
 def enregistrer_capteur_retrait(enregistrement: EnregistrementRetrait) -> dict:
+    """Crée l'entrée d'un canal DeweSoft inconnu (ingestion=false) — idempotent."""
     with _verrou:
         donnees = _lire_json(config.CAPTEURS_RETRAIT_JSON)
         if enregistrement.canal in donnees:

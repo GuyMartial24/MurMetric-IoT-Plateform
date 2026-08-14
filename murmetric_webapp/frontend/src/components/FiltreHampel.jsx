@@ -57,13 +57,18 @@ export default function FiltreHampel({ mur }) {
     <div>
       <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
         Recalcule le filtre de Hampel à la volée sur les valeurs brutes (rien n'est modifié en base) — pour comparer
-        différents réglages de fenêtre/seuil sans toucher au réglage d'ingestion. Période limitée à 2h (données à 100 Hz).
+        différents réglages de fenêtre/seuil sans toucher au réglage d'ingestion. Période limitée à 2h (données à 100
+        Hz).
       </p>
       <div className="form-compact" style={{ marginBottom: "0.75rem" }}>
         <div className="champ" style={{ width: "90px" }}>
           <label>Canal</label>
           <select value={canal} onChange={(e) => setCanal(e.target.value)}>
-            {CANAUX_RETRAIT.map((c) => <option key={c} value={c}>{c}</option>)}
+            {CANAUX_RETRAIT.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
           </select>
         </div>
         <div className="champ" style={{ width: "195px" }}>
@@ -80,27 +85,49 @@ export default function FiltreHampel({ mur }) {
         </div>
         <div className="champ" style={{ width: "90px" }}>
           <label>Seuil K</label>
-          <input type="number" min="0.1" step="0.1" value={seuilK} onChange={(e) => setSeuilK(Number(e.target.value))} />
+          <input
+            type="number"
+            min="0.1"
+            step="0.1"
+            value={seuilK}
+            onChange={(e) => setSeuilK(Number(e.target.value))}
+          />
         </div>
         <div className="champ" style={{ width: "110px" }}>
           <label>Borne min</label>
-          <input type="number" step="0.1" value={borneMin} onChange={(e) => setBorneMin(e.target.value)} placeholder="ex. -50" />
+          <input
+            type="number"
+            step="0.1"
+            value={borneMin}
+            onChange={(e) => setBorneMin(e.target.value)}
+            placeholder="ex. -50"
+          />
         </div>
         <div className="champ" style={{ width: "110px" }}>
           <label>Borne max</label>
-          <input type="number" step="0.1" value={borneMax} onChange={(e) => setBorneMax(e.target.value)} placeholder="ex. 50" />
+          <input
+            type="number"
+            step="0.1"
+            value={borneMax}
+            onChange={(e) => setBorneMax(e.target.value)}
+            placeholder="ex. 50"
+          />
         </div>
       </div>
       <p style={{ color: "#a0a6b5", fontSize: "0.78rem", margin: "-0.25rem 0 0.75rem" }}>
         Les bornes physiques sont une 2e couche indépendante du Hampel — elles rattrapent les rafales d'échantillons
         aberrants trop longues pour la fenêtre glissante (remplacement par interpolation entre voisins valides).
       </p>
-      <button onClick={appliquer} disabled={enCours}>{enCours ? "Calcul..." : "Appliquer"}</button>
+      <button onClick={appliquer} disabled={enCours}>
+        {enCours ? "Calcul..." : "Appliquer"}
+      </button>
       {erreur && <p className="erreur">{erreur}</p>}
       {resultat && (
         <>
           <p style={{ marginTop: "0.75rem" }}>
-            {resultat.nb_points} points · <span style={{ color: "#ff8080" }}>{resultat.nb_aberrants} détecté(s) comme aberrant(s)</span> avec fenêtre={resultat.fenetre}, K={resultat.seuil_k}
+            {resultat.nb_points} points ·{" "}
+            <span style={{ color: "#ff8080" }}>{resultat.nb_aberrants} détecté(s) comme aberrant(s)</span> avec fenêtre=
+            {resultat.fenetre}, K={resultat.seuil_k}
           </p>
           {points.length > 0 && <GraphiqueHampel points={points} />}
         </>
@@ -111,12 +138,16 @@ export default function FiltreHampel({ mur }) {
 
 function GraphiqueHampel({ points }) {
   const svgRef = useRef(null);
-  const largeur = 900, hauteur = 320, marge = 40;
+  const largeur = 900,
+    hauteur = 320,
+    marge = 40;
   const temps = points.map((p) => new Date(p.time).getTime());
   const brut = points.map((p) => p.brut);
   const filtre = points.map((p) => p.filtre_ajuste);
-  const tMin = Math.min(...temps), tMax = Math.max(...temps);
-  const vMin = Math.min(...brut, ...filtre), vMax = Math.max(...brut, ...filtre);
+  const tMin = Math.min(...temps),
+    tMax = Math.max(...temps);
+  const vMin = Math.min(...brut, ...filtre),
+    vMax = Math.max(...brut, ...filtre);
 
   const x = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (largeur - 2 * marge);
   const y = (v) => hauteur - marge - ((v - vMin) / (vMax - vMin || 1)) * (hauteur - 2 * marge);
@@ -129,12 +160,16 @@ function GraphiqueHampel({ points }) {
       <svg ref={svgRef} viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
         <path d={cheminBrut} fill="none" stroke="#5a6270" strokeWidth="1" />
         <path d={cheminFiltre} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
-        {points.map((p, i) => p.aberrant && (
-          <circle key={i} cx={x(temps[i])} cy={y(p.brut)} r="3" fill="#ff8080" />
-        ))}
-        <text x={marge} y={16} fill="#5a6270" fontSize="12">— brut</text>
-        <text x={marge + 60} y={16} fill="#7fd4ff" fontSize="12">— filtré (ajusté)</text>
-        <text x={marge + 190} y={16} fill="#ff8080" fontSize="12">● point corrigé</text>
+        {points.map((p, i) => p.aberrant && <circle key={i} cx={x(temps[i])} cy={y(p.brut)} r="3" fill="#ff8080" />)}
+        <text x={marge} y={16} fill="#5a6270" fontSize="12">
+          — brut
+        </text>
+        <text x={marge + 60} y={16} fill="#7fd4ff" fontSize="12">
+          — filtré (ajusté)
+        </text>
+        <text x={marge + 190} y={16} fill="#ff8080" fontSize="12">
+          ● point corrigé
+        </text>
       </svg>
       <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier="filtre-hampel" />
     </div>
