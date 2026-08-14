@@ -176,3 +176,31 @@ from(bucket: "{config.INFLUX_BUCKET}")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
     return points
+
+
+@router.get("/espace-disque")
+def espace_disque(jours: int = 30) -> dict:
+    """Évolution de l'espace disque InfluxDB — mesure `disk_usage_bytes`,
+    écrite toutes les 6h par un cron sur le VPS (scripts/verifier_espace_
+    disque_influxdb.sh, section 32, 14/08/2026) : `du -sb` sur le volume
+    InfluxDB via kubectl exec, puis `influx write`. Pas calculé par la
+    webapp elle-même — aucun accès au système de fichiers du pod InfluxDB
+    (pod séparé), et lui donner cet accès demanderait des permissions RBAC
+    plus larges que nécessaire."""
+    flux = f'''
+from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: -{int(jours)}d)
+  |> filter(fn: (r) => r._measurement == "disk_usage_bytes")
+  |> filter(fn: (r) => r._field == "value")
+  |> sort(columns: ["_time"])
+'''
+    try:
+        points = [
+            {"time": record.get_time().isoformat(), "octets": record.get_value()}
+            for table in query_api().query(flux, org=config.INFLUX_ORG)
+            for record in table.records
+        ]
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
+    dernier = points[-1] if points else None
+    return {"dernier_octets": dernier["octets"] if dernier else None, "mesure_le": dernier["time"] if dernier else None, "points": points}

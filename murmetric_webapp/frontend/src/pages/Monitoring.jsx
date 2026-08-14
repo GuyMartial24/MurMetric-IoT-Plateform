@@ -74,6 +74,74 @@ export default function Monitoring() {
       {etat && Object.entries(etat).map(([pipeline, infos]) => (
         <CartePipeline key={pipeline} pipeline={pipeline} infos={infos} />
       ))}
+      <CarteEspaceDisque />
+    </div>
+  );
+}
+
+function formaterOctets(octets) {
+  if (octets == null) return "?";
+  return `${(octets / 1e9).toFixed(2)} Go`;
+}
+
+function CarteEspaceDisque() {
+  const [donnees, setDonnees] = useState(null);
+  const [erreur, setErreur] = useState(null);
+
+  useEffect(() => {
+    api.monitoringEspaceDisque(30).then(setDonnees).catch((e) => setErreur(e.message));
+  }, []);
+
+  return (
+    <div className="carte">
+      <h3 style={{ marginTop: 0 }}>Espace disque InfluxDB</h3>
+      <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
+        Mesuré toutes les 6h par une tâche cron sur le VPS (taille réelle sur disque, pas un nombre de points).
+      </p>
+      {erreur && <p className="erreur">{erreur}</p>}
+      {donnees && (
+        <>
+          <div style={{ fontSize: "0.88rem" }}>
+            <div style={{ color: "#a0a6b5" }}>Dernière mesure</div>
+            <div>
+              {formaterOctets(donnees.dernier_octets)}
+              {donnees.mesure_le ? ` (${ilYA(donnees.mesure_le)})` : ""}
+            </div>
+          </div>
+          <GraphiqueEspaceDisque points={donnees.points} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function GraphiqueEspaceDisque({ points }) {
+  if (!points || points.length < 2) {
+    return (
+      <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
+        Pas encore assez de mesures pour tracer une évolution (une mesure toutes les 6h).
+      </p>
+    );
+  }
+
+  const largeur = 900, hauteur = 120, marge = 30;
+  const temps = points.map((p) => new Date(p.time).getTime());
+  const valeurs = points.map((p) => p.octets);
+  const tMin = Math.min(...temps), tMax = Math.max(...temps);
+  const vMin = Math.min(...valeurs), vMax = Math.max(...valeurs);
+
+  const x = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (largeur - 2 * marge);
+  const y = (v) => hauteur - marge - ((v - vMin) / (vMax - vMin || 1)) * (hauteur - 2 * marge);
+  const chemin = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(temps[i])},${y(valeurs[i])}`).join(" ");
+
+  return (
+    <div style={{ marginTop: "0.75rem" }}>
+      <div style={{ color: "#a0a6b5", fontSize: "0.78rem", marginBottom: "0.25rem" }}>
+        Évolution sur les 30 derniers jours.
+      </div>
+      <svg viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
+        <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
+      </svg>
     </div>
   );
 }

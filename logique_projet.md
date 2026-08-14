@@ -3657,8 +3657,60 @@ conception initiale, seules les deux pages de courbe principale
 manquaient ce message. Déployé et vérifié (health check OK après
 rollout).
 
+### Suivi de l'espace disque InfluxDB (14/08/2026, même jour)
+
+**Origine.** Après le monitoring des pipelines, l'utilisateur a demandé
+si le nombre de lignes par mesure pouvait être suivi dans le temps —
+analyse validée (un débit qui grimpe/stagne détecterait une dégradation
+partielle qu'une simple fraîcheur ne verrait pas), mais **pas encore
+implémenté** (options A "compteur ajouté au heartbeat" + B "comptage
+InfluxDB borné dans le temps" proposées et discutées, en attente d'un
+"quittus" explicite de l'utilisateur avant tout code — rien fait à ce
+stade). Question complémentaire posée dans la foulée : suivre l'évolution
+de l'**espace disque** InfluxDB (différent d'un nombre de points :
+compression/index font que ce n'est pas proportionnel). Option A retenue
+et implémentée immédiatement (approuvée explicitement) : vérification
+périodique légère, résultat écrit dans InfluxDB lui-même.
+
+**Contrainte de conception** : la webapp tourne dans un pod séparé de
+celui d'InfluxDB, sans accès à son système de fichiers — lui donner cet
+accès (exec dans un autre pod) demanderait des permissions RBAC plus
+larges que nécessaire pour ce besoin.
+
+**Implémenté** :
+- `scripts/verifier_espace_disque_influxdb.sh` (nouveau, versionné dans
+  le dépôt) : `kubectl exec influxdb-0 -- du -sb /var/lib/influxdb2`
+  (chemin du volume confirmé en direct, ~15 Go mesurés — cohérent avec
+  l'estimation précédente de la session) puis `kubectl exec influxdb-0
+  -- influx write` du résultat dans la mesure `disk_usage_bytes`
+  (tag `host=influxdb-0`), même bucket que le reste (`Test_Capteurs`,
+  comme les battements de vie).
+- **Installé en tâche cron sur le VPS** (crontab de l'utilisateur
+  `ubuntu`, PAS un CronJob Kubernetes — aucun composant/permission
+  supplémentaire, réutilise `kubectl`/`influx` déjà disponibles sur
+  l'hôte) : `0 */6 * * *`, log dans `scripts/espace_disque.log`. Aucun
+  crontab existant avant cette tâche (vérifié avant d'ajouter).
+- `GET /api/monitoring/espace-disque` (`monitoring.py`, nouveau) :
+  historique borné (30 jours par défaut) + dernière valeur.
+- Nouveau panneau "Espace disque InfluxDB" sur la page Monitoring
+  (dernière mesure formatée en Go + courbe d'évolution, même style que
+  le graphique du buffer SQLite déjà présent).
+
+**Vérifié réel** : script exécuté manuellement une première fois avant
+d'installer le cron (15 942 526 193 octets, confirmé écrit dans
+InfluxDB par une requête directe) ; endpoint `/api/monitoring/espace-
+disque` revérifié après déploiement de la webapp → renvoie bien ce même
+point. Un seul point pour l'instant (première mesure) — la courbe
+d'évolution se peuplera au fil des exécutions du cron (toutes les 6h).
+
 ## Points ouverts / non implémentés
 
+- **Suivi du débit d'ingestion (nombre de points/lignes par mesure dans le
+  temps)** — analyse validée avec l'utilisateur, deux options discutées
+  (compteur ajouté au heartbeat + comptage InfluxDB borné dans le temps),
+  **en attente d'un accord explicite avant implémentation** (section 32,
+  14/08/2026). Distinct du suivi d'espace disque, déjà implémenté le même
+  jour.
 - Pas de décodage de la pression (versions 27/43).
 - Le token InfluxDB est défini en dur dans les scripts — à injecter via la
   variable d'environnement `INFLUX_TOKEN` ou un secret Kubernetes.

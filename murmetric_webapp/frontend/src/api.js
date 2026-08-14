@@ -54,4 +54,5 @@ export const api = {
   monitoringEtat: () => requete("/api/monitoring/etat"),
   monitoringHeartbeats: (pipeline, heures = 24) =>
     requete(`/api/monitoring/heartbeats?${new URLSearchParams({ pipeline, heures })}`),
+  monitoringEspaceDisque: (jours = 30) => requete(`/api/monitoring/espace-disque?${new URLSearchParams({ jours })}`),
 };
