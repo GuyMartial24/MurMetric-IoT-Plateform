@@ -3423,6 +3423,29 @@ points) comme avant — `GraphiqueSVG` filtre désormais côté client sur la
 grandeur choisie, rendant l'humidité et le point de rosée effectivement
 traçables pour la première fois dans la Vue d'ensemble/l'Assistant.
 
+### Bug trouvé et corrigé — "SOCMA 2" invisible dans le champ Mur (14/08/2026)
+
+**Symptôme signalé par l'utilisateur** : "SOCMA 2" n'apparaît pas dans la
+liste déroulante du champ Mur. Vérifié en direct côté API
+(`/api/mesures/valeurs-tags?type=hr_t`) : SOCMA 2 est bien présent, 25
+combinaisons mur/couche/position réelles avec des centaines à quelques
+milliers de points chacune — **ce n'était pas un problème de donnée**.
+
+**Cause réelle** : "Mur" était un `<input list>` (autocomplete natif),
+pré-rempli avec "SOCMA 1" par défaut — la plupart des navigateurs filtrent
+les suggestions de la `<datalist>` sur le texte déjà présent dans le
+champ, masquant donc "SOCMA 2" tant que le champ n'était pas vidé
+manuellement. Comportement natif du navigateur, pas un bug côté appli,
+mais une vraie régression de découvrabilité par rapport à un menu
+déroulant classique.
+
+**Corrigé** : "Mur" passé en `<select>` strict (comme "Grandeur") — seules
+2 valeurs stables et propres ("SOCMA 1"/"SOCMA 2"), sans le problème de
+casse variable qui justifiait le texte libre pour "Couche" (qui reste en
+`<input list>`, casse réellement incohérente en base — cf. section 32,
+découverte du 12/08/2026). Déployé et vérifié réel (health check OK après
+rollout).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

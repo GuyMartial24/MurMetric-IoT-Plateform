@@ -15,12 +15,21 @@ import { GRANDEURS_MESURABLES } from "../nomogrammeAxes.js";
 // portés dans `valeur` — un champ en trop (`champ`) que le backend ignore
 // silencieusement (Pydantic extra="ignore" par défaut) ne casse rien.
 //
-// Mur/couche en <input list> (autocomplete natif) plutôt qu'un menu
-// déroulant strict : les vraies valeurs en base sont du texte libre, pas
-// des noms canoniques (ex. "interface carreau et exterieur", pas
-// "carreau_ext" — cf. logique_projet.md section 32, découverte du
-// 12/08/2026) — /api/mesures/valeurs-tags les propose sans empêcher de
-// saisir une valeur pas encore vue (ex. un nouveau capteur).
+// Couche en <input list> (autocomplete natif) plutôt qu'un menu déroulant
+// strict : les vraies valeurs en base sont du texte libre, pas des noms
+// canoniques et pas toujours cohérentes en casse (ex. "interface carreau
+// et exterieur", "Milieu carreau" vs "milieu carreau" — cf.
+// logique_projet.md section 32, découverte du 12/08/2026) —
+// /api/mesures/valeurs-tags les propose sans empêcher de saisir une
+// valeur pas encore vue (ex. un nouveau capteur).
+//
+// Mur en <select> strict (pas un <input list>) : seulement 2 valeurs
+// stables et propres ("SOCMA 1"/"SOCMA 2"), sans le problème de casse de
+// couche — un <input list> pré-rempli filtrait les suggestions sur le
+// texte déjà présent et masquait "SOCMA 2" tant que le champ n'était pas
+// vidé, découvert le 14/08/2026 (question directe de l'utilisateur :
+// "pourquoi SOCMA 2 n'apparaît pas ?" — la donnée était bien là, c'était
+// un problème de champ, pas de données manquantes).
 export default function SelecteurMesure({ valeur, onChange }) {
   const [combinaisons, setCombinaisons] = useState([]);
 
@@ -54,8 +63,10 @@ export default function SelecteurMesure({ valeur, onChange }) {
       </div>
       <div className="champ">
         <label>Mur</label>
-        <input list="murs-connus" value={valeur.mur || ""} onChange={(e) => definir("mur", e.target.value)} placeholder="ex. SOCMA 1" />
-        <datalist id="murs-connus">{murs.map((m) => <option key={m} value={m} />)}</datalist>
+        <select value={valeur.mur || ""} onChange={(e) => definir("mur", e.target.value)}>
+          {murs.length === 0 && <option value={valeur.mur || ""}>{valeur.mur || "Chargement..."}</option>}
+          {murs.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
       </div>
       <div className="champ">
         <label>Couche</label>
