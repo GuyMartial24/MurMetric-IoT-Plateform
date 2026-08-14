@@ -3471,6 +3471,24 @@ le menu affiche les valeurs telles qu'elles existent réellement, plus
 besoin de deviner l'orthographe en tapant. Déployé et vérifié réel (health
 check OK après rollout).
 
+### En-tête de courbe : libellé de la grandeur au lieu du code type (14/08/2026, même jour)
+
+**Symptôme** : le titre au-dessus du graphique dans l'Assistant IA
+affichait "Courbe — hr_t" pour une courbe de température — `hr_t` est le
+code technique du TYPE (regroupant température/humidité/point de rosée),
+pas la grandeur réellement affichée.
+
+**Corrigé** : `libelleGrandeur()` (`nomogrammeAxes.js`) élargie pour
+chercher dans `GRANDEURS_MESURABLES` (superset avec teneur en eau) plutôt
+que `AXES_GRANDEURS` seul — reste correcte pour ses appelants existants
+(nomogramme, jamais de teneur en eau) et devient utilisable hors
+nomogramme. `Assistant.jsx`/`VueEnsemble.jsx` : en-tête remplacé par
+`libelleGrandeur(`${selection.type}:${selection.champ}`)` → "Courbe —
+Température (°C)" au lieu de "Courbe — hr_t" (Assistant) / "Courbe —
+Température (°C)" au lieu du générique "Courbe valeur/temps" (Vue
+d'ensemble, même amélioration appliquée par cohérence). Déployé et
+vérifié réel (health check OK après rollout).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

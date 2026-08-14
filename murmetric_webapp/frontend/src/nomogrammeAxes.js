@@ -43,8 +43,12 @@ export const UNITES_TEMPS = {
   annee: { diviseur: 365.25 * 86_400_000, label: "années" },
 };
 
+// GRANDEURS_MESURABLES (superset incluant teneur en eau) plutôt que
+// AXES_GRANDEURS : cette fonction sert aussi hors nomogramme (en-tête de
+// courbe dans Vue d'ensemble/Assistant IA, demande du 14/08/2026) où la
+// teneur en eau est une grandeur choisissable.
 export function libelleGrandeur(valeur) {
-  return AXES_GRANDEURS.find((a) => a.valeur === valeur)?.label ?? valeur;
+  return GRANDEURS_MESURABLES.find((a) => a.valeur === valeur)?.label ?? valeur;
 }
 
 export function construireParamAxe(axe, canal) {

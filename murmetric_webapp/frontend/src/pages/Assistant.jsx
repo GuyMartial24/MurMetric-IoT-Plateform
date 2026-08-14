@@ -3,6 +3,7 @@ import { api } from "../api.js";
 import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
 import { svgVersDataUrl } from "../exportGraphique.js";
+import { libelleGrandeur } from "../nomogrammeAxes.js";
 
 export default function Assistant() {
   const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1", couche: "" });
@@ -72,7 +73,7 @@ export default function Assistant() {
 
       {points.length > 0 && (
         <div className="carte">
-          <h3 style={{ marginTop: 0 }}>Courbe — {selection.type}</h3>
+          <h3 style={{ marginTop: 0 }}>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</h3>
           <GraphiqueSVG ref={graphiqueRef} points={points} champ={selection.champ} />
         </div>
       )}

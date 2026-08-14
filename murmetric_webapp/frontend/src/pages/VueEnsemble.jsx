@@ -5,6 +5,7 @@ import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import Nomogramme from "../components/Nomogramme.jsx";
 import Nomogramme3D from "../components/Nomogramme3D.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
+import { libelleGrandeur } from "../nomogrammeAxes.js";
 
 export default function VueEnsemble() {
   const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1" });
@@ -39,7 +40,7 @@ export default function VueEnsemble() {
       </div>
       {points.length > 0 && (
         <div className="carte">
-          <h3 style={{ marginTop: 0 }}>Courbe valeur/temps</h3>
+          <h3 style={{ marginTop: 0 }}>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</h3>
           <GraphiqueSVG points={points} champ={selection.champ} />
         </div>
       )}
