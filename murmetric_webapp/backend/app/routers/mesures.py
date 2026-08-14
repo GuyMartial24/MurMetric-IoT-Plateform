@@ -38,9 +38,22 @@ _FENETRE_DEFAUT_JOURS = {"hr_t": 365, "retrait": 30, "teneur_eau": 365}
 
 
 def _valider_bornes(debut: str | None, fin: str | None, type_mesure: TypeMesure = "hr_t") -> tuple[str, str]:
+    """Retourne (debut, fin) en RFC3339 complet (avec fuseau) — les champs
+    <input type="date"> du frontend (ex. "2026-06-01") produisent un
+    datetime NAÏF via fromisoformat() (pas de composante horaire/fuseau) :
+    son .isoformat() ne se termine ni par "Z" ni par un offset, ce que le
+    parseur Flux ne reconnaît pas comme un littéral temporel valide dans
+    range(start: ..., stop: ...) — bug trouvé le 14/08/2026 (erreur de
+    compilation Flux en cascade dès qu'une période était choisie via les
+    champs Début/Fin). Toute date/heure naïve est donc explicitement
+    fixée en UTC avant sérialisation."""
     fin_dt = datetime.fromisoformat(fin.replace("Z", "+00:00")) if fin else datetime.now(timezone.utc)
+    if fin_dt.tzinfo is None:
+        fin_dt = fin_dt.replace(tzinfo=timezone.utc)
     jours = _FENETRE_DEFAUT_JOURS[type_mesure]
     debut_dt = datetime.fromisoformat(debut.replace("Z", "+00:00")) if debut else fin_dt - timedelta(days=jours)
+    if debut_dt.tzinfo is None:
+        debut_dt = debut_dt.replace(tzinfo=timezone.utc)
     return debut_dt.isoformat(), fin_dt.isoformat()
 
 

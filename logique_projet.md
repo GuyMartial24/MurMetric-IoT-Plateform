@@ -3613,6 +3613,34 @@ n'est jamais garantie à 100% suivie par un LLM.
 avec 5 apostrophes et 10 lettres accentuées correctement formées, plus
 aucune perte constatée.
 
+### Bug trouvé et corrigé — erreur de compilation Flux en cascade avec les champs Début/Fin (14/08/2026, même jour)
+
+**Symptôme signalé par l'utilisateur** : message d'erreur "Requête
+InfluxDB échouée : compilation failed..." dès qu'une période était
+choisie via les champs Début/Fin (ex. 01/06/2026 → 13/08/2026).
+
+**Cause** : `<input type="date">` produit une date sans heure ni fuseau
+(ex. "2026-06-01"). `datetime.fromisoformat()` la parse en datetime
+**naïf** (sans tzinfo) ; son `.isoformat()` ne se termine ni par "Z" ni
+par un offset — le littéral temporel interpolé dans la requête Flux
+(`range(start: 2026-06-01T00:00:00, stop: ...)`, sans fuseau) n'est pas
+reconnu par le parseur Flux, provoquant une cascade d'erreurs de
+compilation. Reproduit en direct avec les valeurs exactes de
+l'utilisateur avant tout correctif.
+
+**Corrigé** : `_valider_bornes()` (`mesures.py`, partagée par
+`/api/mesures`, `/api/mesures/croisement` et l'assistant IA — un seul
+point de correction pour tous les chemins concernés) fixe désormais
+explicitement `tzinfo=timezone.utc` sur toute date/heure naïve avant
+sérialisation.
+
+**Vérifié réel** : requête exacte de l'utilisateur (01/06/2026 →
+13/08/2026, SOCMA 1 + Milieu carreau + température) → 200 OK, 0 point
+(vérifié séparément par une requête directe sur InfluxDB : la dernière
+vraie donnée pour ce mur+couche date du 23/03/2026, bien avant la période
+demandée — le "0 point" est donc correct, pas un signe d'un problème
+résiduel).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
