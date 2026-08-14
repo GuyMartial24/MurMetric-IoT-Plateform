@@ -3641,6 +3641,22 @@ vraie donnée pour ce mur+couche date du 23/03/2026, bien avant la période
 demandée — le "0 point" est donc correct, pas un signe d'un problème
 résiduel).
 
+### Message explicite quand une sélection ne renvoie aucune donnée (14/08/2026, même jour)
+
+Suite directe du correctif ci-dessus : le cas "0 point" qu'il vient de
+démasquer était jusque-là **silencieux** — `VueEnsemble.jsx`/`Assistant.jsx`
+n'affichaient la carte "Courbe" que si `points.length > 0`, donc un
+résultat vide ne montrait tout simplement rien, sans explication.
+
+**Corrigé** : `points` distingue maintenant explicitement "pas encore
+chargé" (`null`, état initial) de "chargé mais vide" (`[]`) — un message
+"Aucune donnée pour cette sélection sur la période choisie..." s'affiche
+désormais dans ce second cas, dans les deux pages. Le nomogramme
+(`Nomogramme.jsx`/`Nomogramme3D.jsx`) avait déjà ce traitement depuis sa
+conception initiale, seules les deux pages de courbe principale
+manquaient ce message. Déployé et vérifié (health check OK après
+rollout).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

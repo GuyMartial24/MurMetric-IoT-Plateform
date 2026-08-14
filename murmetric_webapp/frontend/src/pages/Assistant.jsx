@@ -7,7 +7,7 @@ import { libelleGrandeur } from "../nomogrammeAxes.js";
 
 export default function Assistant() {
   const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1", couche: "" });
-  const [points, setPoints] = useState([]);
+  const [points, setPoints] = useState(null); // null = pas encore chargé, [] = chargé mais vide
   const [mode, setMode] = useState("explain");
   const [prompt, setPrompt] = useState("");
   const [historique, setHistorique] = useState([]);
@@ -75,10 +75,18 @@ export default function Assistant() {
         </button>
       </div>
 
-      {points.length > 0 && (
+      {points && points.length > 0 && (
         <div className="carte">
           <h3 style={{ marginTop: 0 }}>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</h3>
           <GraphiqueSVG ref={graphiqueRef} points={points} champ={selection.champ} />
+        </div>
+      )}
+      {points && points.length === 0 && (
+        <div className="carte">
+          <p>
+            Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie
+            le mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
+          </p>
         </div>
       )}
 
@@ -98,8 +106,8 @@ export default function Assistant() {
           <button onClick={() => envoyer(false)} disabled={enCours}>{enCours ? "Réflexion..." : "Envoyer"}</button>
           <button
             onClick={() => envoyer(true)}
-            disabled={enCours || points.length === 0}
-            title={points.length === 0 ? "Charge d'abord la courbe ci-dessus" : "Envoie l'image du graphique à l'IA (analyse visuelle)"}
+            disabled={enCours || !points || points.length === 0}
+            title={!points || points.length === 0 ? "Charge d'abord la courbe ci-dessus" : "Envoie l'image du graphique à l'IA (analyse visuelle)"}
           >
             {enCours ? "Réflexion..." : "Envoyer avec le graphique"}
           </button>

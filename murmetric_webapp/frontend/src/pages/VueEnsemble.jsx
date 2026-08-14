@@ -9,7 +9,7 @@ import { libelleGrandeur } from "../nomogrammeAxes.js";
 
 export default function VueEnsemble() {
   const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1" });
-  const [points, setPoints] = useState([]);
+  const [points, setPoints] = useState(null); // null = pas encore chargé, [] = chargé mais vide
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
   const [mode3D, setMode3D] = useState(false);
@@ -38,10 +38,18 @@ export default function VueEnsemble() {
         </button>
         {erreur && <p className="erreur">{erreur}</p>}
       </div>
-      {points.length > 0 && (
+      {points && points.length > 0 && (
         <div className="carte">
           <h3 style={{ marginTop: 0 }}>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</h3>
           <GraphiqueSVG points={points} champ={selection.champ} />
+        </div>
+      )}
+      {points && points.length === 0 && (
+        <div className="carte">
+          <p>
+            Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie
+            le mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
+          </p>
         </div>
       )}
       {(selection.type === "hr_t" || selection.type === "retrait") && (
