@@ -33,7 +33,7 @@ export default function Assistant() {
   const envoyer = async (avecGraphique) => {
     if (!prompt.trim()) return;
     const question = prompt;
-    setHistorique((h) => [...h, { role: "utilisateur", texte: avecGraphique ? `📎 ${question}` : question }]);
+    setHistorique((h) => [...h, { role: "utilisateur", texte: question, avecGraphique }]);
     setPrompt("");
     setEnCours(true);
     setErreur(null);
@@ -92,7 +92,14 @@ export default function Assistant() {
 
       <div className="carte">
         {historique.map((m, i) => (
-          <div key={i} className={`chat-message ${m.role}`}>{m.texte}</div>
+          <div key={i} className={`chat-message ${m.role}`}>
+            {m.avecGraphique && (
+              <span style={{ display: "inline-block", fontSize: "0.72rem", color: "#a0a6b5", border: "1px solid #3a4152", borderRadius: "4px", padding: "0 0.35rem", marginRight: "0.4rem" }}>
+                graphique joint
+              </span>
+            )}
+            {m.texte}
+          </div>
         ))}
         {erreur && <p className="erreur">{erreur}</p>}
         <textarea

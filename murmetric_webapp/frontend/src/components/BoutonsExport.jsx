@@ -38,8 +38,8 @@ export default function BoutonsExport({ obtenirElement, type, nomFichier = "grap
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>
-      <button type="button" onClick={telecharger}>⬇ Télécharger PNG</button>
-      <button type="button" onClick={copier} disabled={enCours}>📋 Copier l'image</button>
+      <button type="button" onClick={telecharger}>Télécharger PNG</button>
+      <button type="button" onClick={copier} disabled={enCours}>Copier l'image</button>
       {message && <span style={{ color: "#7fd4ff", fontSize: "0.8rem" }}>{message}</span>}
     </div>
   );

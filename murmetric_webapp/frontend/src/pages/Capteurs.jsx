@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import Pastille from "../components/Pastille.jsx";
 
 // Édition en place (chantier "source unique", section 32, 13/08/2026) :
 // capteurs.json/capteurs_retrait.json vivent désormais sur le volume
@@ -123,7 +124,7 @@ function TableauCapteurs({ titre, lignes, colonnes, champsEditables, cleColonne,
                         />
                       )
                     ) : champ === "ingestion" ? (
-                      c.ingestion ? "✅" : "—"
+                      c.ingestion ? <Pastille etat="ok" texte="Oui" /> : "—"
                     ) : (
                       c[champ]
                     )}

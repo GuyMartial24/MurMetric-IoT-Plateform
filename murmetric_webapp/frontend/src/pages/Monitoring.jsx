@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
+import Pastille from "../components/Pastille.jsx";
 
 const COULEURS = {
   ok: "#4caf50",
@@ -179,7 +180,7 @@ function CartePipeline({ pipeline, infos }) {
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Connexion MQTT</div>
-              <div>{hb.mqtt_connecte ? "✅ connecté" : "❌ déconnecté"}</div>
+              <div>{hb.mqtt_connecte ? <Pastille etat="ok" texte="Connecté" /> : <Pastille etat="erreur" texte="Déconnecté" />}</div>
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Buffer local en attente</div>
@@ -187,7 +188,7 @@ function CartePipeline({ pipeline, infos }) {
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Registre capteurs (API)</div>
-              <div>{hb.registre_api_ok ? "✅ à jour" : "⚠️ dernier appel en échec"}</div>
+              <div>{hb.registre_api_ok ? <Pastille etat="ok" texte="À jour" /> : <Pastille etat="attention" texte="Dernier appel en échec" />}</div>
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Points publiés / bufferisés (cumul process)</div>
