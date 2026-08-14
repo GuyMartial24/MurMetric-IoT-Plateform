@@ -13,6 +13,18 @@ export const AXES_GRANDEURS = [
 export const AXES_DISPONIBLES = [{ valeur: "temps", label: "Temps" }, ...AXES_GRANDEURS];
 export const CANAUX_RETRAIT = ["HA1", "HA2", "VA1", "VA2", "HB1", "HB2", "VB1", "VB2"];
 
+// Catalogue complet des grandeurs mesurables — AXES_GRANDEURS + teneur en
+// eau, pour le sélecteur "Grandeur" de Vue d'ensemble/Assistant IA (demande
+// explicite du 14/08/2026 : chaque grandeur séparée plutôt que regroupée
+// par type hr_t/retrait). Teneur en eau volontairement EXCLUE du catalogue
+// nomogramme ci-dessus : données éparses saisies manuellement, pas de sens
+// à la croiser avec des séries denses hr_t/retrait — mais elle doit rester
+// choisissable comme grandeur à charger/analyser seule.
+export const GRANDEURS_MESURABLES = [
+  ...AXES_GRANDEURS,
+  { valeur: "teneur_eau:teneur_eau_pourcent", label: "Teneur en eau (%)" },
+];
+
 // Type de tracé (façon POC : nuage de points, ou trait reliant les points
 // dans l'ordre chronologique — utile pour suivre une trajectoire dans
 // l'espace des grandeurs plutôt qu'un simple nuage) — demande explicite

@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
-
-const TYPES = [
-  { valeur: "hr_t", label: "Température / humidité (HR/T)" },
-  { valeur: "retrait", label: "Retrait (DeweSoft)" },
-  { valeur: "teneur_eau", label: "Teneur en eau" },
-];
+import { GRANDEURS_MESURABLES } from "../nomogrammeAxes.js";
 
 // Sélection partagée par la Vue d'ensemble et l'Assistant IA — même forme
 // que le modèle `Selection` côté backend (app/routers/assistant.py).
+//
+// Le picker "Grandeur" expose les mêmes éléments que les axes du
+// nomogramme (température/humidité/point de rosée/retrait brut-filtré/
+// teneur en eau séparés, pas regroupés par type hr_t/retrait/teneur_eau —
+// demande explicite du 14/08/2026). `type` (hr_t/retrait/teneur_eau, ce
+// dont le backend a besoin pour choisir la mesure InfluxDB et les tags) et
+// `champ` (le champ InfluxDB précis, utilisé par GraphiqueSVG pour tracer
+// la bonne courbe) sont dérivés automatiquement de la grandeur choisie et
+// portés dans `valeur` — un champ en trop (`champ`) que le backend ignore
+// silencieusement (Pydantic extra="ignore" par défaut) ne casse rien.
 //
 // Mur/couche en <input list> (autocomplete natif) plutôt qu'un menu
 // déroulant strict : les vraies valeurs en base sont du texte libre, pas
@@ -25,6 +30,13 @@ export default function SelecteurMesure({ valeur, onChange }) {
 
   const definir = (champ, val) => onChange({ ...valeur, [champ]: val });
 
+  const definirGrandeur = (grandeurValeur) => {
+    const [type, champ] = grandeurValeur.split(":");
+    onChange({ ...valeur, type, champ });
+  };
+
+  const grandeurActuelle = `${valeur.type}:${valeur.champ}`;
+
   const cleMur = valeur.type === "teneur_eau" ? "mur" : "nom_mur";
   const cleCouche = valeur.type === "teneur_eau" ? "couche" : "nom_couche";
   const murs = [...new Set(combinaisons.map((c) => c[cleMur]).filter(Boolean))];
@@ -33,10 +45,10 @@ export default function SelecteurMesure({ valeur, onChange }) {
   return (
     <div className="selection-form">
       <div className="champ">
-        <label>Type de mesure</label>
-        <select value={valeur.type} onChange={(e) => definir("type", e.target.value)}>
-          {TYPES.map((t) => (
-            <option key={t.valeur} value={t.valeur}>{t.label}</option>
+        <label>Grandeur</label>
+        <select value={grandeurActuelle} onChange={(e) => definirGrandeur(e.target.value)}>
+          {GRANDEURS_MESURABLES.map((g) => (
+            <option key={g.valeur} value={g.valeur}>{g.label}</option>
           ))}
         </select>
       </div>

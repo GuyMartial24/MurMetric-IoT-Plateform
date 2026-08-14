@@ -6,10 +6,8 @@ import Nomogramme from "../components/Nomogramme.jsx";
 import Nomogramme3D from "../components/Nomogramme3D.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
 
-const CHAMP_PRINCIPAL = { hr_t: "temperature", retrait: "valeur_filtree", teneur_eau: "teneur_eau_pourcent" };
-
 export default function VueEnsemble() {
-  const [selection, setSelection] = useState({ type: "hr_t", mur: "SOCMA 1" });
+  const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1" });
   const [points, setPoints] = useState([]);
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
@@ -42,7 +40,7 @@ export default function VueEnsemble() {
       {points.length > 0 && (
         <div className="carte">
           <h3 style={{ marginTop: 0 }}>Courbe valeur/temps</h3>
-          <GraphiqueSVG points={points} champ={CHAMP_PRINCIPAL[selection.type]} />
+          <GraphiqueSVG points={points} champ={selection.champ} />
         </div>
       )}
       {(selection.type === "hr_t" || selection.type === "retrait") && (

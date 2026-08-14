@@ -4,10 +4,8 @@ import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
 import { svgVersDataUrl } from "../exportGraphique.js";
 
-const CHAMP_PRINCIPAL = { hr_t: "temperature", retrait: "valeur_filtree", teneur_eau: "teneur_eau_pourcent" };
-
 export default function Assistant() {
-  const [selection, setSelection] = useState({ type: "hr_t", mur: "SOCMA 1", couche: "carreau_ext" });
+  const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1", couche: "carreau_ext" });
   const [points, setPoints] = useState([]);
   const [mode, setMode] = useState("explain");
   const [prompt, setPrompt] = useState("");
@@ -75,7 +73,7 @@ export default function Assistant() {
       {points.length > 0 && (
         <div className="carte">
           <h3 style={{ marginTop: 0 }}>Courbe — {selection.type}</h3>
-          <GraphiqueSVG ref={graphiqueRef} points={points} champ={CHAMP_PRINCIPAL[selection.type]} />
+          <GraphiqueSVG ref={graphiqueRef} points={points} champ={selection.champ} />
         </div>
       )}
 

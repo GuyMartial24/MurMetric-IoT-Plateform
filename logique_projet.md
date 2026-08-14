@@ -3371,6 +3371,58 @@ session) :
   essai avec un PNG construit à la main en hex était mal formé, réponse
   incohérente — refait proprement) → réponse "Rouge" correcte.
 
+### Sélecteur "Grandeur" séparé — température/humidité/point de rosée/retrait/teneur en eau (14/08/2026)
+
+**Origine.** Retour à la question initiale de la veille sur l'alignement
+du sélecteur avec le catalogue d'axes du nomogramme — cette fois demande
+explicite et sans ambiguïté : séparer chaque grandeur plutôt que les
+regrouper par type hr_t/retrait/teneur_eau dans "Type de mesure".
+
+**Découverte en creusant** : le problème n'était pas que cosmétique.
+`VueEnsemble.jsx`/`Assistant.jsx` fixaient le champ tracé via une table
+`CHAMP_PRINCIPAL` figée (`hr_t`→"temperature" toujours, `retrait`→
+"valeur_filtree" toujours) — **il n'existait donc aucun moyen de tracer
+une courbe d'humidité ou de point de rosée dans la Vue d'ensemble ou
+l'Assistant**, alors même que `/api/mesures` renvoie déjà les 3 champs
+hr_t (vérifié : `GraphiqueSVG` les reçoit tous mais n'affichait que celui
+imposé par la table figée). Seul le nomogramme (2D/3D) permettait déjà de
+choisir la grandeur librement, via son propre catalogue `AXES_GRANDEURS`.
+
+**Corrigé — réutilisation du catalogue nomogramme plutôt qu'une nouvelle
+liste parallèle :**
+- `nomogrammeAxes.js` : nouvel export `GRANDEURS_MESURABLES` =
+  `AXES_GRANDEURS` (température/humidité/point de rosée/retrait filtré/
+  retrait brut, catalogue nomogramme **inchangé**) + teneur en eau.
+  Teneur en eau volontairement exclue du catalogue nomogramme partagé
+  (données éparses saisies manuellement, aucun sens à la croiser avec des
+  séries denses hr_t/retrait) mais doit rester choisissable seule dans
+  Vue d'ensemble/Assistant — d'où une liste séparée plutôt qu'une
+  extension du catalogue nomogramme.
+- `SelecteurMesure.jsx` : "Type de mesure" (3 options groupées) remplacé
+  par "Grandeur" (6 options séparées, valeurs/libellés identiques au
+  nomogramme pour les grandeurs communes). `type` (dont le backend a
+  besoin) et `champ` (dont `GraphiqueSVG` a besoin) sont dérivés
+  automatiquement de la grandeur choisie et portés dans l'objet
+  `selection` partagé.
+- `VueEnsemble.jsx`/`Assistant.jsx` : table `CHAMP_PRINCIPAL` supprimée,
+  `GraphiqueSVG` reçoit directement `selection.champ`.
+- **Aucun changement backend nécessaire** : `champ` voyage dans les
+  requêtes (`/api/mesures?...&champ=...`, `selection` envoyée à
+  l'assistant) mais n'est déclaré nulle part côté backend — ignoré
+  silencieusement par FastAPI (query param non déclaré) et Pydantic
+  (`extra="ignore"` par défaut sur `Selection`), vérifié en direct
+  (aucune erreur, comportement inchangé pour les champs déjà gérés).
+  `calculer_statistiques()` continue de renvoyer TOUTES les grandeurs du
+  type (pas seulement celle sélectionnée dans le picker) — la sélection
+  fine ne restreint que ce qui est TRACÉ visuellement, pas ce que
+  l'assistant reçoit en contexte, pour ne pas revenir sur le correctif de
+  la veille.
+**Vérifié réel (VPS)** : `GET /api/mesures?type=hr_t&champ=humidite&...`
+renvoie bien les 3 champs (température/humidité/point de rosée, 7941
+points) comme avant — `GraphiqueSVG` filtre désormais côté client sur la
+grandeur choisie, rendant l'humidité et le point de rosée effectivement
+traçables pour la première fois dans la Vue d'ensemble/l'Assistant.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
