@@ -31,6 +31,8 @@ def _traiter_message(payload: dict) -> None:
         f"registre_api_ok={1 if payload.get('registre_api_ok') else 0}i",
         f"nb_capteurs_connus={int(payload.get('nb_capteurs_connus') or 0)}i",
         f'demarre_le="{echap_field_str(payload.get("demarre_le") or "")}"',
+        f"nb_points_publies={int(payload.get('nb_points_publies') or 0)}i",
+        f"nb_points_bufferises={int(payload.get('nb_points_bufferises') or 0)}i",
     ])
     write_point(f"{MESURE_HEARTBEAT},pipeline={pipeline},machine={machine} {champs}")
 

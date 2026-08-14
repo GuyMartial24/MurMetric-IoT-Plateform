@@ -754,6 +754,8 @@ def envoyer_heartbeat_si_du() -> None:
         "buffer_sqlite_en_attente": compter_messages_en_attente(),
         "registre_api_ok": _dernier_registre_api_ok,
         "nb_capteurs_connus": len(CAPTEURS_RETRAIT_CONNUS),
+        "nb_points_publies": _nb_publies,
+        "nb_points_bufferises": _nb_bufferises,
     }
     publier_ou_stocker(MQTT_TOPIC_HEARTBEAT, payload)
 

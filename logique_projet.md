@@ -3703,14 +3703,84 @@ disque` revérifié après déploiement de la webapp → renvoie bien ce même
 point. Un seul point pour l'instant (première mesure) — la courbe
 d'évolution se peuplera au fil des exécutions du cron (toutes les 6h).
 
+### Suivi du débit d'ingestion — options A+B (14/08/2026, même jour)
+
+**Origine.** Suite directe du suivi d'espace disque ci-dessus : accord
+explicite de l'utilisateur ("OK pour le suivi de débit a+b") pour les deux
+options proposées, complémentaires plutôt que redondantes — A capture le
+débit "vu par le process" (y compris ce qui part au buffer local), B
+capture le débit "vu par InfluxDB" (la vérité terrain, indépendante d'un
+bug éventuel côté process).
+
+**Implémenté** :
+- **Option A — compteurs cumulés dans le heartbeat.**
+  `ingestion_dewesoft_dxd.py` réutilisait déjà deux compteurs module-level
+  jamais remis à zéro (`_nb_publies`/`_nb_bufferises`) pour son log de fin
+  de fichier — simplement ajoutés au payload de `envoyer_heartbeat_si_du()`.
+  `ingestion_capteurs_bluetooth.py` n'avait pas cette paire : ajoutée
+  (nouveaux compteurs module-level, `publier_ou_stocker()` passé de `-> None`
+  à `-> bool` pour signaler succès MQTT vs bufferisation SQLite, site
+  d'appel dans `callback()` incrémente en conséquence), puis exposée dans
+  `tache_heartbeat()`.
+- **Option B — comptage InfluxDB borné dans le temps.** Nouvelle fonction
+  `_points_recus_fenetre()` (`monitoring.py`) : `count()` Flux sur une
+  fenêtre de 24h (défaut), tous canaux/capteurs actifs combinés en un seul
+  filtre `or` — performance testée en direct avant d'écrire le code final
+  (8 canaux retrait combinés, 24h : 0,65 s, 6,3M points, largement dans la
+  marge malgré la mise en garde connue sur `mesures_dewesoft` avec filtres
+  `or` combinés — cf. Historique 13/08/2026, "OOM InfluxDB" — cette
+  requête-ci reste un simple `count()`, pas le cas coûteux identifié
+  alors). Résultat exposé comme `points_24h` dans `GET /api/monitoring/etat`
+  pour chaque pipeline.
+- Page Monitoring (`Monitoring.jsx`) : nouveau champ "Points reçus (24h,
+  InfluxDB)" (option B) et "Points publiés / bufferisés (cumul process)"
+  (option A) dans chaque carte pipeline.
+
+**Bug trouvé et corrigé en vérifiant** (même famille que les précédents de
+cette session : ne jamais déclarer "fait" sans repasser par de vraies
+données) — après déploiement des deux scripts d'ingestion et de la webapp,
+`GET /api/monitoring/etat` renvoyait `points_24h` correctement (option B,
+données réelles confirmées : 6,27M points retrait/24h) mais
+`nb_points_publies`/`nb_points_bufferises` restaient `null` malgré le
+nouveau code déployé côté process. Cause : le battement de vie ne transite
+**pas** par le pipeline Kafka habituel (volontairement, cf. commentaire
+`monitoring_mqtt.py`) — il est reçu directement par un abonné MQTT interne
+à la webapp (`monitoring_mqtt.py`, broker `mosquitto:1883`) qui
+reconstruit lui-même la ligne Influx à écrire à partir d'une **liste de
+champs codée en dur** (`_traiter_message()`), sans jamais avoir été mise à
+jour pour les deux nouveaux champs — ils étaient donc bien publiés sur
+MQTT par les deux scripts, mais silencieusement ignorés à l'écriture dans
+InfluxDB. Corrigé (`nb_points_publies`/`nb_points_bufferises` ajoutés à la
+liste), redéployé, reconfirmé avec un vrai battement reçu après le
+correctif.
+
+**Vérifié réel** :
+- PC Amiens (tâche planifiée `MurMetric_Ingestion_DeweSoft`) et Raspberry
+  Pi (`murmetric-capteurs.service`) redéployés avec confirmation explicite
+  de l'utilisateur avant de toucher ces process de production ; buffer
+  SQLite vérifié vide avant chaque redémarrage (0 ligne sur le PC Amiens
+  via une requête directe sur `murmetric_buffer.db`), reprise immédiate
+  confirmée dans les deux cas (nouveau PID/heure de démarrage observée).
+- `GET /api/monitoring/etat` revérifié après le correctif
+  `monitoring_mqtt.py`, en attendant un vrai cycle de heartbeat (300s) sur
+  les deux pipelines :
+  - Retrait (PC Amiens) : `points_24h: 6 232 862` (option B, InfluxDB),
+    `nb_points_publies: 0`, `nb_points_bufferises: 1` sur le premier
+    battement post-redéploiement (un seul message bufferisé pendant la
+    fenêtre de reconnexion MQTT juste après le redémarrage — cohérent,
+    `mqtt_connecte` repassé à `true` dans la foulée).
+  - HR/T (Pi) : `nb_points_publies: 0`, `nb_points_bufferises: 0` — champs
+    bien présents (non `null`) sur le battement post-redéploiement,
+    confirmant le correctif côté `monitoring_mqtt.py` pour les deux
+    pipelines. `points_24h` reste `null` pour ce pipeline, `nb_sources_
+    actives: 0` — aucun capteur Blue Maestro actuellement détecté par le
+    Pi (logs : "Aucun capteur Blue Maestro détecté"), condition
+    préexistante sans rapport avec ce chantier, non traitée ici.
+- Mot de passe SSH fourni en session (identique pour les deux comptes),
+  jamais stocké.
+
 ## Points ouverts / non implémentés
 
-- **Suivi du débit d'ingestion (nombre de points/lignes par mesure dans le
-  temps)** — analyse validée avec l'utilisateur, deux options discutées
-  (compteur ajouté au heartbeat + comptage InfluxDB borné dans le temps),
-  **en attente d'un accord explicite avant implémentation** (section 32,
-  14/08/2026). Distinct du suivi d'espace disque, déjà implémenté le même
-  jour.
 - Pas de décodage de la pression (versions 27/43).
 - Le token InfluxDB est défini en dur dans les scripts — à injecter via la
   variable d'environnement `INFLUX_TOKEN` ou un secret Kubernetes.

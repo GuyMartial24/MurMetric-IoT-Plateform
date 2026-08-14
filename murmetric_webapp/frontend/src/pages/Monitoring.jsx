@@ -167,6 +167,10 @@ function CartePipeline({ pipeline, infos }) {
           <div style={{ color: "#a0a6b5" }}>Sources actives (ingestion activée)</div>
           <div>{infos.nb_sources_actives}</div>
         </div>
+        <div>
+          <div style={{ color: "#a0a6b5" }}>Points reçus (24h, InfluxDB)</div>
+          <div>{infos.points_24h != null ? infos.points_24h.toLocaleString("fr-FR") : "?"}</div>
+        </div>
         {hb ? (
           <>
             <div>
@@ -184,6 +188,13 @@ function CartePipeline({ pipeline, infos }) {
             <div>
               <div style={{ color: "#a0a6b5" }}>Registre capteurs (API)</div>
               <div>{hb.registre_api_ok ? "✅ à jour" : "⚠️ dernier appel en échec"}</div>
+            </div>
+            <div>
+              <div style={{ color: "#a0a6b5" }}>Points publiés / bufferisés (cumul process)</div>
+              <div>
+                {hb.nb_points_publies != null ? hb.nb_points_publies.toLocaleString("fr-FR") : "?"} /{" "}
+                {hb.nb_points_bufferises != null ? hb.nb_points_bufferises.toLocaleString("fr-FR") : "?"}
+              </div>
             </div>
             <div>
               <div style={{ color: "#a0a6b5" }}>Dernier battement</div>

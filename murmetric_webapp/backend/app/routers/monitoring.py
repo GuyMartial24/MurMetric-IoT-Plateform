@@ -69,6 +69,33 @@ from(bucket: "{config.INFLUX_BUCKET}")
     return dernier
 
 
+def _points_recus_fenetre(mesure: str, champ: str, tag: str, valeurs: list[str], heures: int) -> int | None:
+    """Nombre de points reçus sur une fenêtre bornée (défaut 24h) — débit
+    mesuré depuis InfluxDB (la vérité terrain), complémentaire du compteur
+    en mémoire du process transmis par le heartbeat (nb_points_publies) :
+    un débit qui chute sans s'arrêter complètement resterait "OK" côté
+    fraîcheur seule (section 32, 14/08/2026). Fenêtre bornée par nécessité :
+    un count() sur tout l'historique de mesures_dewesoft (~1,5 milliard de
+    points) serait disproportionnellement coûteux — testé en direct sur
+    24h/8 canaux combinés (retrait) : 0,65s, largement dans la marge."""
+    if not valeurs:
+        return None
+    filtre_valeurs = " or ".join(f'r.{tag} == "{flux_escape(v)}"' for v in valeurs)
+    flux = f'''
+from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: -{int(heures)}h)
+  |> filter(fn: (r) => r._measurement == "{mesure}")
+  |> filter(fn: (r) => r._field == "{champ}")
+  |> filter(fn: (r) => {filtre_valeurs})
+  |> group()
+  |> count()
+'''
+    for table in query_api().query(flux, org=config.INFLUX_ORG):
+        for record in table.records:
+            return record.get_value()
+    return 0
+
+
 def _statut(dernier: datetime | None, seuils: dict) -> tuple[str, float | None]:
     if dernier is None:
         return "critique", None
@@ -114,6 +141,8 @@ from(bucket: "{config.INFLUX_BUCKET}")
                 "registre_api_ok": bool(v.get("registre_api_ok")),
                 "nb_capteurs_connus": v.get("nb_capteurs_connus"),
                 "demarre_le": v.get("demarre_le"),
+                "nb_points_publies": v.get("nb_points_publies"),
+                "nb_points_bufferises": v.get("nb_points_bufferises"),
             }
     return resultat
 
@@ -128,13 +157,15 @@ def etat() -> dict:
         if canaux_actifs:
             dernier = _dernier_point(MESURE_DEWESOFT, "valeur", "canal_nom", canaux_actifs)
             statut, age_h = _statut(dernier, SEUILS_HEURES["retrait"])
+            points_24h = _points_recus_fenetre(MESURE_DEWESOFT, "valeur", "canal_nom", canaux_actifs, 24)
         else:
-            dernier, statut, age_h = None, "inactif", None
+            dernier, statut, age_h, points_24h = None, "inactif", None, None
         resultat["retrait"] = {
             "statut": statut,
             "dernier_point": dernier.isoformat() if dernier else None,
             "age_heures": round(age_h, 1) if age_h is not None else None,
             "nb_sources_actives": len(canaux_actifs),
+            "points_24h": points_24h,
             "heartbeat": heartbeats.get("retrait"),
         }
 
@@ -142,13 +173,15 @@ def etat() -> dict:
         if macs_actifs:
             dernier = _dernier_point(MESURE_CAPTEURS, "temperature", "adresse_mac", macs_actifs)
             statut, age_h = _statut(dernier, SEUILS_HEURES["hr_t"])
+            points_24h = _points_recus_fenetre(MESURE_CAPTEURS, "temperature", "adresse_mac", macs_actifs, 24)
         else:
-            dernier, statut, age_h = None, "inactif", None
+            dernier, statut, age_h, points_24h = None, "inactif", None, None
         resultat["hr_t"] = {
             "statut": statut,
             "dernier_point": dernier.isoformat() if dernier else None,
             "age_heures": round(age_h, 1) if age_h is not None else None,
             "nb_sources_actives": len(macs_actifs),
+            "points_24h": points_24h,
             "heartbeat": heartbeats.get("hr_t"),
         }
     except Exception as exc:

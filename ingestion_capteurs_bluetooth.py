@@ -125,6 +125,15 @@ _mqtt_connecte: bool = False
 # afficher depuis quand le process tourne sans interruption.
 _DEMARRAGE = datetime.now()
 
+# Compteurs cumulés depuis le démarrage du process (jamais remis à zéro) —
+# publiés dans le battement de vie (section 32, 14/08/2026) pour suivre le
+# débit d'ingestion dans le temps, pas seulement sa fraîcheur instantanée :
+# un débit qui chute sans s'arrêter complètement resterait "OK" côté
+# fraîcheur mais se verrait ici. Symétrique de _nb_publies/_nb_bufferises
+# déjà présents dans ingestion_dewesoft_dxd.py.
+_nb_publies: int = 0
+_nb_bufferises: int = 0
+
 # Référence à l'event loop asyncio, stockée au démarrage pour permettre aux
 # callbacks paho (thread paho) de signaler des événements à asyncio.
 _loop: asyncio.AbstractEventLoop | None = None
@@ -311,7 +320,7 @@ def compter_messages_en_attente() -> int:
 # Publication MQTT avec basculement automatique sur SQLite.
 # ===========================================================================
 
-def publier_ou_stocker(topic: str, payload_iot: dict) -> None:
+def publier_ou_stocker(topic: str, payload_iot: dict) -> bool:
     """Publier un message MQTT ou le stocker localement si cloud indisponible.
 
     Stratégie :
@@ -321,6 +330,11 @@ def publier_ou_stocker(topic: str, payload_iot: dict) -> None:
     Args:
         topic:       Topic MQTT de destination.
         payload_iot: Dictionnaire de la mesure à publier.
+
+    Returns:
+        True si publié directement sur MQTT, False si bufferisé localement
+        — utilisé par l'appelant pour incrémenter _nb_publies/
+        _nb_bufferises (section 32, 14/08/2026).
     """
     payload_json = json.dumps(payload_iot)
 
@@ -328,7 +342,7 @@ def publier_ou_stocker(topic: str, payload_iot: dict) -> None:
         try:
             result = mqtt_client.publish(topic, payload_json, qos=1)
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                return  # Publication cloud réussie.
+                return True  # Publication cloud réussie.
             # Code d'erreur MQTT (buffer plein, non connecté…) → buffer local.
             print(
                 f"⚠️ Publication MQTT cloud échouée (rc={result.rc}) "
@@ -339,6 +353,7 @@ def publier_ou_stocker(topic: str, payload_iot: dict) -> None:
 
     # Cloud indisponible ou publication échouée : buffer local.
     stocker_localement(topic, payload_json)
+    return False
 
 
 def publier_registre() -> None:
@@ -1088,7 +1103,11 @@ def callback(device, advertising_data) -> None:
     print("-" * 50)
 
     # Publication cloud ou stockage local selon disponibilité.
-    publier_ou_stocker(MQTT_TOPIC, payload_iot)
+    global _nb_publies, _nb_bufferises
+    if publier_ou_stocker(MQTT_TOPIC, payload_iot):
+        _nb_publies += 1
+    else:
+        _nb_bufferises += 1
 
 
 # ===========================================================================
@@ -1109,6 +1128,8 @@ async def tache_heartbeat() -> None:
             "buffer_sqlite_en_attente": compter_messages_en_attente(),
             "registre_api_ok": _dernier_registre_api_ok,
             "nb_capteurs_connus": len(CAPTEURS_CONNUS),
+            "nb_points_publies": _nb_publies,
+            "nb_points_bufferises": _nb_bufferises,
         }
         publier_ou_stocker(MQTT_TOPIC_HEARTBEAT, payload)
         await asyncio.sleep(HEARTBEAT_INTERVAL_S)
