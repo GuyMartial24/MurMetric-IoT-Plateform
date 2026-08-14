@@ -92,4 +92,4 @@ if __name__ == "__main__":
     try:
         subprocess.run([sys.executable, "-u", chemin_script], env=env)
     except KeyboardInterrupt:
-        print("\n👋 Ingestion DeweSoftX arrêtée.")
+        print("\nIngestion DeweSoftX arrêtée.")

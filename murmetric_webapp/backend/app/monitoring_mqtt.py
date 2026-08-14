@@ -45,7 +45,7 @@ def _on_message(_client, _userdata, message) -> None:
         payload = json.loads(message.payload.decode("utf-8"))
         _traiter_message(payload)
     except (json.JSONDecodeError, ValueError, KeyError) as exc:
-        print(f"⚠️ Battement de vie ignoré (payload invalide) : {exc}")
+        print(f"Attention : battement de vie ignoré (payload invalide) : {exc}")
 
 
 def demarrer() -> None:
@@ -64,9 +64,9 @@ def demarrer() -> None:
     def _on_connect(c, _userdata, _flags, rc) -> None:
         if rc == 0:
             c.subscribe(config.MQTT_TOPIC_HEARTBEAT, qos=1)
-            print(f"✅ Monitoring MQTT connecté, abonné à {config.MQTT_TOPIC_HEARTBEAT}")
+            print(f"Monitoring MQTT connecté, abonné à {config.MQTT_TOPIC_HEARTBEAT}")
         else:
-            print(f"⚠️ Monitoring MQTT — connexion refusée (code {rc})")
+            print(f"Attention : Monitoring MQTT — connexion refusée (code {rc})")
 
     client.on_connect = _on_connect
 
@@ -75,7 +75,10 @@ def demarrer() -> None:
             client.connect(config.MQTT_BROKER, config.MQTT_PORT, keepalive=60)
             client.loop_start()
         except OSError as exc:
-            print(f"⚠️ Monitoring MQTT injoignable au démarrage ({exc}) — pas de heartbeat live.")
+            print(
+                f"Attention : Monitoring MQTT injoignable au démarrage ({exc}) — "
+                "pas de heartbeat live."
+            )
 
     # Non-bloquant : un broker interne indisponible au démarrage de la webapp
     # ne doit jamais empêcher celle-ci de démarrer (le reste de l'appli ne

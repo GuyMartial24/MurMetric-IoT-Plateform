@@ -62,7 +62,7 @@ import paho.mqtt.client as mqtt
 import requests
 from bleak import BleakScanner
 
-# Requis pour afficher les emojis sous Windows (console cp1252 par défaut).
+# Requis pour afficher les accents sous Windows (console cp1252 par défaut).
 sys.stdout.reconfigure(encoding="utf-8")
 
 # ---------------------------------------------------------------------------
@@ -345,9 +345,12 @@ def publier_ou_stocker(topic: str, payload_iot: dict) -> bool:
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
                 return True  # Publication cloud réussie.
             # Code d'erreur MQTT (buffer plein, non connecté…) → buffer local.
-            print(f"⚠️ Publication MQTT cloud échouée (rc={result.rc}) " "— stockage local SQLite.")
+            print(
+                f"Attention : publication MQTT cloud échouée (rc={result.rc}) "
+                "— stockage local SQLite."
+            )
         except Exception as exc:
-            print(f"⚠️ Erreur publication MQTT : {exc} — stockage local SQLite.")
+            print(f"Attention : erreur publication MQTT : {exc} — stockage local SQLite.")
 
     # Cloud indisponible ou publication échouée : buffer local.
     stocker_localement(topic, payload_json)
@@ -385,7 +388,7 @@ def publier_registre() -> None:
             "lint_max_confirme_s": infos.get("lint_max_confirme_s"),
         }
         publier_ou_stocker(MQTT_TOPIC_REGISTRE, payload_registre)
-    print(f"📋 Registre capteurs publié sur MQTT ({nb} capteur(s)).")
+    print(f"Registre capteurs publié sur MQTT ({nb} capteur(s)).")
 
 
 # ===========================================================================
@@ -422,13 +425,13 @@ async def tache_sync_sqlite() -> None:
         # Purge des messages expirés avant envoi.
         supprimes = purger_buffer_expire()
         if supprimes:
-            print(f"🗑️  SQLite : {supprimes} message(s) expirés supprimés.")
+            print(f"SQLite : {supprimes} message(s) expirés supprimés.")
 
         en_attente = compter_messages_en_attente()
         if en_attente == 0:
             continue
 
-        print(f"📤 Synchronisation SQLite → MQTT cloud : " f"{en_attente} message(s) en attente.")
+        print(f"Synchronisation SQLite → MQTT cloud : " f"{en_attente} message(s) en attente.")
 
         envoyes = 0
         erreurs = 0
@@ -442,7 +445,7 @@ async def tache_sync_sqlite() -> None:
 
         for row_id, topic, payload in rows:
             if not _mqtt_connecte:
-                print("⚠️  Déconnexion pendant la sync — arrêt du batch.")
+                print("Attention : déconnexion pendant la sync — arrêt du batch.")
                 break
             try:
                 result = mqtt_client.publish(topic, payload, qos=1)
@@ -459,13 +462,12 @@ async def tache_sync_sqlite() -> None:
                 # Pause légère pour ne pas saturer le broker.
                 await asyncio.sleep(0.05)
             except Exception as exc:
-                print(f"⚠️  Erreur sync message {row_id} : {exc}")
+                print(f"Attention : erreur sync message {row_id} : {exc}")
                 erreurs += 1
 
         restants = compter_messages_en_attente()
         print(
-            f"✅ Sync batch terminé : {envoyes} envoyés, "
-            f"{erreurs} erreurs, {restants} restants."
+            f"Sync batch terminé : {envoyes} envoyés, " f"{erreurs} erreurs, {restants} restants."
         )
 
         # S'il reste des messages, se re-déclencher immédiatement.
@@ -487,7 +489,7 @@ def on_connect(client, userdata, flags, rc) -> None:
     global _mqtt_connecte
     if rc == 0:
         _mqtt_connecte = True
-        print(f"✅ Connecté au Broker MQTT cloud ({MQTT_BROKER}:{MQTT_PORT}) !")
+        print(f"Connecté au Broker MQTT cloud ({MQTT_BROKER}:{MQTT_PORT}) !")
         # Publication immédiate du registre capteurs pour synchroniser l'état
         # courant de capteurs.json avec le bridge InfluxDB dès la reconnexion.
         publier_registre()
@@ -495,7 +497,7 @@ def on_connect(client, userdata, flags, rc) -> None:
         if _loop is not None and _sync_event is not None:
             _loop.call_soon_threadsafe(_sync_event.set)
     else:
-        print(f"❌ Connexion MQTT cloud refusée (code {rc})")
+        print(f"Erreur : connexion MQTT cloud refusée (code {rc})")
 
 
 def on_disconnect(client, userdata, rc) -> None:
@@ -506,7 +508,10 @@ def on_disconnect(client, userdata, rc) -> None:
     global _mqtt_connecte
     _mqtt_connecte = False
     if rc != 0:
-        print(f"⚠️  Déconnecté du Broker MQTT cloud (rc={rc}) " "— basculement sur SQLite local.")
+        print(
+            f"Attention : déconnecté du Broker MQTT cloud (rc={rc}) "
+            "— basculement sur SQLite local."
+        )
 
 
 # ===========================================================================
@@ -536,13 +541,13 @@ def _valider_entrees(donnees: dict) -> dict:
             continue
 
         if not MAC_REGEX.match(mac_cle_upper):
-            print(f"⚠️ Clé MAC invalide ignorée : '{mac_cle}'")
+            print(f"Attention : clé MAC invalide ignorée : '{mac_cle}'")
             continue
 
         mac_champ = infos.get("mac", "").upper()
         if mac_champ and mac_champ != mac_cle_upper:
             print(
-                f"⚠️ Incohérence : clé '{mac_cle_upper}' ≠ champ mac "
+                f"Attention : incohérence : clé '{mac_cle_upper}' ≠ champ mac "
                 f"'{mac_champ}' — entrée ignorée."
             )
             continue
@@ -572,7 +577,7 @@ def _recuperer_registre_distant() -> dict | None:
         reponse.raise_for_status()
         donnees = reponse.json()
     except (requests.RequestException, ValueError) as exc:
-        print(f"⚠️ API capteurs (HR/T) injoignable ({exc}).")
+        print(f"Attention : API capteurs (HR/T) injoignable ({exc}).")
         _dernier_registre_api_ok = False
         return None
     _dernier_registre_api_ok = True
@@ -590,7 +595,7 @@ def _lire_capteurs_local_brut() -> dict:
     except FileNotFoundError:
         return {}
     except json.JSONDecodeError as e:
-        print(f"⚠️ {CAPTEURS_FILE} malformé ({e}) — traité comme vide.")
+        print(f"Attention : {CAPTEURS_FILE} malformé ({e}) — traité comme vide.")
         return {}
 
 
@@ -599,7 +604,7 @@ def _ecrire_capteurs_local(donnees: dict) -> None:
         with open(CAPTEURS_FILE, "w", encoding="utf-8") as f:
             json.dump(donnees, f, indent=2, ensure_ascii=False)
     except OSError as exc:
-        print(f"⚠️ Écriture de {CAPTEURS_FILE} impossible ({exc}) — ignoré.")
+        print(f"Attention : écriture de {CAPTEURS_FILE} impossible ({exc}) — ignoré.")
 
 
 def _fusionner_champs_techniques(identite: dict) -> dict:
@@ -643,7 +648,7 @@ def _rafraichir_capteurs_connus() -> bool:
 
     local = _valider_entrees(_lire_capteurs_local_brut())
     if local and local != CAPTEURS_CONNUS:
-        print(f"↩️ Registre capteurs repris du cache local ({CAPTEURS_FILE}).")
+        print(f"Registre capteurs repris du cache local ({CAPTEURS_FILE}).")
         CAPTEURS_CONNUS = local
         return True
     return False
@@ -670,7 +675,7 @@ def verifier_et_recharger_capteurs() -> None:
 
     with _fichier_lock:
         if _rafraichir_capteurs_connus():
-            print(f"🔄 Registre capteurs rechargé ({len(CAPTEURS_CONNUS)} capteurs connus)")
+            print(f"Registre capteurs rechargé ({len(CAPTEURS_CONNUS)} capteurs connus)")
             # Republier le registre pour refléter les changements dans InfluxDB.
             publier_registre()
         _capteurs_prochain_rafraichissement = time.monotonic() + CAPTEURS_RAFRAICHISSEMENT_S
@@ -725,7 +730,7 @@ def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
             entree = {**entree, **reponse.json()}
         except (requests.RequestException, ValueError) as exc:
             print(
-                f"⚠️ Enregistrement distant de {mac} impossible ({exc}) — "
+                f"Attention : enregistrement distant de {mac} impossible ({exc}) — "
                 "retenté au prochain démarrage."
             )
 
@@ -738,7 +743,7 @@ def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
         _ecrire_capteurs_local(local)
 
     print(
-        f"📝 Nouveau capteur enregistré : {mac} ({famille}) "
+        f"Nouveau capteur enregistré : {mac} ({famille}) "
         "— définissez ingestion: true depuis la page Capteurs de la webapp pour l'activer"
     )
 
@@ -789,7 +794,7 @@ charger_capteurs_connus()
 en_attente_au_demarrage = compter_messages_en_attente()
 if en_attente_au_demarrage:
     print(
-        f"📦 Buffer SQLite : {en_attente_au_demarrage} message(s) en attente "
+        f"Buffer SQLite : {en_attente_au_demarrage} message(s) en attente "
         "de synchronisation cloud."
     )
 
@@ -812,10 +817,11 @@ try:
     mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
     mqtt_client.loop_start()
     # on_connect sera appelé de façon asynchrone → _mqtt_connecte mis à jour là.
-    print(f"⏳ Tentative de connexion au Broker MQTT cloud ({MQTT_BROKER})...")
+    print(f"Tentative de connexion au Broker MQTT cloud ({MQTT_BROKER})...")
 except Exception as exc:
     print(
-        f"⚠️  Connexion MQTT cloud impossible au démarrage ({exc}) " "— mode SQLite local activé."
+        f"Attention : connexion MQTT cloud impossible au démarrage ({exc}) "
+        "— mode SQLite local activé."
     )
     # On ne lève pas SystemExit : le script démarre en mode dégradé et
     # paho tentera de se reconnecter automatiquement via reconnect_delay_set.
@@ -1028,7 +1034,7 @@ def callback(device, advertising_data) -> None:
     if not infos_capteur.get("ingestion", False):
         horodatage_bref = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         print(
-            f"🔕 [{horodatage_bref}] {capteur_id} ({mac_adresse}) "
+            f"[{horodatage_bref}] {capteur_id} ({mac_adresse}) "
             "détecté — non ingéré (ingestion: false dans capteurs.json)"
         )
         return
@@ -1042,7 +1048,7 @@ def callback(device, advertising_data) -> None:
     horodatage = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     print(
-        f"🎯 [{horodatage}] [{capteur_id} / {emplacement}] "
+        f"[{horodatage}] [{capteur_id} / {emplacement}] "
         f"MAC: {mac_adresse} ({resultat['protocole']}) "
         f"(RSSI: {rssi} dBm, intervalle : {intervalle})"
     )
@@ -1077,18 +1083,18 @@ def callback(device, advertising_data) -> None:
         "liste_chiffres": resultat["bruts"],
     }
 
-    print(f"📊 [CAPTEUR DECODE] {payload_iot['capteur_id']} ({payload_iot['mac']})")
-    print(f"    🌡️ Température   : {payload_iot['temperature_c']} °C")
-    print(f"    💧 Humidité      : {payload_iot['humidite_percent']} %")
-    print(f"    🌫️ Point de rosée : {payload_iot['point_de_rosee_c']} °C")
-    print(f"    🔋 Batterie      : {payload_iot['batterie_percent']} %")
-    print(f"    📶 RSSI          : {payload_iot['rssi_dbm']} dBm")
-    print(f"    ⏱️ Intervalle log : {payload_iot['intervalle_log_secondes']} s")
-    print(f"    🔢 Liste entiers  : {payload_iot['liste_chiffres']}")
+    print(f"[CAPTEUR DECODE] {payload_iot['capteur_id']} ({payload_iot['mac']})")
+    print(f"    Température      : {payload_iot['temperature_c']} °C")
+    print(f"    Humidité         : {payload_iot['humidite_percent']} %")
+    print(f"    Point de rosée   : {payload_iot['point_de_rosee_c']} °C")
+    print(f"    Batterie         : {payload_iot['batterie_percent']} %")
+    print(f"    RSSI             : {payload_iot['rssi_dbm']} dBm")
+    print(f"    Intervalle log   : {payload_iot['intervalle_log_secondes']} s")
+    print(f"    Liste entiers    : {payload_iot['liste_chiffres']}")
 
     # Indique la destination réelle (cloud ou buffer local).
-    dest = "☁️  MQTT cloud" if _mqtt_connecte else "💾 SQLite local"
-    print(f"    📡 Destination   : {dest}")
+    dest = "MQTT cloud" if _mqtt_connecte else "SQLite local"
+    print(f"    Destination      : {dest}")
     print("-" * 50)
 
     # Publication cloud ou stockage local selon disponibilité.
@@ -1170,11 +1176,11 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
 
         if non_configures:
             print(
-                f"\n🔧 Reconfiguration périodique — "
+                f"\nReconfiguration périodique — "
                 f"{len(non_configures)} capteur(s) en attente : "
                 f"{', '.join(non_configures)}"
             )
-            print("    ⏸️  Pause du scan d'ingestion pendant la configuration...")
+            print("    Pause du scan d'ingestion pendant la configuration...")
             await scanner.stop()
             try:
                 script = os.path.join(
@@ -1193,14 +1199,14 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
                     print(stdout.decode("utf-8", errors="ignore").strip())
                 verifier_et_recharger_capteurs()
             except Exception as exc:
-                print(f"    ❌ Erreur reconfiguration : {exc}")
+                print(f"    Erreur reconfiguration : {exc}")
             finally:
                 await scanner.start()
-                print("    ▶️  Reprise du scan d'ingestion.")
+                print("    Reprise du scan d'ingestion.")
         else:
             heures = INTERVALLE_RECONF_SECONDES // 3600
             print(
-                f"🔧 Reconfiguration périodique : tous les capteurs configurés. "
+                f"Reconfiguration périodique : tous les capteurs configurés. "
                 f"Prochain check dans {heures}h."
             )
 
@@ -1237,17 +1243,17 @@ async def demarrer_scanner_avec_repli(detection_callback) -> BleakScanner:
                 bluez={"adapter": BLE_ADAPTER},
             )
             await scanner.start()
-            print(f"🔍 [MurMetric] Scan multi-capteurs démarré (adaptateur {BLE_ADAPTER}).")
+            print(f"[MurMetric] Scan multi-capteurs démarré (adaptateur {BLE_ADAPTER}).")
             return scanner
         except Exception as exc:
             print(
-                f"⚠️  Adaptateur {BLE_ADAPTER} indisponible ({exc}) — "
+                f"Attention : adaptateur {BLE_ADAPTER} indisponible ({exc}) — "
                 "repli sur l'adaptateur Bluetooth par défaut."
             )
 
     scanner = BleakScanner(detection_callback=detection_callback)
     await scanner.start()
-    print("🔍 [MurMetric] Scan multi-capteurs démarré (adaptateur par défaut).")
+    print("[MurMetric] Scan multi-capteurs démarré (adaptateur par défaut).")
     return scanner
 
 
@@ -1281,7 +1287,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n🛑 MurMetric arrêté par l'utilisateur.")
+        print("\nMurMetric arrêté par l'utilisateur.")
     finally:
         mqtt_client.loop_stop()
         mqtt_client.disconnect()

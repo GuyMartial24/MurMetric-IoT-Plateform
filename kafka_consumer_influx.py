@@ -445,7 +445,7 @@ CONSTRUCTEURS = {
 # Initialisation InfluxDB — mode batch asynchrone.
 # ---------------------------------------------------------------------------
 
-print("⏳ Connexion à InfluxDB...")
+print("Connexion à InfluxDB...")
 influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
 
 # Écriture SYNCHRONE : write() lève une exception si InfluxDB n'a pas accusé
@@ -483,14 +483,14 @@ def ecrire_ou_mourir(lignes: list[str]) -> None:
             _nb_reessais_ecriture += 1
             apercu = lignes[0][:180] if lignes else ""
             print(
-                f"⚠️  Échec d'écriture InfluxDB (tentative "
+                f"Attention : échec d'écriture InfluxDB (tentative "
                 f"{tentative}/{ECRITURE_MAX_TENTATIVES}) : {exc} — "
                 f"{len(lignes)} point(s), début du lot : {apercu!r}",
                 flush=True,
             )
             if tentative == ECRITURE_MAX_TENTATIVES:
                 print(
-                    "❌ ABANDON : InfluxDB refuse toujours l'écriture. Arrêt du "
+                    "ABANDON : InfluxDB refuse toujours l'écriture. Arrêt du "
                     "consumer SANS validation de l'offset Kafka — les messages "
                     "seront rejoués au redémarrage, aucun point n'est perdu.",
                     flush=True,
@@ -499,7 +499,7 @@ def ecrire_ou_mourir(lignes: list[str]) -> None:
             time.sleep(ECRITURE_DELAI_BASE * (2 ** (tentative - 1)))
 
 
-print(f"✅ InfluxDB prêt ({INFLUX_URL}) — écriture SYNCHRONE")
+print(f"InfluxDB prêt ({INFLUX_URL}) — écriture SYNCHRONE")
 
 # ---------------------------------------------------------------------------
 # Initialisation consommateur Kafka.
@@ -533,13 +533,13 @@ def _connecter_consommateur_kafka() -> KafkaConsumer:
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             )
         except Exception as exc:
-            print(f"⚠️  Kafka injoignable ({exc}) — nouvelle tentative dans 5 s...")
+            print(f"Attention : Kafka injoignable ({exc}) — nouvelle tentative dans 5 s...")
             time.sleep(5)
 
 
-print(f"⏳ Connexion à Kafka ({KAFKA_BOOTSTRAP})...")
+print(f"Connexion à Kafka ({KAFKA_BOOTSTRAP})...")
 consommateur = _connecter_consommateur_kafka()
-print(f"✅ Kafka prêt — group_id : {KAFKA_GROUP_ID}")
+print(f"Kafka prêt — group_id : {KAFKA_GROUP_ID}")
 print(f"   Topics : {', '.join(TOPICS)}\n")
 
 # ---------------------------------------------------------------------------
@@ -611,7 +611,7 @@ try:
         if maintenant - dernier_log >= LOG_INTERVAL:
             delta = nb_ecrits - nb_au_dernier_log
             print(
-                f"💾 {delta} point(s) écrit(s) en {maintenant - dernier_log:.0f}s "
+                f"{delta} point(s) écrit(s) en {maintenant - dernier_log:.0f}s "
                 f"({delta / (maintenant - dernier_log):.0f}/s) — cumul {nb_ecrits}"
                 + (
                     f" — {_nb_reessais_ecriture} ré-essai(s) d'écriture"
@@ -624,15 +624,15 @@ try:
             nb_au_dernier_log = nb_ecrits
 
 except KeyboardInterrupt:
-    print("\n🛑 Arrêt demandé.")
+    print("\nArrêt demandé.")
     # Arrêt propre : tout ce qui est écrit l'est réellement (mode synchrone),
     # on peut donc valider les offsets correspondants sans risque.
     try:
         consommateur.commit()
-        print("✅ Offsets Kafka validés avant l'arrêt.")
+        print("Offsets Kafka validés avant l'arrêt.")
     except Exception as exc:
         print(
-            f"⚠️  Validation finale des offsets impossible ({exc}) — "
+            f"Attention : validation finale des offsets impossible ({exc}) — "
             "les derniers messages seront rejoués (sans perte)."
         )
 finally:
@@ -644,7 +644,7 @@ finally:
     influx_client.close()
     consommateur.close()
     print(
-        f"👋 Consommateur Kafka → InfluxDB arrêté. "
+        f"Consommateur Kafka → InfluxDB arrêté. "
         f"{nb_ecrits} point(s) écrit(s), "
         f"{_nb_reessais_ecriture} ré-essai(s) d'écriture."
     )

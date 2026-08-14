@@ -40,7 +40,7 @@ import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 
-# Requis pour afficher les emojis sous Windows (console cp1252 par défaut).
+# Requis pour afficher les accents sous Windows (console cp1252 par défaut).
 sys.stdout.reconfigure(encoding="utf-8")
 
 # ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ MQTT_TOPIC_REGISTRE = os.getenv("MQTT_TOPIC_REGISTRE", "frd/capteurs/registre")
 # ---------------------------------------------------------------------------
 # Initialisation des clients InfluxDB et MQTT.
 # ---------------------------------------------------------------------------
-print("⏳ Connexion à InfluxDB...")
+print("Connexion à InfluxDB...")
 influx_client = InfluxDBClient(
     url=INFLUX_URL,
     token=INFLUX_TOKEN,
@@ -199,7 +199,7 @@ def on_message(client, userdata, msg) -> None:
                 return
             write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=point)
             print(
-                f"📋 [InfluxDB registre] {data.get('mac', '?')} — "
+                f"[InfluxDB registre] {data.get('mac', '?')} — "
                 f"nom: \"{data.get('nom', '')}\" | "
                 f"emplacement: \"{data.get('emplacement', '')}\" | "
                 f"ingestion: {data.get('ingestion', False)}"
@@ -215,13 +215,13 @@ def on_message(client, userdata, msg) -> None:
             temp = data.get("temperature_c")
             hum = data.get("humidite_percent")
             print(
-                f"💾 [InfluxDB mesures] {data.get('capteur_id', mac)} "
+                f"[InfluxDB mesures] {data.get('capteur_id', mac)} "
                 f"({data.get('emplacement', '')}) — "
                 f"T°: {temp} °C | HR: {hum} %"
             )
 
     except Exception as exc:
-        print(f"❌ Erreur lors de l'écriture dans InfluxDB : {exc}")
+        print(f"Erreur lors de l'écriture dans InfluxDB : {exc}")
 
 
 def on_connect(client, userdata, flags, rc) -> None:
@@ -235,14 +235,14 @@ def on_connect(client, userdata, flags, rc) -> None:
     """
     if rc == 0:
         print(
-            f"📥 Connecté à Mosquitto — écoute des topics :\n"
+            f"Connecté à Mosquitto — écoute des topics :\n"
             f"    • {MQTT_TOPIC} (mesures)\n"
             f"    • {MQTT_TOPIC_REGISTRE} (registre capteurs)"
         )
         # Souscription aux deux topics avec QoS 1.
         client.subscribe([(MQTT_TOPIC, 1), (MQTT_TOPIC_REGISTRE, 1)])
     else:
-        print(f"❌ Connexion MQTT refusée (code {rc})")
+        print(f"Erreur : connexion MQTT refusée (code {rc})")
 
 
 mqtt_client = mqtt.Client()
@@ -250,7 +250,7 @@ mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
 try:
-    print("📥 Connexion à Mosquitto...")
+    print("Connexion à Mosquitto...")
     mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
     mqtt_client.loop_forever()
 finally:

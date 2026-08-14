@@ -146,7 +146,7 @@ def lire_mesures():
             yield dates[c], mur, couche, round(v * 100, 2)
 
     if non_reconnues:
-        print(f"  ⚠️  Lignes ignorées (libellé non reconnu) : {non_reconnues}")
+        print(f"  Attention : lignes ignorées (libellé non reconnu) : {non_reconnues}")
 
 
 def construire_ligne(d: datetime, mur: str, couche: str, valeur: float) -> str:

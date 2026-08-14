@@ -1,5 +1,6 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import BoutonsExport from "./BoutonsExport.jsx";
+import BoutonsExportDonnees from "./BoutonsExportDonnees.jsx";
 
 // Tracé minimal en SVG pur (pas de dépendance de charting) — représentation
 // provisoire en attendant le portage du moteur Canvas de l'abaque POC
@@ -45,6 +46,7 @@ const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ }, ref) {
         </text>
       </svg>
       <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier={`courbe-${champ}`} />
+      <BoutonsExportDonnees lignes={valeurs} nomFichier={`courbe-${champ}`} />
     </div>
   );
 });

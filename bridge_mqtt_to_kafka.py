@@ -133,7 +133,7 @@ def _on_kafka_erreur(exc: KafkaError) -> None:
     # affichées, sinon une panne Kafka regénère le goulot d'étranglement que
     # ce module vient justement de supprimer.
     if _nb_erreurs_kafka == 1 or _nb_erreurs_kafka % 1000 == 0:
-        print(f"❌ Kafka — erreur d'envoi (n°{_nb_erreurs_kafka}) : {exc}", flush=True)
+        print(f"Erreur Kafka — échec d'envoi (n°{_nb_erreurs_kafka}) : {exc}", flush=True)
 
 
 def _boucle_journalisation() -> None:
@@ -152,7 +152,7 @@ def _boucle_journalisation() -> None:
         if delta == 0:
             continue
         print(
-            f"📨 {delta} message(s) transféré(s) en {LOG_INTERVAL:.0f}s "
+            f"{delta} message(s) transféré(s) en {LOG_INTERVAL:.0f}s "
             f"({delta / LOG_INTERVAL:.0f}/s) — cumul {total}, "
             f"erreurs {_nb_erreurs + _nb_erreurs_kafka}",
             flush=True,
@@ -199,13 +199,13 @@ def _connecter_producteur_kafka() -> KafkaProducer:
                 max_request_size=KAFKA_MAX_REQUEST_SIZE,
             )
         except Exception as exc:
-            print(f"⚠️  Kafka injoignable ({exc}) — nouvelle tentative dans 5 s...")
+            print(f"Attention : Kafka injoignable ({exc}) — nouvelle tentative dans 5 s...")
             time.sleep(5)
 
 
-print("⏳ Connexion à Kafka...")
+print("Connexion à Kafka...")
 producteur = _connecter_producteur_kafka()
-print(f"✅ Kafka prêt ({KAFKA_BOOTSTRAP})")
+print(f"Kafka prêt ({KAFKA_BOOTSTRAP})")
 
 
 def on_message(client, userdata, msg) -> None:
@@ -234,7 +234,7 @@ def on_message(client, userdata, msg) -> None:
     except Exception as exc:
         _nb_erreurs += 1
         if _nb_erreurs == 1 or _nb_erreurs % 1000 == 0:
-            print(f"❌ Erreur transfert [{msg.topic}] (n°{_nb_erreurs}) : {exc}", flush=True)
+            print(f"Erreur transfert [{msg.topic}] (n°{_nb_erreurs}) : {exc}", flush=True)
 
 
 def on_connect(client, userdata, flags, rc) -> None:
@@ -254,11 +254,11 @@ def on_connect(client, userdata, flags, rc) -> None:
         souscriptions = [(f"$share/{MQTT_SHARE_GROUP}/{topic}", 1) for topic in TOPIC_MAP]
         client.subscribe(souscriptions)
         print(
-            f"📥 MQTT connecté ({MQTT_BROKER}) — "
+            f"MQTT connecté ({MQTT_BROKER}) — "
             f"{len(souscriptions)} topic(s) écoutés (groupe partagé : {MQTT_SHARE_GROUP})"
         )
     else:
-        print(f"❌ MQTT — connexion refusée (code {rc})")
+        print(f"Erreur : MQTT — connexion refusée (code {rc})")
 
 
 mqtt_client = mqtt.Client()
@@ -267,7 +267,7 @@ if MQTT_USERNAME:
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
-print(f"⏳ Connexion à Mosquitto ({MQTT_BROKER})...")
+print(f"Connexion à Mosquitto ({MQTT_BROKER})...")
 mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
 
 threading.Thread(target=_boucle_journalisation, daemon=True).start()
@@ -277,4 +277,4 @@ try:
 finally:
     producteur.flush()
     producteur.close()
-    print("👋 Bridge MQTT → Kafka arrêté.")
+    print("Bridge MQTT → Kafka arrêté.")

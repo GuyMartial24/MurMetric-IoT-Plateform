@@ -52,7 +52,7 @@ def resoudre_fichier_test(argv: list[str]) -> str:
     dossier_retrait = os.path.join(BASE, "data_retrait")
     candidats = sorted(glob.glob(os.path.join(dossier_retrait, "*.dxd")))
     if not candidats:
-        print(f"❌ Aucun fichier .dxd trouvé dans {dossier_retrait}")
+        print(f"Erreur : aucun fichier .dxd trouvé dans {dossier_retrait}")
         sys.exit(1)
     return candidats[0]
 
@@ -138,7 +138,7 @@ def main() -> None:
     finally:
         check_error(lib, lib.DWIDestroyReader(reader))
 
-    print("\n✅ Lecture terminée.")
+    print("\nLecture terminée.")
 
 
 if __name__ == "__main__":

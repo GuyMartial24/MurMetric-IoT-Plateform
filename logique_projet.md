@@ -3836,6 +3836,111 @@ derniers n'avaient aucune raison fonctionnelle d'être touchés) :
   chaque redémarrage, reprise confirmée (nouveau PID/heure de démarrage,
   heartbeat reçu après redéploiement).
 
+### Export CSV/Excel des données (14/08/2026, même jour)
+
+**Origine.** Demande explicite : rendre les données exportables par
+l'utilisateur (CSV/Excel), pour analyse hors appli. Périmètre précisé avec
+l'utilisateur : courbes de mesure (Vue d'ensemble + Assistant), tableau
+teneur en eau, registres capteurs (HR/T + retrait) — les autres tableaux
+(Monitoring) restent hors périmètre pour l'instant.
+
+**Implémenté** :
+- `exportDonnees.js` (nouveau) : `telechargerCSV()` (JS pur, aucune
+  dépendance) et `telechargerExcel()` (SheetJS `xlsx`).
+- `components/BoutonsExportDonnees.jsx` (nouveau) : deux boutons "Export
+  CSV"/"Export Excel" réutilisables, même patron que `BoutonsExport.jsx`
+  (export PNG déjà existant).
+- Câblé dans `GraphiqueSVG.jsx` (donc `VueEnsemble.jsx` ET
+  `Assistant.jsx`, qui le réutilisent tous les deux), `TeneurEau.jsx`
+  (tableau des saisies) et `Capteurs.jsx` (registres HR/T + retrait).
+
+**Décision technique — dépendance `xlsx`** : le paquet npm officiel
+`xlsx` porte deux failles connues (pollution de prototype, ReDoS) sans
+correctif publié sur le registre npm depuis plusieurs versions — SheetJS
+distribue les correctifs uniquement via son propre CDN
+(cdn.sheetjs.com) depuis qu'ils ont cessé de publier sur npm. Testé
+`exceljs` comme alternative : rejeté (98 paquets ajoutés, ses propres
+vulnérabilités modérées via une dépendance `uuid` obsolète — pas
+réellement meilleur). Installé finalement depuis
+`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` (méthode
+officiellement recommandée par SheetJS) : `npm audit` → 0 vulnérabilité,
+un seul paquet ajouté.
+
+**Import différé (code-splitting)** : `xlsx` pèse ~330 ko compressé — son
+import a été rendu dynamique (`await import("xlsx")` dans
+`telechargerExcel()` uniquement) pour ne pas alourdir le chargement
+initial de l'appli pour une fonctionnalité que la plupart des sessions
+n'utiliseront jamais. Vérifié par le build : bundle principal inchangé
+(~290 ko), `xlsx` isolé dans son propre chunk (~492 ko) chargé seulement
+au clic sur "Export Excel".
+
+**Vérifié** : build frontend + lint (`oxlint`) + formatage (`prettier`)
+tous passants, bundle correctement scindé (vérifié dans la sortie de
+`vite build`), déployé sur le VPS — `/api/health` 200 OK, le chunk
+`xlsx-*.js` répond 200 en direct. **Non vérifié visuellement dans un
+navigateur** (pas d'outil de test navigateur disponible dans cet
+environnement) — le téléchargement CSV/Excel proprement dit (contenu du
+fichier généré, ouverture réelle dans Excel) n'a pas été testé au-delà de
+la revue de code et de la vérification que le code se charge sans erreur.
+
+### Audit et retrait des emoji dans le code (14/08/2026, même jour)
+
+**Origine.** Suite du chantier PEP 8/commentaires : demande de vérifier
+l'absence d'emoji dans "les codes" (pas seulement l'interface web déjà
+nettoyée le même jour, cf. entrée "Pastille" plus haut).
+
+**Audit** : recherche par plage Unicode (pictogrammes, symboles divers,
+dingbats) sur tous les fichiers `.py`/`.js`/`.jsx` du dépôt. 139
+occurrences trouvées dans 12 fichiers Python (tous des print()/log de
+supervision — aucun emoji dans la logique métier elle-même). Côté
+frontend : rien à retirer au-delà du nettoyage déjà fait plus tôt dans la
+session (composant `Pastille`) — seule une coche texte simple `✓` déjà
+étudiée et conservée subsiste (glyphe typographique par défaut, pas un
+pictogramme couleur).
+
+**Distinction volontaire conservée** : flèches (`→`, `←`), symboles
+mathématiques (`≈`, `≠`, `∪`), séparateurs de section en ASCII-art
+(`━━━`) et symboles sans variante emoji forcée (`▶` simple, sans
+sélecteur de variante U+FE0F) ne sont PAS retirés — ce sont des
+caractères typographiques standards, pas la signature "IA" que ce
+chantier cible. En revanche, les mêmes symboles AVEC le sélecteur de
+variante emoji (`✔️`, `▶️`, `↩️`) ont été retirés au même titre que les
+pictogrammes couleur classiques (`✅`, `❌`, `⚠️`), car ce sélecteur force
+justement un rendu emoji coloré.
+
+**Corrigé** : les 139 occurrences remplacées par du texte simple
+("Attention :", "Erreur :", ou simplement retirées quand le message
+restait clair sans préfixe). Au passage, 4 commentaires expliquant
+`sys.stdout.reconfigure(encoding="utf-8")` par "requis pour les emoji"
+corrigés — la vraie raison (accents français, toujours présents) ne
+dépendait pas des emoji retirés.
+
+**Vérifié** : `black`+`ruff` (PEP 8, docstrings) + `ast.parse` (syntaxe)
+repassés sur les 12 fichiers après coup — certains remplacements avaient
+allongé des lignes au-delà de 100 caractères, corrigés. Un second balayage
+avec une plage Unicode plus large a trouvé 2 occurrences manquées
+(`↩️`, un `⏳` isolé) au premier passage — corrigées.
+
+**Déployé** (avec confirmation explicite de l'utilisateur, portée plus
+large que d'habitude car elle touche 2 pods VPS supplémentaires
+jamais reconstruits pour du pur style dans cette session) :
+- PC Amiens (`ingestion_dewesoft_dxd.py`) et Pi
+  (`ingestion_capteurs_bluetooth.py`, `configure_capteurs.py`,
+  `start.py`) — buffer vide vérifié avant chaque redémarrage, reprise
+  confirmée.
+- VPS : rebuild + rollout de `kafka-consumer-influx` et
+  `bridge-mqtt-kafka` (jamais reconstruits depuis leur dernier
+  déploiement fonctionnel) en plus de `murmetric-webapp`. Logs des 3 pods
+  vérifiés après redémarrage (démarrage propre, aucun emoji résiduel,
+  aucune erreur) ; `/api/monitoring/etat` confirme les deux pipelines
+  toujours opérationnels après coup (nouveaux `demarre_le`, `points_24h`
+  toujours alimenté).
+- `bridge_mqtt_to_influx.py` : nettoyé dans le dépôt mais **non
+  redéployé** — fichier confirmé non utilisé en production (aucune
+  référence dans les manifestes k8s actifs, superseded par le pipeline
+  Kafka ; seul le `Dockerfile` racine legacy le référence encore, lui
+  aussi hors service).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

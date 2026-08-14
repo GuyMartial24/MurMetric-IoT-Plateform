@@ -290,7 +290,9 @@ def main() -> None:
     for hexid_maj, infos in sorted(registre.items(), key=lambda kv: kv[1]["numero_capteur_hr_t"]):
         num = infos["numero_capteur_hr_t"]
         if num not in fichiers:
-            print(f"  ⚠️  Capteur {num:3d} ({hexid_maj}) : aucun fichier CSV trouvé, ignoré.")
+            print(
+                f"  Attention : capteur {num:3d} ({hexid_maj}) : aucun fichier CSV trouvé, ignoré."
+            )
             continue
         chemin, fmt = fichiers[num]
         n = 0

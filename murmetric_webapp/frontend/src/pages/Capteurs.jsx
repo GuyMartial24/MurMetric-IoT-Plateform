@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import BoutonsExportDonnees from "../components/BoutonsExportDonnees.jsx";
 import Pastille from "../components/Pastille.jsx";
 
 // Édition en place (chantier "source unique", section 32, 13/08/2026) :
@@ -39,6 +40,7 @@ export default function Capteurs() {
         cleColonne="MAC / clé"
         enregistrer={(cle, champs) => api.modifierCapteurHrT(cle, champs)}
         recharger={charger}
+        nomFichierExport="capteurs_hr_t"
       />
 
       <TableauCapteurs
@@ -49,6 +51,7 @@ export default function Capteurs() {
         cleColonne="Canal"
         enregistrer={(cle, champs) => api.modifierCapteurRetrait(cle, champs)}
         recharger={charger}
+        nomFichierExport="capteurs_retrait"
       />
     </div>
   );
@@ -63,7 +66,16 @@ const LIBELLES = {
   ingestion: "Ingestion",
 };
 
-function TableauCapteurs({ titre, lignes, colonnes, champsEditables, cleColonne, enregistrer, recharger }) {
+function TableauCapteurs({
+  titre,
+  lignes,
+  colonnes,
+  champsEditables,
+  cleColonne,
+  enregistrer,
+  recharger,
+  nomFichierExport,
+}) {
   const [enEdition, setEnEdition] = useState(null); // { cle, valeurs }
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState(null);
@@ -97,6 +109,10 @@ function TableauCapteurs({ titre, lignes, colonnes, champsEditables, cleColonne,
       <h2>
         {titre} ({lignes.length})
       </h2>
+      <BoutonsExportDonnees
+        lignes={lignes.map(([cle, c]) => ({ [cleColonne]: cle, ...c }))}
+        nomFichier={nomFichierExport}
+      />
       {erreur && <p className="erreur">{erreur}</p>}
       <table>
         <thead>

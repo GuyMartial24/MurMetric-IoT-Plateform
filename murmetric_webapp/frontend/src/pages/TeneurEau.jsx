@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import BoutonsExportDonnees from "../components/BoutonsExportDonnees.jsx";
 
 const VIDE = { mur: "", couche: "", valeur_pourcent: "", commentaire: "", date_mesure: "" };
 
@@ -141,6 +142,7 @@ export default function TeneurEau() {
 
       <div className="carte">
         <h2>Saisies existantes</h2>
+        <BoutonsExportDonnees lignes={groupes} nomFichier="teneur_eau" />
         <table>
           <thead>
             <tr>

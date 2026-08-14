@@ -39,7 +39,7 @@ import os
 import subprocess
 import sys
 
-# Encodage UTF-8 pour les emojis du résumé de démarrage sous Windows.
+# Encodage UTF-8 pour les accents du résumé de démarrage sous Windows.
 sys.stdout.reconfigure(encoding="utf-8")
 
 # Répertoire contenant les scripts (même dossier que ce fichier).
@@ -96,7 +96,7 @@ if __name__ == "__main__":
         # n'est pas bloquante : l'ingestion démarre quoi qu'il arrive,
         # et la tâche périodique réessaiera plus tard.
         print(
-            f"  ⚠️  configure_capteurs.py terminé avec code {code} "
+            f"  Attention : configure_capteurs.py terminé avec code {code} "
             "— la suite démarre quand même."
         )
 
@@ -110,4 +110,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
-        print("👋 MurMetric arrêté.")
+        print("MurMetric arrêté.")

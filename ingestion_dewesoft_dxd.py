@@ -52,7 +52,7 @@ apparaissant deux fois dans un seul fichier (collision) est signalé en
 console ET publié comme point InfluxDB (mesure alertes_ingestion, via le
 topic MQTT_TOPIC_ALERTES) plutôt que fusionné silencieusement.
 
-⚠️ HAMPEL_SEUIL_K ci-dessous est un réglage par défaut appliqué une fois à
+Attention : HAMPEL_SEUIL_K ci-dessous est un réglage par défaut appliqué une fois à
 l'ingestion — il ne correspond PAS encore à un réglage ajustable en direct
 depuis l'application (ça demanderait de recalculer le filtre à la demande
 côté backend/API à partir de ``valeur`` brute, composant qui n'existe pas
@@ -141,7 +141,7 @@ try:
     )
 except ImportError:
     print(
-        "❌ SDK DWDataReader introuvable.\n"
+        "Erreur : SDK DWDataReader introuvable.\n"
         f"   Attendu dans : {_SDK_PYTHON_DIR}\n"
         "   Télécharger 'DWDataReader' depuis "
         "https://dewesoft.com/download/developer-downloads et placer le "
@@ -524,7 +524,7 @@ def _reserver_place() -> bool:
                 return False
             if time.monotonic() - debut > MQTT_ATTENTE_TIMEOUT:
                 print(
-                    f"⚠️  {MQTT_MAX_EN_ATTENTE} messages QoS 1 toujours non "
+                    f"Attention : {MQTT_MAX_EN_ATTENTE} messages QoS 1 toujours non "
                     f"acquittés après {MQTT_ATTENTE_TIMEOUT:.0f}s — "
                     "bascule SQLite."
                 )
@@ -585,10 +585,10 @@ def publier_ou_stocker(topic: str, payload: dict) -> None:
                 return
             # Aucun on_publish ne viendra pour ce message : rendre la place.
             _liberer_place()
-            print(f"⚠️  Publication MQTT refusée (rc={result.rc}) — stockage SQLite.")
+            print(f"Attention : publication MQTT refusée (rc={result.rc}) — stockage SQLite.")
         except Exception as exc:
             _liberer_place()
-            print(f"⚠️  Publication MQTT échouée ({exc}) — stockage SQLite.")
+            print(f"Attention : publication MQTT échouée ({exc}) — stockage SQLite.")
     stocker_localement(topic, payload_json)
     _nb_bufferises += 1
 
@@ -627,7 +627,7 @@ def _recuperer_registre_retrait_distant() -> dict | None:
         reponse.raise_for_status()
         donnees = reponse.json()
     except (requests.RequestException, ValueError) as exc:
-        print(f"⚠️  API capteurs_retrait injoignable ({exc}).")
+        print(f"Attention : API capteurs_retrait injoignable ({exc}).")
         _dernier_registre_api_ok = False
         return None
     _dernier_registre_api_ok = True
@@ -647,7 +647,7 @@ def _ecrire_cache_retrait_local(donnees: dict) -> None:
         with open(CAPTEURS_RETRAIT_FILE, "w", encoding="utf-8") as f:
             json.dump(donnees, f, indent=2, ensure_ascii=False)
     except OSError as exc:
-        print(f"⚠️  Écriture du cache {CAPTEURS_RETRAIT_FILE} impossible ({exc}) — ignoré.")
+        print(f"Attention : écriture du cache {CAPTEURS_RETRAIT_FILE} impossible ({exc}) — ignoré.")
 
 
 def _rafraichir_capteurs_retrait_connus() -> None:
@@ -662,7 +662,7 @@ def _rafraichir_capteurs_retrait_connus() -> None:
         return
     nouveau = _lire_cache_retrait_local()
     if nouveau is not None:
-        print(f"↩️  Registre capteurs_retrait repris du cache local ({CAPTEURS_RETRAIT_FILE}).")
+        print(f"Registre capteurs_retrait repris du cache local ({CAPTEURS_RETRAIT_FILE}).")
         CAPTEURS_RETRAIT_CONNUS = nouveau
 
 
@@ -688,7 +688,7 @@ def verifier_et_recharger_capteurs_retrait() -> None:
         _rafraichir_capteurs_retrait_connus()
         if len(CAPTEURS_RETRAIT_CONNUS) != avant:
             print(
-                f"🔄 Registre capteurs_retrait rechargé "
+                f"Registre capteurs_retrait rechargé "
                 f"({len(CAPTEURS_RETRAIT_CONNUS)} canal(aux) connus)"
             )
         _capteurs_retrait_prochain_rafraichissement = (
@@ -732,13 +732,13 @@ def enregistrer_canal_si_inconnu(canal_nom: str) -> None:
         entree = reponse.json()
     except (requests.RequestException, ValueError) as exc:
         print(
-            f"⚠️  Enregistrement distant du canal {canal_nom} impossible ({exc}) — "
+            f"Attention : enregistrement distant du canal {canal_nom} impossible ({exc}) — "
             "retenté au prochain démarrage."
         )
 
     CAPTEURS_RETRAIT_CONNUS[canal_nom] = entree
     print(
-        f"📝 Nouveau canal de retrait enregistré : {canal_nom} "
+        f"Nouveau canal de retrait enregistré : {canal_nom} "
         "— définissez ingestion=true depuis la page Capteurs de la webapp pour l'activer"
     )
 
@@ -784,11 +784,11 @@ def on_connect(client, userdata, flags, rc) -> None:
     global _mqtt_connecte
     if rc == 0:
         _mqtt_connecte = True
-        print(f"✅ Connecté au Broker MQTT cloud ({MQTT_BROKER}:{MQTT_PORT})")
+        print(f"Connecté au Broker MQTT cloud ({MQTT_BROKER}:{MQTT_PORT})")
         # Réveille immédiatement la tâche de sync pour rattraper le buffer.
         _sync_event.set()
     else:
-        print(f"❌ Connexion MQTT cloud refusée (code {rc})")
+        print(f"Erreur : connexion MQTT cloud refusée (code {rc})")
 
 
 def on_publish(client, userdata, mid) -> None:
@@ -817,7 +817,7 @@ def on_disconnect(client, userdata, rc) -> None:
         _en_attente = 0
         _cond_en_attente.notify_all()
     if rc != 0:
-        print(f"⚠️  Déconnecté du Broker MQTT cloud (rc={rc}) — basculement SQLite.")
+        print(f"Attention : déconnecté du Broker MQTT cloud (rc={rc}) — basculement SQLite.")
 
 
 # ===========================================================================
@@ -848,13 +848,13 @@ def tache_sync_sqlite() -> None:
 
         supprimes = purger_buffer_expire()
         if supprimes:
-            print(f"🗑️  SQLite : {supprimes} message(s) expirés supprimés.")
+            print(f"SQLite : {supprimes} message(s) expirés supprimés.")
 
         en_attente = compter_messages_en_attente()
         if en_attente == 0:
             continue
 
-        print(f"📤 Synchronisation SQLite → MQTT cloud : {en_attente} message(s) en attente.")
+        print(f"Synchronisation SQLite → MQTT cloud : {en_attente} message(s) en attente.")
 
         envoyes = 0
         erreurs = 0
@@ -884,7 +884,7 @@ def tache_sync_sqlite() -> None:
         en_vol: list[tuple[int, object]] = []
         for row_id, topic, payload in rows:
             if not _mqtt_connecte:
-                print("⚠️  Déconnexion pendant la sync — arrêt du batch.")
+                print("Attention : déconnexion pendant la sync — arrêt du batch.")
                 break
             if time.monotonic() > echeance:
                 break
@@ -902,7 +902,7 @@ def tache_sync_sqlite() -> None:
                 en_vol.append((row_id, result))
             except Exception as exc:
                 _liberer_place()
-                print(f"⚠️  Erreur sync message {row_id} : {exc}")
+                print(f"Attention : erreur sync message {row_id} : {exc}")
                 erreurs += 1
 
         # N'effacer du buffer que ce que le broker a réellement acquitté.
@@ -926,7 +926,7 @@ def tache_sync_sqlite() -> None:
             envoyes = len(ids_confirmes)
 
         restants = compter_messages_en_attente()
-        print(f"✅ Sync batch terminé : {envoyes} envoyés, {erreurs} erreurs, {restants} restants.")
+        print(f"Sync batch terminé : {envoyes} envoyés, {erreurs} erreurs, {restants} restants.")
 
         # S'il reste des messages, se re-déclencher immédiatement.
         if restants > 0 and _mqtt_connecte:
@@ -1360,7 +1360,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
             decalage_session = min(premiers_horodatages) if premiers_horodatages else 0.0
             if decalage_session:
                 print(
-                    f"   🕒 Origine relative recalée : premier échantillon à "
+                    f"   Origine relative recalée : premier échantillon à "
                     f"t={decalage_session:.0f}s ({decalage_session / 86400:.2f} j) "
                     f"→ ramené à {horodatage_debut.isoformat()}"
                 )
@@ -1371,7 +1371,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
                 if occurrences <= 1:
                     continue
                 print(
-                    f'🚨 COLLISION DE CANAL : "{nom_duplique}" apparaît '
+                    f'COLLISION DE CANAL : "{nom_duplique}" apparaît '
                     f"{occurrences} fois dans {nom_fichier} — étiquetage "
                     "mur/couche/position potentiellement incorrect pour ce canal."
                 )
@@ -1395,7 +1395,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
                 infos_canal = CAPTEURS_RETRAIT_CONNUS.get(nom_canal, {})
                 if not infos_canal.get("ingestion", False):
                     print(
-                        f"   ⏭️  {nom_canal} : ingestion désactivée "
+                        f"   {nom_canal} : ingestion désactivée "
                         "(page Capteurs de la webapp) — canal ignoré."
                     )
                     continue
@@ -1484,7 +1484,7 @@ def extraire_et_publier(chemin: str) -> tuple[int, int]:
 
                 if indices_aberrants:
                     print(
-                        f"   🧹 {nom_canal} : {len(indices_aberrants)} pic(s) "
+                        f"   {nom_canal} : {len(indices_aberrants)} pic(s) "
                         f"filtré(s) sur {sample_cnt.value} échantillon(s)."
                     )
 
@@ -1559,7 +1559,7 @@ def enregistrer_fichier(
 
 def boucle_surveillance() -> None:
     """Scanner le dossier surveillé en continu et traiter chaque .dxd détecté."""
-    print(f"\n👀 Surveillance du dossier : {DXD_WATCH_FOLDER}")
+    print(f"\nSurveillance du dossier : {DXD_WATCH_FOLDER}")
     print(f"   Poll toutes les {POLL_INTERVAL_DXD} s. Arrêt : Ctrl+C\n")
 
     deja_signales: set[str] = set()
@@ -1568,7 +1568,7 @@ def boucle_surveillance() -> None:
     # (qu'on ne modifie plus du tout). Relu ici au démarrage pour que la
     # reprise après redémarrage ne retraite rien.
     deja_traites: set[str] = charger_registre()
-    print(f"📒 Registre : {len(deja_traites)} fichier(s) déjà traité(s) — ignorés.\n")
+    print(f"Registre : {len(deja_traites)} fichier(s) déjà traité(s) — ignorés.\n")
 
     while True:
         verifier_et_recharger_capteurs_retrait()
@@ -1577,7 +1577,7 @@ def boucle_surveillance() -> None:
         try:
             noms_fichiers = os.listdir(DXD_WATCH_FOLDER)
         except OSError as exc:
-            print(f"❌ Dossier surveillé inaccessible ({exc}) — nouvelle tentative...")
+            print(f"Erreur : dossier surveillé inaccessible ({exc}) — nouvelle tentative...")
             time.sleep(POLL_INTERVAL_DXD)
             continue
 
@@ -1593,13 +1593,13 @@ def boucle_surveillance() -> None:
                 continue
 
             if nom not in deja_signales:
-                print(f"📄 Nouveau fichier détecté : {nom}")
+                print(f"Nouveau fichier détecté : {nom}")
                 deja_signales.add(nom)
 
             if not attendre_fichier_stable(chemin):
                 continue  # disparu entre-temps (déjà traité ailleurs, etc.)
 
-            print(f"⏳ Extraction de {nom}...")
+            print(f"Extraction de {nom}...")
             debut_fichier = time.monotonic()
             try:
                 nb_canaux, nb_mesures = extraire_et_publier(chemin)
@@ -1618,13 +1618,13 @@ def boucle_surveillance() -> None:
                 duree = time.monotonic() - debut_fichier
                 if restants:
                     print(
-                        f"⚠️  {nom} : {restants} message(s) toujours non acquittés "
+                        f"Attention : {nom} : {restants} message(s) toujours non acquittés "
                         f"après {DRAIN_TIMEOUT}s — NON inscrit au registre, "
                         "sera retenté au prochain passage."
                     )
                     continue
                 print(
-                    f"✅ {nom} : {nb_canaux} canal(aux), {nb_mesures} mesure(s) "
+                    f"{nom} : {nb_canaux} canal(aux), {nb_mesures} mesure(s) "
                     f"en {duree:.0f}s ({nb_mesures / max(duree, 1e-9):.0f} mesures/s) — "
                     f"{_nb_publies} publiées MQTT, {_nb_bufferises} bufferisées SQLite."
                 )
@@ -1632,7 +1632,7 @@ def boucle_surveillance() -> None:
                 enregistrer_fichier(nom, "traite", nb_canaux, nb_mesures)
                 deja_traites.add(nom)
             except Exception as exc:
-                print(f"❌ Échec extraction {nom} : {exc}")
+                print(f"Erreur : échec extraction {nom} : {exc}")
                 enregistrer_fichier(nom, "erreur", raison=str(exc)[:500])
                 deja_traites.add(nom)
 
@@ -1652,7 +1652,7 @@ if __name__ == "__main__":
     print(f"  Publication par lots : {DXD_BATCH_SIZE} échantillons/message")
 
     if not DXD_WATCH_FOLDER:
-        print("❌ DXD_WATCH_FOLDER non défini. Exemple :")
+        print("Erreur : DXD_WATCH_FOLDER non défini. Exemple :")
         print(
             r"   set DXD_WATCH_FOLDER=C:\Users\Public\Documents\Dewesoft\Data && "
             r"python ingestion_dewesoft_dxd.py"
@@ -1663,7 +1663,7 @@ if __name__ == "__main__":
     # doit rester strictement intact (cf. DXD_REGISTRE_FILE). On se contente
     # de vérifier qu'il existe.
     if not os.path.isdir(DXD_WATCH_FOLDER):
-        print(f"❌ Dossier surveillé introuvable : {DXD_WATCH_FOLDER}")
+        print(f"Erreur : dossier surveillé introuvable : {DXD_WATCH_FOLDER}")
         sys.exit(1)
     print(f"  Dossier surveillé (LECTURE SEULE) : {DXD_WATCH_FOLDER}")
     print(f"  Registre des fichiers traités     : {DXD_REGISTRE_FILE}")
@@ -1686,9 +1686,9 @@ if __name__ == "__main__":
     try:
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
         mqtt_client.loop_start()
-        print(f"⏳ Connexion MQTT cloud ({MQTT_BROKER})...")
+        print(f"Connexion MQTT cloud ({MQTT_BROKER})...")
     except Exception as exc:
-        print(f"⚠️  MQTT cloud indisponible ({exc}) — mode SQLite local activé.")
+        print(f"Attention : MQTT cloud indisponible ({exc}) — mode SQLite local activé.")
         mqtt_client.loop_start()
 
     # --- Tâche de resynchronisation SQLite → MQTT (arrière-plan) ---
@@ -1697,8 +1697,8 @@ if __name__ == "__main__":
     try:
         boucle_surveillance()
     except KeyboardInterrupt:
-        print("\n🛑 Arrêt demandé par l'utilisateur.")
+        print("\nArrêt demandé par l'utilisateur.")
     finally:
         mqtt_client.loop_stop()
         mqtt_client.disconnect()
-        print("👋 ingestion_dewesoft_dxd.py terminé.")
+        print("ingestion_dewesoft_dxd.py terminé.")
