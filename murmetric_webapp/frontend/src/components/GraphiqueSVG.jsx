@@ -45,8 +45,19 @@ const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ }, ref) {
           min {vMin.toFixed(2)} — {valeurs.length} points
         </text>
       </svg>
-      <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier={`courbe-${champ}`} />
-      <BoutonsExportDonnees lignes={valeurs} nomFichier={`courbe-${champ}`} />
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: "0.75rem",
+          marginTop: "0.5rem",
+        }}
+      >
+        <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier={`courbe-${champ}`} imbrique />
+        <span style={{ width: "1px", alignSelf: "stretch", background: "#3a4152" }} />
+        <BoutonsExportDonnees lignes={valeurs} nomFichier={`courbe-${champ}`} imbrique />
+      </div>
     </div>
   );
 });

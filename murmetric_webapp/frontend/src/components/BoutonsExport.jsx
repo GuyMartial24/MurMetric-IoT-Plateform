@@ -9,7 +9,7 @@ import {
 // Boutons d'export réutilisables (téléchargement PNG + copie presse-papiers)
 // — un seul composant pour les deux types de rendu graphique de l'appli
 // (<canvas> pour les nomogrammes, <svg> pour les courbes valeur/temps).
-export default function BoutonsExport({ obtenirElement, type, nomFichier = "graphique" }) {
+export default function BoutonsExport({ obtenirElement, type, nomFichier = "graphique", imbrique = false }) {
   const [message, setMessage] = useState(null);
   const [enCours, setEnCours] = useState(false);
 
@@ -41,8 +41,8 @@ export default function BoutonsExport({ obtenirElement, type, nomFichier = "grap
     }
   };
 
-  return (
-    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>
+  const boutons = (
+    <>
       <button type="button" onClick={telecharger}>
         Télécharger PNG
       </button>
@@ -50,6 +50,10 @@ export default function BoutonsExport({ obtenirElement, type, nomFichier = "grap
         Copier l'image
       </button>
       {message && <span style={{ color: "#7fd4ff", fontSize: "0.8rem" }}>{message}</span>}
-    </div>
+    </>
   );
+
+  if (imbrique) return boutons;
+
+  return <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>{boutons}</div>;
 }
