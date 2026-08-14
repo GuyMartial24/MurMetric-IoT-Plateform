@@ -71,10 +71,28 @@ def construire_requete_flux(
     clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
     agregation = f'\n  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)' if fenetre else ""
 
+    # group(columns: ["_field"]) : sans position/canal_nom précisé, une
+    # sélection mur+couche peut recouper plusieurs capteurs physiques
+    # distincts (ex. "SOCMA 1"+"Milieu carreau" recoupe 2 capteurs, vérifié
+    # en direct le 14/08/2026) — chacun forme sa PROPRE table InfluxDB, sort()
+    # trie CHRONOLOGIQUEMENT À L'INTÉRIEUR DE CHAQUE TABLE mais ne fusionne
+    # jamais les tables entre elles. executer_requete() concatène les tables
+    # telles quelles (table 0 en entier, puis table 1 en entier) : la courbe
+    # tracée saute d'un coup du dernier point du capteur A au premier point
+    # du capteur B, produisant un long trait diagonal qui traverse le
+    # graphique — bug trouvé le 14/08/2026 en vérifiant le diagnostic de
+    # l'assistant IA sur exactement cet artefact visuel. group(columns:
+    # ["_field"]) fusionne les tables par grandeur (température/humidité/...
+    # restent séparées, correctement agrégées si aggregateWindow est
+    # utilisé) mais mélange les capteurs au sein d'une même grandeur, ce que
+    # sort() peut alors trier en une seule fois sur l'ensemble — la même
+    # correction que pour les agrégats de l'assistant (section 32, correctif
+    # du 13/08/2026), appliquée ici au tracé plutôt qu'aux statistiques.
     return (
         f'from(bucket: "{config.INFLUX_BUCKET}")\n'
         f"  |> range(start: {debut}, stop: {fin})"
-        f"{clause_filtre}"
+        f"{clause_filtre}\n"
+        f'  |> group(columns: ["_field"])'
         f"{agregation}\n"
         f'  |> sort(columns: ["_time"])'
     )
@@ -482,6 +500,14 @@ def croisement(
         f'from(bucket: "{config.INFLUX_BUCKET}")\n'
         f"  |> range(start: {debut_iso}, stop: {fin_iso})"
         f"{clause_filtre}\n"
+        # group(columns: ["_field"]) : sans position précisée, plusieurs
+        # capteurs physiques peuvent partager mur+couche (vérifié en direct
+        # le 14/08/2026 — même bug que construire_requete_flux, trouvé en
+        # vérifiant le diagnostic de l'assistant IA sur une courbe qui
+        # "sautait" entre deux capteurs). Sans ce group(), pivot() opère
+        # table par table (une par capteur) et produit des lignes dupliquées
+        # par horodatage plutôt qu'une trajectoire unique et cohérente.
+        f'  |> group(columns: ["_field"])\n'
         f"  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)\n"
         f'  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")\n'
         f"  |> filter(fn: (r) => {clause_exists})\n"
@@ -531,10 +557,19 @@ def _requeter_axe(mesure: str, champ: str, canal: str | None, mur: str, couche: 
     if mesure == "retrait" and canal:
         filtres.append(f'r.canal_nom == "{flux_escape(canal)}"')
     clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    # group() : un seul champ déjà filtré ici (contrairement à croisement()
+    # qui en pivote plusieurs), donc pas besoin de préciser columns=["_field"]
+    # — fusionne simplement les tables de plusieurs capteurs éventuels
+    # (mur+couche sans position) avant l'agrégation, même correctif que
+    # construire_requete_flux()/croisement() (14/08/2026). Sans lui, le dict
+    # ci-dessous écraserait silencieusement la valeur d'un capteur par celle
+    # de l'autre à chaque horodatage partagé entre les deux tables, au lieu
+    # d'une vraie moyenne combinée.
     flux = (
         f'from(bucket: "{config.INFLUX_BUCKET}")\n'
         f"  |> range(start: {debut}, stop: {fin})"
         f"{clause_filtre}\n"
+        f"  |> group()\n"
         f"  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)"
     )
     tables = query_api().query(flux, org=config.INFLUX_ORG)

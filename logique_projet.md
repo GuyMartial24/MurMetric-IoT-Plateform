@@ -3489,6 +3489,91 @@ Température (°C)" au lieu du générique "Courbe valeur/temps" (Vue
 d'ensemble, même amélioration appliquée par cohérence). Déployé et
 vérifié réel (health check OK après rollout).
 
+### Bug trouvé et corrigé — courbes "cassées" par un saut diagonal entre deux capteurs (14/08/2026, même jour)
+
+**Origine.** L'utilisateur a partagé le diagnostic de l'assistant IA en
+mode vision sur une courbe de température affichant deux "phases"
+distinctes reliées par de longs traits diagonaux traversant le graphique.
+L'assistant avait correctement repéré le symptôme (rupture d'ordre
+chronologique) mais mal identifié la cause exacte ("tri manquant en
+base"/"deux séries concaténées sans tri"). Demande explicite de
+l'utilisateur : vérifier si ces recommandations sont déjà prises en
+compte dans le code.
+
+**Vérification → vraie cause trouvée** : `sort(columns: ["_time"])` était
+bien présent dans les 3 requêtes Flux concernées (`construire_requete_flux`,
+`croisement`, `_requeter_axe`) — mais **Flux trie CHAQUE TABLE
+séparément, jamais entre elles**. Sans `position`/`canal_nom` précisé,
+une sélection mur+couche peut recouper plusieurs capteurs physiques
+distincts (ex. "SOCMA 1"+"Milieu carreau" recoupe 2 capteurs
+D25DDE1B/F5D29921 à des positions différentes, vérifié en direct — même
+famille de découverte que le bug `group()` des statistiques la veille).
+`executer_requete()` concatène les tables telles quelles (table 0 en
+entier puis table 1 en entier) : la courbe saute d'un coup du dernier
+point du capteur A au premier point du capteur B — exactement l'artefact
+visuel diagnostiqué par l'assistant, causé par une raison différente et
+plus subtile que ce qu'il avait supposé.
+
+**Trois requêtes corrigées** (même mécanisme que le correctif des
+statistiques du 13/08/2026, appliqué ici au tracé/croisement) :
+- `construire_requete_flux()` (courbe `/api/mesures`, `GraphiqueSVG`) :
+  `group(columns: ["_field"])` ajouté avant `sort()` — fusionne les
+  capteurs au sein d'une même grandeur (température/humidité/... restent
+  séparées).
+- `croisement()` (nomogramme 2D/3D, croisement de champs d'une même
+  mesure) : même `group(columns: ["_field"])` ajouté **avant**
+  `aggregateWindow()` — sans lui, `pivot()` opère table par table (une par
+  capteur) et produit des lignes dupliquées par horodatage au lieu d'une
+  trajectoire unique.
+- `_requeter_axe()` (nomogramme "croisement-libre", composition
+  multi-mesures) : `group()` nu ajouté (un seul champ déjà filtré ici) —
+  sans lui, le dict `{horodatage: valeur}` écrasait silencieusement la
+  valeur d'un capteur par celle de l'autre à chaque horodatage partagé,
+  au lieu d'une vraie moyenne combinée. Bug plus sournois que les deux
+  précédents : pas de rupture visuelle spectaculaire, juste des valeurs
+  ponctuellement fausses/incohérentes selon quel capteur "gagnait".
+`hampel()` et `ecart_brut_filtre()` non concernés : `canal_nom` y est
+systématiquement précisé (retrait, un canal = un capteur physique unique,
+pas d'ambiguïté possible).
+
+**Vérifié réel (VPS)**, avant ET après déploiement :
+- Requête Flux testée directement sur InfluxDB avant tout changement de
+  code : confirmé 2 tables distinctes pour "SOCMA 1"+"Milieu carreau"
+  (896 et 632 points), fusion propre en 1528 points correctement
+  entrelacés chronologiquement après `group(columns: ["_field"])`.
+- Après déploiement : `GET /api/mesures?...` renvoie les 1528 points avec
+  **0 point hors ordre chronologique** (vérifié par comparaison
+  horodatage par horodatage) — la courbe ne devrait plus jamais présenter
+  ce saut diagonal, quelle que soit la sélection mur+couche choisie.
+- `GET /api/mesures/croisement?...` (nomogramme) revérifié après
+  déploiement : 1528 points, valeurs x/y cohérentes.
+
+### Réponses de l'assistant IA sans syntaxe Markdown (14/08/2026, même jour)
+
+**Origine.** Deuxième question sur le même échange : pourquoi le texte
+généré affiche `**`, `$`... (syntaxe Markdown brute, jamais rendue par le
+frontend qui affiche le texte tel quel) — l'utilisateur souhaite un texte
+qui ne "ressemble pas à une IA".
+
+**Corrigé** : `_SYSTEME` et `_SYSTEME_VISION` (`assistant.py`) complétés
+d'une règle explicite interdisant toute syntaxe Markdown (gras, titres #,
+listes à puces, lignes horizontales ---, notation $...$) — prose
+naturelle façon note technique/email, y compris en mode "report"
+(structuré par paragraphes et intitulés en texte simple suivis de
+deux-points, pas de titres Markdown). Pas de rendu Markdown ajouté côté
+frontend : l'instruction au modèle règle le problème à la source plutôt
+que d'habiller après coup un texte encore truffé de mise en forme
+"visiblement IA" (bien formaté ≠ ce qui était demandé). Limite connue :
+une instruction de style n'est jamais garantie à 100% suivie par un LLM —
+à surveiller, pas absolu.
+
+**Vérifié réel** : question posée à l'assistant sur la courbe SOCMA 1 +
+Milieu carreau (celle-là même utilisée pour diagnostiquer le bug de tri
+ci-dessus) → réponse en prose naturelle, aucune syntaxe Markdown,
+chiffres cohérents avec les statistiques réelles (moyenne 12,1°C,
+amplitude jour/nuit 0,18°C, tendance +1,95°C entre les deux moitiés de
+la période).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
