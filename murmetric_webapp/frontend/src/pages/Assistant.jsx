@@ -5,7 +5,7 @@ import SelecteurMesure from "../components/SelecteurMesure.jsx";
 import { svgVersDataUrl } from "../exportGraphique.js";
 
 export default function Assistant() {
-  const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1", couche: "carreau_ext" });
+  const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1", couche: "" });
   const [points, setPoints] = useState([]);
   const [mode, setMode] = useState("explain");
   const [prompt, setPrompt] = useState("");

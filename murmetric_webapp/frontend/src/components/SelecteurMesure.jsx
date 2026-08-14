@@ -15,21 +15,22 @@ import { GRANDEURS_MESURABLES } from "../nomogrammeAxes.js";
 // portés dans `valeur` — un champ en trop (`champ`) que le backend ignore
 // silencieusement (Pydantic extra="ignore" par défaut) ne casse rien.
 //
-// Couche en <input list> (autocomplete natif) plutôt qu'un menu déroulant
-// strict : les vraies valeurs en base sont du texte libre, pas des noms
-// canoniques et pas toujours cohérentes en casse (ex. "interface carreau
-// et exterieur", "Milieu carreau" vs "milieu carreau" — cf.
-// logique_projet.md section 32, découverte du 12/08/2026) —
-// /api/mesures/valeurs-tags les propose sans empêcher de saisir une
-// valeur pas encore vue (ex. un nouveau capteur).
-//
-// Mur en <select> strict (pas un <input list>) : seulement 2 valeurs
-// stables et propres ("SOCMA 1"/"SOCMA 2"), sans le problème de casse de
-// couche — un <input list> pré-rempli filtrait les suggestions sur le
-// texte déjà présent et masquait "SOCMA 2" tant que le champ n'était pas
-// vidé, découvert le 14/08/2026 (question directe de l'utilisateur :
-// "pourquoi SOCMA 2 n'apparaît pas ?" — la donnée était bien là, c'était
-// un problème de champ, pas de données manquantes).
+// Mur ET Couche en <select> strict (pas un <input list>/datalist) —
+// abandonné le 14/08/2026 après deux bugs de suite avec le même
+// mécanisme : un <input list> pré-rempli (mur par défaut "SOCMA 1", ou
+// pire, un ancien défaut "couche" invalide "carreau_ext" qui n'existe même
+// pas en base) filtre les suggestions de la <datalist> sur le texte déjà
+// présent, masquant silencieusement les vraies valeurs (ex. "SOCMA 2"
+// invisible, puis "toutes les couches" invisibles) sans que rien ne soit
+// réellement manquant côté données — vérifié en direct les deux fois via
+// /api/mesures/valeurs-tags. Un <select> ne peut pas reproduire cette
+// classe de bug : il affiche toujours toutes les options, jamais filtrées
+// sur la valeur courante. La casse parfois incohérente des couches en
+// base (ex. "Milieu carreau" vs "milieu carreau" — cf. logique_projet.md
+// section 32, découverte du 12/08/2026) n'est plus un problème : le menu
+// affiche les valeurs telles qu'elles existent réellement, pas besoin de
+// deviner l'orthographe exacte en tapant. Couche reste optionnelle
+// ("— toutes —" en premier choix) — Mur ne l'est pas dans l'usage courant.
 export default function SelecteurMesure({ valeur, onChange }) {
   const [combinaisons, setCombinaisons] = useState([]);
 
@@ -70,8 +71,10 @@ export default function SelecteurMesure({ valeur, onChange }) {
       </div>
       <div className="champ">
         <label>Couche</label>
-        <input list="couches-connues" value={valeur.couche || ""} onChange={(e) => definir("couche", e.target.value)} placeholder="ex. milieu isolant" />
-        <datalist id="couches-connues">{couches.map((c) => <option key={c} value={c} />)}</datalist>
+        <select value={valeur.couche || ""} onChange={(e) => definir("couche", e.target.value)}>
+          <option value="">— toutes —</option>
+          {couches.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
       {valeur.type === "retrait" && (
         <div className="champ">

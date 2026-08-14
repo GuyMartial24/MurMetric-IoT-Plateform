@@ -3440,11 +3440,36 @@ mais une vraie régression de découvrabilité par rapport à un menu
 déroulant classique.
 
 **Corrigé** : "Mur" passé en `<select>` strict (comme "Grandeur") — seules
-2 valeurs stables et propres ("SOCMA 1"/"SOCMA 2"), sans le problème de
-casse variable qui justifiait le texte libre pour "Couche" (qui reste en
-`<input list>`, casse réellement incohérente en base — cf. section 32,
-découverte du 12/08/2026). Déployé et vérifié réel (health check OK après
-rollout).
+2 valeurs stables et propres ("SOCMA 1"/"SOCMA 2"). Déployé et vérifié
+réel (health check OK après rollout).
+
+### Bug trouvé et corrigé — "toutes les couches" invisibles dans l'Assistant (14/08/2026, même jour)
+
+**Symptôme** : même question que pour Mur, cette fois côté "Couche" dans
+l'Assistant IA — "pourquoi toutes les couches disponibles ne sont pas
+présentes ?"
+
+**Cause réelle, pire que pour Mur** : l'état initial de `Assistant.jsx`
+préremplissait `couche: "carreau_ext"` — une valeur qui **n'existe même
+pas en base** (les vraies valeurs sont du texte libre du type "interface
+carreau et exterieur", "milieu isolant"... cf. découverte du 12/08/2026,
+section 32). `carreau_ext` était resté un ancien nom canonique jamais
+nettoyé de cet état par défaut, bien après que le placeholder trompeur
+équivalent ait été corrigé ailleurs. Avec un `<input list>`, ce texte
+prérempli invalide filtrait la `<datalist>` sur une chaîne qu'aucune
+vraie couche ne contient — masquant la totalité des suggestions, pas
+seulement une.
+
+**Corrigé** : valeur par défaut de `couche` vidée dans `Assistant.jsx`
+(`""` au lieu de `"carreau_ext"`) ; "Couche" passée en `<select>` strict
+comme "Mur", cette fois avec une option "— toutes —" explicite (Couche
+reste un filtre optionnel, contrairement à Mur) — même décision que pour
+Mur : un `<select>` ne peut structurellement pas reproduire cette classe
+de bug (toujours toutes les options, jamais filtrées sur le texte
+courant), la casse incohérente en base cesse d'être un problème puisque
+le menu affiche les valeurs telles qu'elles existent réellement, plus
+besoin de deviner l'orthographe en tapant. Déployé et vérifié réel (health
+check OK après rollout).
 
 ## Points ouverts / non implémentés
 
