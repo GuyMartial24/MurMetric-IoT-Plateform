@@ -107,7 +107,10 @@ un humain avant tout usage réel. N'utilise JAMAIS de syntaxe Markdown
 (pas de **gras**, pas de titres avec #, pas de listes à puces, pas de
 lignes horizontales ---, pas de notation $...$) : écris en prose
 naturelle, comme dans une note technique, pas comme un rapport généré
-par IA affichant sa mise en forme brute."""
+par IA affichant sa mise en forme brute. Écris un français rigoureusement
+correct et complet, avec TOUS les accents (é, è, ê, à, ù...) et TOUTES
+les apostrophes (c'est, l'analyse, n'est pas, d'un...) — jamais de forme
+simplifiée ou translittérée sans diacritiques."""
 
 _TOOLS = [
     {

@@ -3584,6 +3584,35 @@ pour l'envoi du chat, pour ne pas mélanger les deux indicateurs), bouton
 désactivé + texte "Chargement..." pendant la requête, même pattern que
 Vue d'ensemble. Déployé et vérifié (health check OK après rollout).
 
+### Bug trouvé et corrigé — accents et apostrophes perdus en mode vision (14/08/2026, même jour)
+
+**Symptôme signalé par l'utilisateur** : le texte généré par l'assistant
+en mode "Envoyer avec le graphique" (vision) manque systématiquement
+d'apostrophes ("L analyse" au lieu de "L'analyse") — capture d'écran à
+l'appui montrant que ce n'était pas qu'un artefact de copier-coller.
+
+**Investigation** : `GET /api/assistant/chat` (texte seul) testé en
+direct — apostrophes ET accents corrects, confirmé au niveau des octets
+bruts renvoyés par l'API. `POST /api/assistant/chat-image` (vision)
+testé ensuite spécifiquement (le 📎 dans la capture de l'utilisateur
+indiquait ce chemin, pas le chat texte) — reproduit à l'identique :
+**0 apostrophe, accents systématiquement remplacés par la lettre nue**
+("presente" au lieu de "présente", "donnees" au lieu de "données").
+Code applicatif innocenté : `chat_image()` ne fait aucune transformation
+de texte entre la réponse Gemini et le `return` — le problème se situe
+dans la génération elle-même, spécifique au mode vision (le chemin texte
+seul n'est jamais affecté).
+
+**Corrigé** : `_SYSTEME_VISION` renforcé avec une instruction explicite
+imposant un français complet (tous les accents, toutes les apostrophes),
+en plus de l'interdiction de syntaxe Markdown déjà en place. Limite
+connue, comme pour l'interdiction du Markdown : une instruction de style
+n'est jamais garantie à 100% suivie par un LLM.
+
+**Vérifié réel** : même test image répété après déploiement → réponse
+avec 5 apostrophes et 10 lettres accentuées correctement formées, plus
+aucune perte constatée.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
