@@ -20,7 +20,7 @@ import json
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from openai import OpenAI
+from openai import APIStatusError, OpenAI
 from pydantic import BaseModel
 
 from .. import config
@@ -248,6 +248,22 @@ def _executer_tool(nom: str, entree: dict) -> dict:
     return {"erreur": f"Outil inconnu : {nom}"}
 
 
+def _message_erreur_ia(fournisseur: str, exc: Exception) -> str:
+    """Traduit une exception du SDK OpenAI (utilisé pour Gemini ET Groq, tous deux via
+    une API compatible) en message lisible — sans ça, une erreur 429/401 remonte le
+    corps JSON brut de la réponse (dict Python imbriqué) jusqu'à l'utilisateur."""
+    if isinstance(exc, APIStatusError):
+        if exc.status_code == 429:
+            return (
+                f"{fournisseur} : quota d'appels atteint pour aujourd'hui — "
+                "réessaie plus tard ou augmente le plan associé à la clé API."
+            )
+        if exc.status_code == 401:
+            return f"{fournisseur} : clé API invalide ou expirée."
+        return f"{fournisseur} : erreur API (code {exc.status_code})."
+    return f"{fournisseur} : {exc}"
+
+
 def _completer_avec_outils(client: OpenAI, modele: str, messages: list[dict]) -> str:
     """Boucle tool-use bornée (4 allers-retours max) — évite un
     enchaînement d'appels non maîtrisé côté coût/latence.
@@ -314,7 +330,7 @@ def chat(demande: DemandeChat, _actuel: dict = Depends(utilisateur_courant)) -> 
             )
             return {"reponse": reponse, "fournisseur": "gemini"}
         except Exception as exc:
-            erreurs.append(f"Gemini : {exc}")
+            erreurs.append(_message_erreur_ia("Gemini", exc))
 
     cle_groq = obtenir_cle_groq()
     if cle_groq:
@@ -325,7 +341,7 @@ def chat(demande: DemandeChat, _actuel: dict = Depends(utilisateur_courant)) -> 
             )
             return {"reponse": reponse, "fournisseur": "groq"}
         except Exception as exc:
-            erreurs.append(f"Groq : {exc}")
+            erreurs.append(_message_erreur_ia("Groq", exc))
 
     if not erreurs:
         raise HTTPException(
@@ -396,6 +412,6 @@ def chat_image(demande: DemandeChatImage, _actuel: dict = Depends(utilisateur_co
         )
     except Exception as exc:
         raise HTTPException(
-            status_code=502, detail=f"Analyse d'image échouée (Gemini) : {exc}"
+            status_code=502, detail=f"Analyse d'image échouée — {_message_erreur_ia('Gemini', exc)}"
         ) from exc
     return {"reponse": reponse.choices[0].message.content, "fournisseur": "gemini"}

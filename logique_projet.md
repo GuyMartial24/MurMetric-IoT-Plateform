@@ -3969,6 +3969,48 @@ aucun des deux disponible dans cet environnement. Build/lint/déploiement
 vérifiés ; **à confirmer par l'utilisateur** en testant une vraie réponse
 de l'assistant (mode "explain" ou "report", avec ou sans image).
 
+### Erreur 429 (quota Gemini) affichée en brut — diagnostic + correctif du formatage (14/08/2026, même jour)
+
+**Origine** : l'utilisateur a signalé une erreur affichée en clair dans
+l'assistant lors d'une analyse d'image — le corps JSON complet de
+l'erreur Gemini (dict Python imbriqué, listes, guillemets simples)
+remontait tel quel jusqu'à l'interface.
+
+**Diagnostic** : deux causes distinctes, une externe (non corrigeable),
+une interne (bug de formatage, corrigé) :
+- **Cause réelle de l'échec** : quota Gemini API Studio épuisé —
+  compte gratuit limité à 20 requêtes/jour pour `gemini-3.7-flash`
+  (`GenerateRequestsPerDayPerModelPerFreeTier`), atteint après les
+  nombreux tests de la session. Limite côté compte Google, pas un bug
+  applicatif — non corrigeable par du code. Le `retryDelay` de ~36s
+  renvoyé par Google semble incohérent avec un quota "par jour" (peut-être
+  un comportement de fenêtre glissante côté Google, pas garanti) : en cas
+  de blocage persistant, les options sont d'attendre le renouvellement
+  quotidien ou de passer à un plan payant sur Google AI Studio.
+- **Vrai bug trouvé et corrigé** : `chat_image()` et le repli Gemini→Groq
+  de `chat()` (`assistant.py`) faisaient `f"... : {exc}"` sur l'exception
+  brute du SDK `openai` — pour une `APIStatusError` (429/401/...), `str()`
+  inclut tout le corps de réponse JSON de l'API, illisible pour
+  l'utilisateur final.
+
+**Corrigé** : nouvelle fonction `_message_erreur_ia(fournisseur, exc)` —
+détecte les erreurs typées du SDK (`APIStatusError` et ses sous-classes
+`RateLimitError`/`AuthenticationError`, communes à Gemini ET Groq via
+l'API compatible OpenAI) et produit un message clair par code HTTP (429 →
+quota, 401 → clé invalide, autre code → générique), avec repli sur
+`str(exc)` seulement pour une exception vraiment inattendue (réseau...).
+Utilisée aux 3 points d'affichage d'erreur IA du fichier.
+
+**Vérifié** : logique testée directement dans l'image Docker déployée —
+confirmé que `openai.RateLimitError`/`AuthenticationError` héritent bien
+de `APIStatusError` et exposent `.status_code` (lu dans le code source du
+SDK installé, pas supposé), instance simulée avec `status_code=429`
+donnant le message attendu. `black`/`ruff`/syntax-check passants, webapp
+redéployée, `/api/health` 200 OK. **Non testé en conditions réelles** (pas
+de nouvelle vraie erreur 429 déclenchée pendant la vérification, pas
+d'accès navigateur) — le prochain 429 réel affichera le message propre si
+le diagnostic est correct.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
