@@ -12,10 +12,12 @@ export default function Assistant() {
   const [prompt, setPrompt] = useState("");
   const [historique, setHistorique] = useState([]);
   const [enCours, setEnCours] = useState(false);
+  const [enCoursCourbe, setEnCoursCourbe] = useState(false);
   const [erreur, setErreur] = useState(null);
   const graphiqueRef = useRef(null);
 
   const chargerCourbe = async () => {
+    setEnCoursCourbe(true);
     setErreur(null);
     try {
       const params = Object.fromEntries(Object.entries(selection).filter(([, v]) => v));
@@ -23,6 +25,8 @@ export default function Assistant() {
       setPoints(resultat.points);
     } catch (e) {
       setErreur(e.message);
+    } finally {
+      setEnCoursCourbe(false);
     }
   };
 
@@ -66,8 +70,8 @@ export default function Assistant() {
             <option value="report">Brouillon de rapport d'instrumentation</option>
           </select>
         </div>
-        <button onClick={chargerCourbe} style={{ marginTop: "0.75rem" }}>
-          Charger la courbe (pour l'analyse visuelle, optionnel)
+        <button onClick={chargerCourbe} disabled={enCoursCourbe} style={{ marginTop: "0.75rem" }}>
+          {enCoursCourbe ? "Chargement..." : "Charger la courbe (pour l'analyse visuelle, optionnel)"}
         </button>
       </div>
 

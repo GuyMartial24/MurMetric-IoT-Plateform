@@ -3574,6 +3574,16 @@ chiffres cohérents avec les statistiques réelles (moyenne 12,1°C,
 amplitude jour/nuit 0,18°C, tendance +1,95°C entre les deux moitiés de
 la période).
 
+### Indicateur de chargement manquant sur "Charger la courbe" (Assistant IA, 14/08/2026, même jour)
+
+Le bouton "Charger la courbe" de l'Assistant IA n'avait aucun état de
+chargement (contrairement au bouton équivalent de la Vue d'ensemble, déjà
+correct) — clic silencieux, aucun retour visuel pendant la requête.
+Corrigé : nouvel état `enCoursCourbe` (séparé de `enCours`, déjà utilisé
+pour l'envoi du chat, pour ne pas mélanger les deux indicateurs), bouton
+désactivé + texte "Chargement..." pendant la requête, même pattern que
+Vue d'ensemble. Déployé et vérifié (health check OK après rollout).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
