@@ -4011,6 +4011,93 @@ de nouvelle vraie erreur 429 déclenchée pendant la vérification, pas
 d'accès navigateur) — le prochain 429 réel affichera le message propre si
 le diagnostic est correct.
 
+## 33. Chantier migration InfluxDB → TimescaleDB (17/08/2026)
+
+**Origine.** Demande explicite de l'utilisateur : simplifier les requêtes
+Grafana en remplaçant InfluxDB/Flux par TimescaleDB/SQL — motivé par une
+frustration concrète et légitime, pas théorique : cette session a
+justement corrigé 4 bugs distincts causés par la sémantique "par table"
+de Flux (`sort()`/`pivot()`/`aggregateWindow()` n'opèrent jamais entre
+tables sans `group()` explicite), dans `_valeur_agregat()`,
+`construire_requete_flux()`, `croisement()` et `_requeter_axe()`.
+
+**Plan validé avec l'utilisateur, en 6 phases**, avec comme principe
+directeur qu'InfluxDB reste la source de vérité intacte et en lecture
+seule jusqu'à validation complète de TimescaleDB (aucune suppression,
+aucune coupure d'écriture avant la Phase 6) :
+0. Conception du schéma + déploiement TimescaleDB isolé (fait, ce jour)
+1. Migration de l'historique (lecture seule sur InfluxDB, vérifiée par lot)
+2. Double écriture pour les nouvelles données pendant la transition
+3. Réécriture du backend (`mesures.py`) + validation croisée Flux/SQL
+4. Reconstruction des 7 panels Grafana
+5. Bascule des lectures + période d'observation (1-2 semaines)
+6. Décommissionnement (seulement après confiance totale)
+
+### Incident en cours de Phase 0 : OOM InfluxDB pendant l'exploration du schéma
+
+**Ce qui s'est passé** : une requête Flux `keys()` sans fenêtre temporelle
+assez étroite sur `mesures_dewesoft` (1,5 milliard de points) a fait
+sortir le pod InfluxDB en OOM-kill (exit 137). Auto-redémarré par k3s en
+~20s (StatefulSet), aucune perte de données (volume persistant, moteur
+TSM robuste aux arrêts brusques) — confirmé par la reprise normale des
+deux pipelines juste après (heartbeats à jour, `points_24h` alimenté).
+
+**Root cause** : même famille de piège que l'incident du 13/08/2026 déjà
+documenté (limite mémoire InfluxDB face au volume de `mesures_dewesoft`)
+— toute opération non bornée dans le temps sur cette mesure reste
+dangereuse, `keys()`/`schema.measurementTagKeys()` y compris, pas
+seulement les agrégations lourdes déjà identifiées.
+
+**Correctif de méthode** : reprise immédiate avec des requêtes bornées
+(`last()` sur un canal filtré plutôt que `keys()` sur toute la mesure) —
+schéma des 5 mesures obtenu sans nouvel incident. **Point de vigilance
+permanent pour la suite du chantier** (Phase 1 notamment, qui va lire
+tout l'historique de `mesures_dewesoft`) : ne jamais interroger cette
+mesure sans borne temporelle explicite, quelle que soit la fonction Flux
+utilisée.
+
+### Phase 0 réalisée — schéma vérifié + déploiement isolé
+
+**Schéma InfluxDB vérifié sur données réelles** (pas supposé depuis la
+mémoire du code d'ingestion — requêtes bornées dans le temps après
+l'incident ci-dessus) :
+
+| Mesure | Tags | Fields |
+|---|---|---|
+| `mesures_dewesoft` | canal_nom, canal_unite, nom_mur, nom_couche, position, rd, source | valeur, valeur_filtree (float), est_aberrant (bool), canal_index (int), taux_echantillonnage (float), horodatage_lisible (string) |
+| `mesures_capteurs` | adresse_mac, emplacement, nom_capteur, nom_mur, nom_couche, position, rd | temperature, humidite, point_de_rosee (float), mac_complete_connue (bool) |
+| `mesures_teneur_eau` | mur, couche, prestation, utilisateur_id, utilisateur_nom | teneur_eau_pourcent (float), commentaire (string) |
+| `pipeline_heartbeat` | machine, pipeline | mqtt_connecte, registre_api_ok (bool), buffer_sqlite_en_attente, nb_capteurs_connus, nb_points_publies, nb_points_bufferises (int), demarre_le (string) |
+| `disk_usage_bytes` | host | value (numeric) |
+
+Note : le tag "categorie R&D" (espace + esperluette dans le code Python)
+est en réalité écrit sous la clé `rd` côté InfluxDB — confirmé par les
+données réelles, pas par le code d'ingestion.
+
+**Implémenté** (`k8s/timescaledb/`) :
+- `schema.sql` : une hypertable par mesure, précision `TIMESTAMPTZ`
+  (microseconde) plutôt que la nanoseconde native d'InfluxDB — sans
+  impact pour ce projet (retrait à 100 Hz = 10 000 µs entre échantillons,
+  très au-dessus de la résolution microseconde). `chunk_time_interval`
+  différencié par volume (6h pour `mesures_dewesoft`, 7-30j pour les
+  mesures plus légères) — point de départ à retuner empiriquement une
+  fois l'historique réel chargé en Phase 1, pas une valeur figée.
+  Index sur les combinaisons de tags les plus filtrées (canal, mur+couche,
+  MAC).
+- `configmap.yaml`/`statefulset.yaml`/`pvc.yaml`/`service.yaml` : suit les
+  mêmes conventions que `k8s/influxdb/` (ressources modestes au départ,
+  nœud partagé — 100m/256Mi requêtés, 500m/1Gi en limite). PVC 30Gi.
+  Service ClusterIP, aucune exposition externe.
+- Mot de passe superuser généré aléatoirement (jamais demandé à
+  l'utilisateur, jamais stocké en mémoire persistante), ajouté à
+  `murmetric-secrets` (clé `timescaledb-password`) + template mis à jour.
+
+**Vérifié réel** : les 5 hypertables créées sans erreur au premier
+démarrage (`create_hypertable` confirmé pour chacune dans les logs), test
+d'insertion/lecture/suppression réussi sur `mesures_dewesoft`, production
+(InfluxDB, retrait, hr_t) confirmée non affectée par ce déploiement
+(pipelines toujours opérationnels après coup).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

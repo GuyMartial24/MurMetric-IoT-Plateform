@@ -1,0 +1,116 @@
+# Schéma SQL monté dans /docker-entrypoint-initdb.d/ — exécuté automatiquement
+# par l'image officielle au tout premier démarrage (volume de données vide),
+# jamais rejoué ensuite. Pour modifier le schéma après coup : migration SQL
+# manuelle, pas une simple mise à jour de cette ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: timescaledb-schema
+  namespace: murmetric
+data:
+  schema.sql: |
+    -- Schéma TimescaleDB — chantier de migration InfluxDB -> TimescaleDB (section
+    -- 32 de logique_projet.md, Phase 0, 17/08/2026). Une hypertable par mesure
+    -- InfluxDB actuelle, schéma vérifié sur de vraies données avant conception
+    -- (pas supposé depuis la mémoire du code d'ingestion).
+    --
+    -- Précision temporelle : TIMESTAMPTZ (microseconde) plutôt que la nanoseconde
+    -- native d'InfluxDB. Sans impact pour ce projet : le canal le plus rapide
+    -- (retrait, 100 Hz) échantillonne toutes les 10 000 µs, largement au-dessus
+    -- de la résolution microseconde. À revoir seulement si un canal à fréquence
+    -- nettement supérieure à 100 kHz était ajouté un jour.
+    --
+    -- chunk_time_interval choisi par volume approximatif de chaque mesure — point
+    -- de départ raisonnable, à retuner empiriquement une fois l'historique réel
+    -- chargé (Phase 1), pas une valeur figée.
+
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+    -- ===========================================================================
+    -- mesures_dewesoft (retrait) — la plus volumineuse : 100 Hz x 8 canaux,
+    -- ~1,5 milliard de points sur l'historique actuel.
+    -- ===========================================================================
+    CREATE TABLE mesures_dewesoft (
+        time TIMESTAMPTZ NOT NULL,
+        canal_nom TEXT NOT NULL,
+        canal_unite TEXT,
+        nom_mur TEXT,
+        nom_couche TEXT,
+        "position" TEXT,
+        rd TEXT,
+        source TEXT,
+        valeur DOUBLE PRECISION,
+        valeur_filtree DOUBLE PRECISION,
+        est_aberrant BOOLEAN,
+        canal_index INTEGER,
+        taux_echantillonnage DOUBLE PRECISION,
+        horodatage_lisible TEXT
+    );
+    SELECT create_hypertable('mesures_dewesoft', 'time', chunk_time_interval => INTERVAL '6 hours');
+    CREATE INDEX ix_dewesoft_canal_time ON mesures_dewesoft (canal_nom, time DESC);
+    CREATE INDEX ix_dewesoft_mur_couche_time ON mesures_dewesoft (nom_mur, nom_couche, time DESC);
+
+    -- ===========================================================================
+    -- mesures_capteurs (hr_t) — capteurs BLE Blue Maestro/ELA.
+    -- ===========================================================================
+    CREATE TABLE mesures_capteurs (
+        time TIMESTAMPTZ NOT NULL,
+        adresse_mac TEXT NOT NULL,
+        emplacement TEXT,
+        nom_capteur TEXT,
+        nom_mur TEXT,
+        nom_couche TEXT,
+        "position" TEXT,
+        rd TEXT,
+        temperature DOUBLE PRECISION,
+        humidite DOUBLE PRECISION,
+        point_de_rosee DOUBLE PRECISION,
+        mac_complete_connue BOOLEAN
+    );
+    SELECT create_hypertable('mesures_capteurs', 'time', chunk_time_interval => INTERVAL '7 days');
+    CREATE INDEX ix_capteurs_mac_time ON mesures_capteurs (adresse_mac, time DESC);
+    CREATE INDEX ix_capteurs_mur_couche_time ON mesures_capteurs (nom_mur, nom_couche, time DESC);
+
+    -- ===========================================================================
+    -- mesures_teneur_eau — saisies manuelles, faible volume.
+    -- ===========================================================================
+    CREATE TABLE mesures_teneur_eau (
+        time TIMESTAMPTZ NOT NULL,
+        mur TEXT NOT NULL,
+        couche TEXT NOT NULL,
+        prestation TEXT,
+        utilisateur_id TEXT,
+        utilisateur_nom TEXT,
+        teneur_eau_pourcent DOUBLE PRECISION,
+        commentaire TEXT
+    );
+    SELECT create_hypertable('mesures_teneur_eau', 'time', chunk_time_interval => INTERVAL '30 days');
+    CREATE INDEX ix_teneur_eau_mur_couche_time ON mesures_teneur_eau (mur, couche, time DESC);
+
+    -- ===========================================================================
+    -- pipeline_heartbeat — supervision des pipelines d'ingestion.
+    -- ===========================================================================
+    CREATE TABLE pipeline_heartbeat (
+        time TIMESTAMPTZ NOT NULL,
+        pipeline TEXT NOT NULL,
+        machine TEXT,
+        mqtt_connecte BOOLEAN,
+        buffer_sqlite_en_attente INTEGER,
+        registre_api_ok BOOLEAN,
+        nb_capteurs_connus INTEGER,
+        demarre_le TEXT,
+        nb_points_publies INTEGER,
+        nb_points_bufferises INTEGER
+    );
+    SELECT create_hypertable('pipeline_heartbeat', 'time', chunk_time_interval => INTERVAL '7 days');
+    CREATE INDEX ix_heartbeat_pipeline_time ON pipeline_heartbeat (pipeline, time DESC);
+
+    -- ===========================================================================
+    -- disk_usage_bytes — suivi de l'espace disque InfluxDB (mesure toutes les 6h).
+    -- ===========================================================================
+    CREATE TABLE disk_usage_bytes (
+        time TIMESTAMPTZ NOT NULL,
+        host TEXT NOT NULL,
+        value BIGINT
+    );
+    SELECT create_hypertable('disk_usage_bytes', 'time', chunk_time_interval => INTERVAL '30 days');
