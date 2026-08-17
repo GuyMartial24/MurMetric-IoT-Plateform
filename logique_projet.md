@@ -4162,6 +4162,96 @@ interne dégradé temporaire plutôt qu'un problème structurel permanent.
 Point de vigilance pour la reprise de Phase 1 : retester la requête de
 référence à froid avant de relancer une migration par lots complète.
 
+### Phase 1 reprise le 17/08/2026 (même jour) — 4 mesures migrées, mesures_dewesoft re-bloquée
+
+**Requête de référence retestée à froid avant toute reprise** (comme prévu
+ci-dessus) : `last()` bornée, canal+field unique → 0,614s, mémoire quasi
+stable (568→581Mi). Confirme l'hypothèse d'un état dégradé temporaire —
+InfluxDB était revenu à la normale après la pause.
+
+**4 mesures migrées intégralement et vérifiées, aucun incident** :
+`disk_usage_bytes`, `pipeline_heartbeat`, `mesures_teneur_eau`,
+`mesures_capteurs` (59/59 adresses MAC, 5888 lots, 45 098 lignes). Deux
+bugs du script trouvés et corrigés au passage (jamais déclenchés
+auparavant, les 3 incidents précédents portaient tous sur
+`mesures_dewesoft`) :
+1. `pivot()` ne conserve que les colonnes de la clé de groupe — pour les
+   mesures sans `tag_decoupage` (`disk_usage_bytes`, `pipeline_heartbeat`,
+   `mesures_teneur_eau`), les tags point-par-point (`host`, `pipeline`...)
+   étaient silencieusement perdus avant l'écriture TimescaleDB
+   (`NotNullViolation`). Corrigé : `group()` inclut désormais ces tags
+   quand `tag_decoupage` est absent.
+2. `schema.tagValues()` a un lookback par défaut de -30 jours sans
+   paramètre `start` explicite — `_valeurs_distinctes()` aurait
+   silencieusement ignoré tout capteur/canal inactif depuis plus
+   longtemps (0 erreur, juste jamais migré). Découvert sur
+   `mesures_capteurs` (0 adresse MAC trouvée alors que la mesure contient
+   des données depuis janvier 2026, 59 adresses réelles). Corrigé avec
+   `start: DATE_DEBUT_HISTORIQUE`.
+   Aussi noté au passage un timeout isolé et non reproductible (20s) sur
+   une requête `_tags_constants()` en plein milieu du run `mesures_capteurs`
+   — mémoire InfluxDB restée basse pendant l'incident (pas de OOM), retesté
+   immédiatement après à 0,245s : aléa transitoire côté `kubectl
+   exec`/sous-processus, pas une dégradation InfluxDB. Le run a simplement
+   été relancé (design idempotent, reprise automatique sans repasser sur
+   les lots déjà vérifiés).
+   Piège opérationnel noté : `commande | tee fichier.log | head -N` a tué
+   prématurément le premier essai `mesures_capteurs` par SIGPIPE quand
+   `head` s'est arrêté après N lignes — ne jamais pipe une commande longue
+   à travers `head`/`tail` en aval d'un `tee`, rediriger directement vers
+   un fichier (`> fichier.log 2>&1`) à la place.
+
+**`mesures_dewesoft` : 2 nouveaux OOM réels, migration arrêtée après 1
+seul jour migré (HA1/21-11-2025, 178 966 points, vérifié).**
+1. `first()` sur HA1, même avec un timeout client remonté à 120s pour la
+   laisser aller au bout (au lieu de couper à 20s comme le tout premier
+   essai) : la requête a réellement fait OOM-killer le pod cette fois
+   (exit 137), pas juste timeout côté client — invalide l'hypothèse
+   "il suffit de la laisser finir". Mémoire montée 411Mi→3543Mi avant le
+   timeout client du premier essai, puis restée sur un plateau élevé
+   plusieurs minutes avant de redescendre naturellement (comme lors de
+   l'incident du 17/08 précédent) — a nécessité une pause active
+   (surveillance jusqu'à repasser sous 1500Mi) avant tout nouvel essai.
+2. Script modifié pour éviter complètement `first()` : nouvel argument
+   `--jour-min` (miroir de `--jour-max` existant) qui court-circuite la
+   découverte par requête en acceptant une date de départ déjà connue.
+   Utilisé avec `--jour-min 2025-11-01` (marge de 20 jours avant le
+   21/11/2025 documenté plus haut dans ce fichier, section "167 jours
+   (357 fichiers) | 21/11/2025 → 27/07/2026") — **a confirmé exactement
+   cette date** (20 jours vides puis 178 966 points le 21/11/2025,
+   migrés et vérifiés). Mais la requête du jour SUIVANT (22/11/2025) —
+   le motif `_points_jour()` (range 1 jour + `group(columns:["_field"])`
+   + `pivot()`) pourtant déjà validé sûr sur `mesures_capteurs` (5888
+   lots sans incident) et en Phase 0 (3,17s mesuré) — a de nouveau fait
+   OOM-killer le pod.
+
+**Les deux fois : récupération automatique confirmée (k3s), aucune perte
+de données** (le motif DELETE-avant-INSERT + vérification par comptage a
+laissé la transaction en échec proprement annulée — 0 ligne orpheline
+pour le 22/11/2025 vérifié directement en base), production non affectée
+(retrait `statut: ok`, 8 sources actives, heartbeats à jour les deux
+fois).
+
+**Diagnostic affiné** : le fait qu'un motif de requête déjà prouvé sûr
+(le `_points_jour()` journalier) ait quand même fait planter le pod sur
+`mesures_dewesoft` change la lecture par rapport à l'incident précédent —
+ce n'est probablement pas (uniquement) un état interne dégradé par les
+redémarrages, mais une caractéristique structurelle de cette mesure
+spécifique : échantillonnage continu à 10 Hz sur 8 canaux, un ordre de
+grandeur plus dense que tout ce qui a été migré sans incident aujourd'hui
+(`mesures_capteurs` : quelques points toutes les heures). Un jour de
+`mesures_dewesoft` pour un seul canal peut représenter plusieurs centaines
+de milliers de points — largement plus volumineux que n'importe quel lot
+des 4 autres mesures.
+
+**Décision (accord explicite de l'utilisateur, "oui")** : `mesures_dewesoft`
+mise en pause à nouveau, sans nouvel essai à l'aveugle. Les 4 autres
+mesures restent acquises (migrées et vérifiées). Prochaines pistes à
+évaluer froidement avant une nouvelle tentative : fenêtres plus petites
+qu'un jour (par heure ?) pour `_points_jour()` sur cette mesure
+spécifiquement, et/ou augmentation de la limite mémoire du pod InfluxDB
+(actuellement 4Gi) si la RAM du nœud le permet.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

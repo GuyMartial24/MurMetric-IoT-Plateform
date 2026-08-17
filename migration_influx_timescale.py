@@ -189,22 +189,59 @@ def pg_connect():
 
 
 def _valeurs_distinctes(mesure: str, tag: str) -> list[str]:
-    """Liste des valeurs distinctes d'un tag de découpage (schema.tagValues)."""
+    """Liste des valeurs distinctes d'un tag de découpage (schema.tagValues).
+
+    `start` explicite obligatoire : `schema.tagValues()` a un lookback par
+    défaut de -30j sans ce paramètre — sans borne, tout capteur/canal inactif
+    depuis plus de 30 jours aurait été silencieusement absent du résultat
+    (aucune erreur, juste jamais migré). Trouvé le 17/08/2026 en reprenant la
+    Phase 1 : `mesures_capteurs` a renvoyé 0 valeur d'`adresse_mac` alors que
+    la mesure contient des données depuis janvier 2026."""
     flux = f"""
 import "influxdata/influxdb/schema"
 schema.tagValues(bucket: "{INFLUX_BUCKET}", tag: "{tag}",
-  predicate: (r) => r._measurement == "{mesure}")
+  predicate: (r) => r._measurement == "{mesure}", start: {DATE_DEBUT_HISTORIQUE})
 """
     return [ligne["_value"] for ligne in flux_query(flux)]
 
 
 def _premier_dernier_jour(
-    mesure: str, tag_decoupage: str | None, valeur: str | None, champ_reference: str
+    mesure: str,
+    tag_decoupage: str | None,
+    valeur: str | None,
+    champ_reference: str,
+    jour_min_force: date | None = None,
 ):
     """Bornes temporelles (first/last) — toujours filtré sur un seul tag/canal
     ET un seul champ à la fois pour rester dans le cas "série unique" rapide
-    (règle absolue, cf. docstring de tête de fichier)."""
+    (règle absolue, cf. docstring de tête de fichier).
+
+    `first()` sur mesures_dewesoft (1,5 milliard de points) a fait OOM-killer
+    le pod InfluxDB le 17/08/2026 en reprenant la Phase 1 (exit 137, deux
+    essais : 20s puis 120s de timeout, le second a laissé la requête aller
+    au bout et planter réellement plutôt que d'être juste coupée côté
+    client) — probablement un scan des shards les plus anciens/froids,
+    contre un accès direct au shard récent (déjà chaud) pour `last()`
+    (proven rapide, jamais impliqué dans un incident). `jour_min_force`
+    permet de fournir une date de départ déjà connue (documentée dans
+    logique_projet.md à partir de l'analyse des fichiers .dxd sources) et de
+    sauter complètement `first()` — seul `last()` reste interrogé."""
     if tag_decoupage:
+        if jour_min_force:
+            flux = f"""
+from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: {DATE_DEBUT_HISTORIQUE})
+  |> filter(fn: (r) => r._measurement == "{mesure}")
+  |> filter(fn: (r) => r.{tag_decoupage} == "{valeur}")
+  |> filter(fn: (r) => r._field == "{champ_reference}")
+  |> keep(columns: ["_time", "_value"])
+  |> last()
+"""
+            lignes = flux_query(flux, timeout=60)
+            dernier = datetime.fromisoformat(lignes[0]["_time"]) if lignes else None
+            premier = datetime.combine(jour_min_force, datetime.min.time(), tzinfo=timezone.utc)
+            return premier, dernier
+
         resultats = {}
         for nom_fn, fn in (("premier", "first"), ("dernier", "last")):
             flux = f"""
@@ -216,7 +253,7 @@ from(bucket: "{INFLUX_BUCKET}")
   |> keep(columns: ["_time", "_value"])
   |> {fn}()
 """
-            lignes = flux_query(flux)
+            lignes = flux_query(flux, timeout=60)
             if lignes:
                 resultats[nom_fn] = datetime.fromisoformat(lignes[0]["_time"])
         return resultats.get("premier"), resultats.get("dernier")
@@ -249,21 +286,35 @@ from(bucket: "{INFLUX_BUCKET}")
 
 
 def _points_jour(
-    mesure: str, tag_decoupage: str | None, valeur: str | None, champs: list[str], jour: date
+    mesure: str,
+    tag_decoupage: str | None,
+    valeur: str | None,
+    champs: list[str],
+    jour: date,
+    tags_par_point: list[str] | None = None,
 ) -> list[dict]:
     """Un point par _time, champs pivotés en colonnes — borné à UN jour et UNE
-    valeur de tag de découpage à la fois (règle absolue, cf. docstring)."""
+    valeur de tag de découpage à la fois (règle absolue, cf. docstring).
+
+    `pivot()` ne conserve que les colonnes de la clé de groupe : quand il n'y a
+    pas de tag_decoupage (tags variables point par point, ex. `host`,
+    `pipeline`), ces tags doivent être ajoutés à `group(columns: ...)` sous
+    peine d'être silencieusement perdus avant l'écriture TimescaleDB (bug
+    trouvé le 17/08/2026 en reprenant la Phase 1 : NotNullViolation sur
+    `disk_usage_bytes.host`)."""
     debut = datetime.combine(jour, datetime.min.time(), tzinfo=timezone.utc).isoformat()
     fin = (
         datetime.combine(jour, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1)
     ).isoformat()
     filtre_tag = f'|> filter(fn: (r) => r.{tag_decoupage} == "{valeur}")' if tag_decoupage else ""
+    colonnes_groupe = ["_field"] + ([] if tag_decoupage else (tags_par_point or []))
+    colonnes_groupe_flux = "[" + ", ".join(f'"{c}"' for c in colonnes_groupe) + "]"
     flux = f"""
 from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {debut}, stop: {fin})
   |> filter(fn: (r) => r._measurement == "{mesure}")
   {filtre_tag}
-  |> group(columns: ["_field"])
+  |> group(columns: {colonnes_groupe_flux})
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"])
 """
@@ -286,7 +337,9 @@ def _deja_verifie(pg_conn, mesure: str, tag_valeur: str, jour: date) -> bool:
 def _migrer_lot(pg_conn, mesure: str, config: dict, tag_valeur: str, jour: date) -> None:
     tag_decoupage = config["tag_decoupage"]
     champs = config["champs"]
-    lignes = _points_jour(mesure, tag_decoupage, tag_valeur, champs, jour)
+    lignes = _points_jour(
+        mesure, tag_decoupage, tag_valeur, champs, jour, config.get("tags_par_point")
+    )
     nb_source = len(lignes)
 
     tags_constants = {}
@@ -367,10 +420,17 @@ def _migrer_lot(pg_conn, mesure: str, config: dict, tag_valeur: str, jour: date)
 
 
 def migrer_mesure(
-    mesure: str, canal_filtre: str | None = None, jour_max: date | None = None
+    mesure: str,
+    canal_filtre: str | None = None,
+    jour_max: date | None = None,
+    jour_min: date | None = None,
 ) -> None:
     """Migre une mesure entière (ou un seul canal/tag si canal_filtre est fourni),
-    jour par jour, en reprenant où un lancement précédent s'était arrêté."""
+    jour par jour, en reprenant où un lancement précédent s'était arrêté.
+
+    `jour_min` : voir `_premier_dernier_jour` — évite `first()` (coûteux,
+    voire dangereux sur mesures_dewesoft) en fournissant une date de départ
+    déjà connue plutôt que de la découvrir par requête."""
     config = MESURES[mesure]
     pg_conn = pg_connect()
 
@@ -385,7 +445,9 @@ def migrer_mesure(
 
     champ_reference = config["champs"][0]
     for valeur in valeurs:
-        premier, dernier = _premier_dernier_jour(mesure, tag_decoupage, valeur, champ_reference)
+        premier, dernier = _premier_dernier_jour(
+            mesure, tag_decoupage, valeur, champ_reference, jour_min_force=jour_min
+        )
         if premier is None:
             print(f"  {mesure} / {valeur} : aucune donnée, ignoré.")
             continue
@@ -409,15 +471,24 @@ if __name__ == "__main__":
     parser.add_argument(
         "--jour-max", default=None, help="AAAA-MM-JJ — arrêter la migration à ce jour inclus"
     )
+    parser.add_argument(
+        "--jour-min",
+        default=None,
+        help=(
+            "AAAA-MM-JJ — date de départ déjà connue, évite la découverte par "
+            "first() (coûteux/risqué sur mesures_dewesoft, cf. docstring)"
+        ),
+    )
     parser.add_argument("--toutes", action="store_true")
     args = parser.parse_args()
 
     jour_max = date.fromisoformat(args.jour_max) if args.jour_max else None
+    jour_min = date.fromisoformat(args.jour_min) if args.jour_min else None
 
     if args.toutes:
         for m in MESURES:
-            migrer_mesure(m, jour_max=jour_max)
+            migrer_mesure(m, jour_max=jour_max, jour_min=jour_min)
     elif args.mesure:
-        migrer_mesure(args.mesure, canal_filtre=args.canal, jour_max=jour_max)
+        migrer_mesure(args.mesure, canal_filtre=args.canal, jour_max=jour_max, jour_min=jour_min)
     else:
         parser.error("Préciser --mesure <nom> ou --toutes")
