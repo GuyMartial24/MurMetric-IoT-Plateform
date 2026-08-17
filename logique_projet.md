@@ -4098,6 +4098,70 @@ d'insertion/lecture/suppression réussi sur `mesures_dewesoft`, production
 (InfluxDB, retrait, hr_t) confirmée non affectée par ce déploiement
 (pipelines toujours opérationnels après coup).
 
+### Phase 1 (historique) — tentative du 17/08/2026, mise en pause
+
+**Ce qui s'est passé.** Premier essai du script `migration_influx_timescale.py`
+(lecture InfluxDB → écriture TimescaleDB, mesure par mesure/tag/jour). Trois
+incidents production le même jour, tous auto-résolus par k3s (redémarrage
+automatique du pod StatefulSet), **aucune perte de données confirmée à
+chaque fois** (volume persistant, moteur TSM d'InfluxDB robuste aux arrêts
+brusques ; pipelines retrait/hr_t vérifiés opérationnels après coup) :
+
+1. **`group()` sans colonnes avant `first()`/`last()`** dans
+   `_premier_dernier_jour()`, ajouté par précaution sur un flux déjà filtré
+   à une seule série (un seul tag + un seul field) — s'est révélé
+   catastrophique plutôt qu'inoffensif : load average du VPS monté à 40+
+   sur 4 cœurs, SSH lui-même injoignable ~45s, `kafka-consumer-influx`
+   redémarré (timeout de la sonde de vivacité, pas OOM). Correctif : ce
+   `group()` retiré — un filtre tag+field déjà univoque n'en a jamais eu
+   besoin.
+2. **Même requête via la librairie Python `influxdb-client` (HTTP,
+   VPS-hôte → InfluxDB ClusterIP)** — chemin jamais utilisé ailleurs dans
+   ce projet (tous les autres scripts interrogent InfluxDB depuis
+   l'intérieur d'un pod). Mémoire InfluxDB montée à ~4095Mi (plafond
+   4Gi), un essai identique suivant a fait crasher le pod. Correctif
+   (autorisé explicitement) : réécriture complète du script pour ne plus
+   jamais utiliser `influxdb-client` — toutes les lectures passent
+   désormais par `kubectl exec influxdb-0 -- influx query ... --raw`
+   (sous-processus, même chemin que le reste du projet), avec un parseur
+   CSV annoté maison (`_parser_csv_annote()`).
+3. Même ralentissement/instabilité persistant malgré la réécriture — deux
+   renforcements supplémentaires appliqués (autorisés explicitement) :
+   - **Quota mémoire par requête sur InfluxDB** (`k8s/influxdb/statefulset.yaml`) :
+     `--query-memory-bytes=1073741824` (1GiB) + `--query-initial-memory-bytes=10485760`.
+     Absence totale de garde-fou serveur confirmée dans les logs avant
+     correctif (`memory_bytes_quota_per_query` au maximum int64, illimité
+     de fait) — un vrai manque, indépendant du diagnostic ci-dessous.
+     Déployé par redémarrage contrôlé (`kubectl apply` + `rollout status`),
+     pas déclenché par un crash.
+   - Remplacement de `range(start:0)` par une borne explicite
+     (`DATE_DEBUT_HISTORIQUE = "2024-01-01T00:00:00Z"`) dans toutes les
+     requêtes du script, hypothèse : un départ epoch non borné empêche
+     l'élagage des shards par InfluxDB.
+   - **Cause racine non tranchée avec certitude.** La même requête
+     (`last()`/`first()` sur un canal+field, bornée) était rapide au tout
+     premier essai du jour (1,083s), puis systématiquement lente (20s+)
+     après les crashs répétés — hypothèse retenue : les redémarrages
+     brutaux (SIGKILL) ont dégradé l'état interne d'InfluxDB (cache, WAL,
+     retard de compaction) plutôt qu'un défaut de conception de requête,
+     mais ni le retrait du `group()`, ni le passage à `kubectl exec`, ni
+     le quota mémoire, ni la borne de date n'ont isolément fait
+     disparaître la lenteur au moment des tests.
+
+**Décision (accord explicite de l'utilisateur, "oui" à la mise en
+pause proposée)** : Phase 1 mise en pause pour la journée sans nouvel
+essai contre la production. Seul ce qui est sûr est conservé/commité
+(durcissement InfluxDB, script de migration corrigé) — pas de reprise
+de la migration elle-même sans un nouveau feu vert explicite.
+
+**Vérifié réel après mise en pause** : ~10 minutes après le dernier
+redémarrage contrôlé, pod InfluxDB stable (0 redémarrage), mémoire
+redescendue d'elle-même à 663Mi (contre ~4095Mi au plus fort de
+l'instabilité) sans nouveau crash — cohérent avec l'hypothèse d'un état
+interne dégradé temporaire plutôt qu'un problème structurel permanent.
+Point de vigilance pour la reprise de Phase 1 : retester la requête de
+référence à froid avant de relancer une migration par lots complète.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

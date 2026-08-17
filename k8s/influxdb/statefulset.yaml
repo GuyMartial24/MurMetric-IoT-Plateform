@@ -17,6 +17,18 @@ spec:
       containers:
         - name: influxdb
           image: influxdb:2.7
+          # Plafond mémoire PAR REQUÊTE (17/08/2026, section 33) — sans ça, le
+          # moteur de requêtes n'a AUCUN garde-fou serveur (confirmé dans les
+          # logs : memory_bytes_quota_per_query au maximum int64, illimité de
+          # fait). Trois incidents le même jour pendant le test du script de
+          # migration Phase 1 : une requête plus coûteuse que prévu consommait
+          # toute la mémoire du pod jusqu'à l'OOM-kill, plutôt que d'échouer
+          # proprement. 1 GiB par requête, bien sous le plafond total de 4Gi —
+          # une requête qui dépasse échoue maintenant avec une erreur claire
+          # côté client au lieu de faire tomber tout le pod.
+          args:
+            - "--query-memory-bytes=1073741824"
+            - "--query-initial-memory-bytes=10485760"
           # Poste le plus gourmand de la chaîne pendant un import massif (c'est
           # lui qui indexe et écrit les points), d'où le plafond le plus haut —
           # mais plafond tout de même : le nœud 4 cœurs est partagé avec
