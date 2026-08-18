@@ -4836,6 +4836,75 @@ aucune nouvelle clé/secret), mais 3 configurations de modèle au total
 les ressources du VPS partagé (appels API sortants uniquement, comme
 c'était déjà le cas pour Gemini).
 
+## 37. Plugin IA dans Grafana — tenté puis ABANDONNÉ (bug plugin, 18/08/2026)
+
+Question utilisateur : Grafana propose-t-il un assistant IA intégré, et
+comment l'activer sur le Grafana du projet (self-hosted,
+`grafana-oss:11.1.0`) ? Deux fonctionnalités distinctes existent côté
+Grafana, confirmées via la documentation officielle :
+- **Grafana Assistant** (vrai panneau de chat) : nécessite une connexion
+  à un compte **Grafana Cloud** même en self-hosted (l'inférence tourne
+  côté cloud, le plugin local relaie juste) — écarté d'emblée par
+  l'utilisateur pour rester cohérent avec l'architecture 100% VPS du
+  projet (aucune dépendance externe non maîtrisée).
+- **Grafana LLM plugin** (`grafana-llm-app`) : fonctionnalités IA
+  ponctuelles dans certains panels, self-hosted, connecté à un
+  fournisseur OpenAI-compatible au choix — choisi comme seule option
+  cohérente avec les principes du projet, avec la clé Groq déjà
+  configurée (pas Gemini, plafonné à 20 requêtes/jour, cf. section 36).
+
+**Installation réussie** : `GF_INSTALL_PLUGINS=grafana-llm-app` (installe
+automatiquement au démarrage, survit à une recréation du PVC — pas
+d'installation manuelle à refaire) + provisioning YAML
+(`/etc/grafana/provisioning/plugins/`, même mécanisme que les
+datasources) pointant vers `https://api.groq.com/openai` avec la clé
+Groq (`${GROQ_API_KEY}`, substitution Grafana comme `${INFLUX_TOKEN}`
+déjà utilisé pour la datasource InfluxDB). Plugin détecté, enregistré,
+config acceptée par l'API — confirmé via `GET
+/api/plugins/grafana-llm-app/settings`.
+
+**Bug réel trouvé dans le plugin (v1.0.8, seule version publiée au
+catalogue Grafana à cette date)** : configurer un nom de modèle
+personnalisé (`jsonData.models`) — indispensable, les modèles Groq ne
+s'appellent pas "gpt-4.1"/"gpt-4.1-mini" comme les défauts du plugin —
+fait planter systématiquement son health-check (`panic: assignment to
+entry in nil map`, `llm_provider.go:71`, `Model.toProvider()` écrit
+dans une map jamais initialisée). **Confirmé non lié à notre
+configuration** : reproduit à l'identique avec 3 approches différentes
+(YAML de provisioning en format plat `models: {base: "...", large:
+"..."}`, YAML en format imbriqué `models: {base: {mapping: {openai:
+"..."}}}`, et configuration directe via `POST
+/api/plugins/grafana-llm-app/settings`) — même stack trace à chaque
+fois, avant même le moindre appel réseau vers Groq. Confirmé aussi
+qu'aucune version plus récente n'est disponible pour corriger ce bug
+(une seule version au catalogue). Sans ce champ, le plugin reste stable
+(pas de crash) mais cherche des modèles OpenAI officiels inexistants
+sur Groq (`404 model_not_found`) — donc **aucune fonctionnalité IA
+utilisable dans les deux cas**, avec ou sans mapping de modèle.
+
+**Piège secondaire trouvé et documenté au passage** (indépendant du bug
+principal) : l'URL du fournisseur ne doit **pas** inclure le suffixe
+`/v1` (`https://api.groq.com/openai`, pas
+`https://api.groq.com/openai/v1`) — le client interne du plugin l'ajoute
+déjà lui-même ; avec le suffixe inclus, les requêtes échouaient avec un
+chemin dupliqué (`/openai/v1/v1/chat/completions`).
+
+**Décision (accord explicite, "Désinstaller (Recommandé)")** :
+entièrement désinstallé et annulé — `grafana cli plugins uninstall`,
+retour de `k8s/grafana/deployment.yaml` à son état d'origine (`git
+checkout`), suppression du ConfigMap de provisioning
+(`grafana-llm-provisioning`) et du fichier local associé, jamais
+commité. Grafana revérifié en bonne santé après le retour arrière
+(`GET /api/health` → `database: ok`) et confirmé sans aucun plugin
+installé (`grafana cli plugins ls` → "no installed plugins found").
+Rien à committer sur ce chantier (aucune trace laissée dans le dépôt).
+
+**Pour une reprise future** : ne pas retenter tel quel — le bug est
+dans le plugin lui-même, pas dans notre configuration. Vérifier d'abord
+si une version plus récente de `grafana-llm-app` a corrigé
+`Model.toProvider()` (chercher un changelog mentionnant un fix sur le
+mapping de modèles) avant de reprendre cette piste.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
