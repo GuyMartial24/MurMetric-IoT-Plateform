@@ -5,6 +5,20 @@ import SelecteurMesure from "../components/SelecteurMesure.jsx";
 import { svgVersDataUrl } from "../exportGraphique.js";
 import { libelleGrandeur } from "../nomogrammeAxes.js";
 
+// Au-delà, la requête risque d'échouer côté API Gemini (charge utile trop
+// lourde une fois encodée en base64) — mieux vaut prévenir côté client
+// qu'échouer après l'envoi.
+const TAILLE_MAX_IMAGE = 8 * 1024 * 1024; // 8 Mo
+
+function fichierVersDataUrl(fichier) {
+  return new Promise((resolve, reject) => {
+    const lecteur = new FileReader();
+    lecteur.onload = () => resolve(lecteur.result);
+    lecteur.onerror = () => reject(new Error("Lecture de l'image échouée."));
+    lecteur.readAsDataURL(fichier);
+  });
+}
+
 // Le prompt système demande à l'assistant de toujours isoler son rappel
 // "lecture assistée par IA" / "brouillon à valider" dans son propre
 // paragraphe commençant par "Note : " — affiché ici en italique/discret
@@ -30,7 +44,30 @@ export default function Assistant() {
   const [enCours, setEnCours] = useState(false);
   const [enCoursCourbe, setEnCoursCourbe] = useState(false);
   const [erreur, setErreur] = useState(null);
+  const [imageJointe, setImageJointe] = useState(null); // data URI collée/importée par l'utilisateur
   const graphiqueRef = useRef(null);
+  const inputFichierRef = useRef(null);
+
+  const attacherImage = async (fichier) => {
+    if (!fichier || !fichier.type.startsWith("image/")) return;
+    if (fichier.size > TAILLE_MAX_IMAGE) {
+      setErreur("Image trop volumineuse (max 8 Mo) — réduis sa résolution avant de la joindre.");
+      return;
+    }
+    try {
+      setImageJointe(await fichierVersDataUrl(fichier));
+      setErreur(null);
+    } catch (e) {
+      setErreur(e.message);
+    }
+  };
+
+  const collerImage = (e) => {
+    const item = Array.from(e.clipboardData.items).find((it) => it.type.startsWith("image/"));
+    if (!item) return; // pas d'image dans le presse-papiers : laisse le collage de texte normal se produire
+    e.preventDefault();
+    attacherImage(item.getAsFile());
+  };
 
   const chargerCourbe = async () => {
     setEnCoursCourbe(true);
@@ -46,18 +83,25 @@ export default function Assistant() {
     }
   };
 
-  const envoyer = async (avecGraphique) => {
+  const envoyer = async (source) => {
+    // source: "texte" | "graphique" (courbe de l'appli, auto-capturée) | "image" (collée/importée)
     if (!prompt.trim()) return;
     const question = prompt;
-    setHistorique((h) => [...h, { role: "utilisateur", texte: question, avecGraphique }]);
+    const etiquette = source === "graphique" ? "graphique joint" : source === "image" ? "image jointe" : null;
+    setHistorique((h) => [...h, { role: "utilisateur", texte: question, etiquette }]);
     setPrompt("");
     setEnCours(true);
     setErreur(null);
     try {
       let resultat;
-      if (avecGraphique) {
+      if (source === "graphique") {
         const imageDataUri = await svgVersDataUrl(graphiqueRef.current);
         resultat = await api.chatAssistantImage({ mode, prompt: question, image_data_uri: imageDataUri, selection });
+      } else if (source === "image") {
+        // Image étrangère à la sélection courante (capture externe) : pas de
+        // statistiques mur/couche jointes, ce serait trompeur pour l'IA.
+        resultat = await api.chatAssistantImage({ mode, prompt: question, image_data_uri: imageJointe });
+        setImageJointe(null);
       } else {
         resultat = await api.chatAssistant({ mode, prompt: question, selection });
       }
@@ -74,9 +118,9 @@ export default function Assistant() {
       <div className="carte">
         <h2>Assistant IA</h2>
         <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
-          Ancré sur la sélection ci-dessous — jamais sur des points bruts, uniquement sur des statistiques pré-agrégées
-          (ou, si tu joins le graphique, sur l'image déjà tracée par l'appli). Les brouillons de rapport sont à relire
-          avant usage.
+          Ancré sur la sélection ci-dessous — jamais sur des points bruts, uniquement sur des statistiques pré-agrégées,
+          sauf si tu joins une image (le graphique de l'appli, ou une capture collée/importée) : l'IA l'analyse alors
+          directement. Les brouillons de rapport sont à relire avant usage.
         </p>
         <SelecteurMesure valeur={selection} onChange={setSelection} />
         <div className="champ" style={{ marginTop: "0.75rem", maxWidth: "260px" }}>
@@ -109,7 +153,7 @@ export default function Assistant() {
       <div className="carte">
         {historique.map((m, i) => (
           <div key={i} className={`chat-message ${m.role}`}>
-            {m.avecGraphique && (
+            {m.etiquette && (
               <span
                 style={{
                   display: "inline-block",
@@ -121,26 +165,52 @@ export default function Assistant() {
                   marginRight: "0.4rem",
                 }}
               >
-                graphique joint
+                {m.etiquette}
               </span>
             )}
             {m.role === "assistant" ? <TexteAssistant texte={m.texte} /> : m.texte}
           </div>
         ))}
         {erreur && <p className="erreur">{erreur}</p>}
+        {imageJointe && (
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" }}>
+            <img
+              src={imageJointe}
+              alt="Image jointe"
+              style={{ maxHeight: "70px", borderRadius: "4px", border: "1px solid #3a4152" }}
+            />
+            <span style={{ fontSize: "0.8rem", color: "#a0a6b5" }}>
+              Image jointe — sera envoyée avec le prochain message.
+            </span>
+            <button onClick={() => setImageJointe(null)} style={{ fontSize: "0.8rem" }}>
+              Retirer
+            </button>
+          </div>
+        )}
+        <input
+          type="file"
+          accept="image/*"
+          ref={inputFichierRef}
+          style={{ display: "none" }}
+          onChange={(e) => {
+            attacherImage(e.target.files[0]);
+            e.target.value = "";
+          }}
+        />
         <textarea
           rows={3}
           style={{ width: "100%" }}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="ex. Explique l'évolution de la température sur cette sélection"
+          onPaste={collerImage}
+          placeholder="ex. Explique l'évolution de la température sur cette sélection (Ctrl+V pour coller une capture)"
         />
         <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
-          <button onClick={() => envoyer(false)} disabled={enCours}>
+          <button onClick={() => envoyer(imageJointe ? "image" : "texte")} disabled={enCours}>
             {enCours ? "Réflexion..." : "Envoyer"}
           </button>
           <button
-            onClick={() => envoyer(true)}
+            onClick={() => envoyer("graphique")}
             disabled={enCours || !points || points.length === 0}
             title={
               !points || points.length === 0
@@ -149,6 +219,9 @@ export default function Assistant() {
             }
           >
             {enCours ? "Réflexion..." : "Envoyer avec le graphique"}
+          </button>
+          <button type="button" onClick={() => inputFichierRef.current.click()} disabled={enCours}>
+            Joindre une image
           </button>
         </div>
       </div>

@@ -4648,6 +4648,58 @@ l'état de la tâche renvoie `"statut": "telecharge"` ; une seconde
 tentative de téléchargement renvoie désormais `409 Conflict` (bloquée
 par le contrôle de statut, plus par un fichier manquant).
 
+## 36. Assistant IA — coller/importer une image arbitraire (18/08/2026)
+
+Question utilisateur : possible de coller une capture d'écran dans la
+zone de prompt de l'assistant, pas seulement d'envoyer le graphique déjà
+tracé par l'appli ? Réponse : non à ce moment-là, seul le bouton
+"Envoyer avec le graphique" existait (capture auto du `<svg>` affiché).
+Mais le backend n'avait aucune dépendance structurelle à ce mode —
+`POST /api/assistant/chat-image` (`DemandeChatImage`) accepte déjà
+n'importe quelle `image_data_uri` avec `selection` optionnelle
+(`Selection | None = None`) — seul le frontend imposait ce chemin.
+Implémenté côté frontend uniquement (`Assistant.jsx`), aucun changement
+backend :
+
+- **Collage** : gestionnaire `onPaste` sur le textarea — détecte une
+  image dans `clipboardData.items`, l'intercepte (`preventDefault`)
+  pour ne pas polluer le texte, laisse le collage de texte normal
+  intact si aucune image n'est présente.
+- **Import de fichier** : bouton "Joindre une image" + `<input
+  type="file">` caché, alternative au collage (plus découvrable, utile
+  hors clipboard).
+- Image affichée en aperçu (vignette + bouton "Retirer") avant envoi,
+  retirée automatiquement une fois le message envoyé.
+- **Limite de taille côté client** : 8 Mo (`TAILLE_MAX_IMAGE`), rejetée
+  avec un message clair avant tout envoi réseau plutôt que d'échouer
+  côté API après coup.
+- **Décision volontaire** : contrairement au bouton "Envoyer avec le
+  graphique" (qui joint la `selection` mur/couche courante, cohérente
+  avec l'image envoyée), une image collée/importée est envoyée **sans**
+  `selection` — l'associer aux statistiques de la sélection affichée
+  aurait été trompeur pour une capture étrangère à l'appli (ex. un
+  graphique Excel, une photo de terrain).
+- Les deux boutons ("Envoyer avec le graphique" et collage/import)
+  restent indépendants et non cumulables en un seul envoi — scope
+  volontairement limité, pas de système multi-image.
+
+**Vérification** : pas d'outil de test navigateur disponible dans cet
+environnement (comme pour les précédentes fonctionnalités UI de ce
+projet) — vérifié par build de production (`vite build`, aucune erreur)
++ lint (`prettier`/`oxlint` propres) + confirmation que la chaîne
+"Joindre une image" est bien présente dans le bundle déployé sur le
+VPS. Le chemin backend exact emprunté par cette fonctionnalité (image
++ prompt, **sans** `selection`) a été testé en conditions réelles
+contre l'API Gemini de production, avec une image PNG de test générée
+localement (carré rouge uni) : `POST /api/assistant/chat-image` a
+répondu `200`, Gemini a correctement identifié "Rouge" comme couleur
+dominante — confirme que le chemin sans `selection` fonctionne de bout
+en bout. Un premier essai a échoué (`503` puis timeout apparent côté
+client) : diagnostiqué comme un vrai `503 "This model is currently
+experiencing high demand"` retourné par Gemini lui-même (reproduit par
+un appel direct au SDK OpenAI, hors de l'endpoint), pas un bug du
+nouveau code — un second essai a immédiatement réussi.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

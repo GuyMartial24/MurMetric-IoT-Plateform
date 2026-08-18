@@ -14,10 +14,7 @@ export default function Export() {
     <div>
       <div className="carte">
         <h2>Export de données</h2>
-        <p style={{ color: "#a0a6b5", fontSize: "0.9rem" }}>
-          Génère un fichier côté serveur pour une période choisie — contrairement aux boutons d'export des courbes, pas
-          besoin d'afficher un graphique au préalable.
-        </p>
+        <p style={{ color: "#a0a6b5", fontSize: "0.9rem" }}>Génère un fichier côté serveur pour une période choisie.</p>
         <div className="champ" style={{ maxWidth: "260px" }}>
           <label>Type de mesure</label>
           <select value={type} onChange={(e) => setType(e.target.value)}>
