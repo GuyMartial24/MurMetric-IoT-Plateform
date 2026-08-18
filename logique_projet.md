@@ -4601,6 +4601,53 @@ observée à chaque étape) :
   fond — `FileNotFoundError` à la première tentative, corrigé en une
   ligne).
 
+### Suite (18/08/2026) — nom de fichier avec période + rien ne persiste sur le VPS
+
+Deux questions utilisateur après les premiers tests ont mené à deux
+correctifs supplémentaires, mêmes principes appliqués partout :
+
+1. **Nom de fichier incluant la période demandée.** Avant : noms fixes
+   (`retrait_export.csv`, `hr_t_export.csv`, `teneur_eau_export.csv`,
+   ou juste `retrait_{champ}_{resolution}.csv` sans dates) — une fois
+   téléchargés, impossible de distinguer deux exports sans rouvrir
+   chacun. Corrigé pour les quatre chemins (export direct retrait,
+   HR/T, teneur en eau, et téléchargement de tâche de fond) : le nom
+   inclut désormais `{debut}_{fin}` (dates ISO, ex.
+   `retrait_valeur_filtree_heure_2026-06-19_2026-06-19.csv`). Pour la
+   tâche de fond, `champ`/`resolution`/`debut`/`fin` sont maintenant
+   conservés dans le dictionnaire de suivi (`_taches[tache_id]`) au
+   moment du démarrage, pour être disponibles au moment du
+   téléchargement (l'identifiant de tâche seul ne les portait pas).
+
+2. **Les fichiers de tâche de fond ne doivent plus persister sur le
+   VPS après téléchargement.** Le mode "téléchargement direct" ne
+   laissait déjà rien sur le VPS (CSV jamais écrit sur disque ; fichier
+   Parquet temporaire déjà supprimé après envoi via
+   `BackgroundTask`) — seul le mode "tâche de fond" laissait le fichier
+   en place après un premier téléchargement (choix initial délibéré,
+   pour permettre un re-téléchargement sans relancer la génération).
+   Ce choix est revenu sur demande explicite, en cohérence avec
+   l'incident de disque plein de la veille (section 34) : plus rien ne
+   doit s'accumuler par défaut sur `/data/exports/`. Le même mécanisme
+   `BackgroundTask` (déjà utilisé pour le Parquet temporaire) supprime
+   maintenant le fichier de tâche juste après l'envoi réussi au
+   navigateur, et fait passer le statut de la tâche de `"termine"` à
+   `"telecharge"` — plutôt que de le laisser indéfiniment "terminé"
+   alors que le fichier n'existe plus. Contrepartie assumée : un second
+   téléchargement nécessite de relancer la tâche (source InfluxDB
+   intacte, aucune perte de données, juste à régénérer). Frontend
+   (`Export.jsx`) mis à jour pour afficher ce nouveau statut plutôt que
+   de ne rien afficher pour une valeur inconnue.
+
+Vérifié en conditions réelles (1 canal, 2h, agrégé horaire, tâche de
+fond) : nom de fichier correct pour l'export direct **et** pour le
+téléchargement de tâche
+(`retrait_valeur_filtree_heure_2026-06-19_2026-06-19.csv`) ; après le
+premier téléchargement, `/data/exports/` confirmé vide (`ls`) et
+l'état de la tâche renvoie `"statut": "telecharge"` ; une seconde
+tentative de téléchargement renvoie désormais `409 Conflict` (bloquée
+par le contrôle de statut, plus par un fichier manquant).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

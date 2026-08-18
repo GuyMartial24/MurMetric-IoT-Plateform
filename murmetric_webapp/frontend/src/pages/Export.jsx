@@ -110,6 +110,10 @@ function ExportRetrait() {
     setErreur(null);
     try {
       await api.telechargerTacheRetrait(tache.tache_id);
+      // Le fichier est supprimé du serveur juste après l'envoi (rien ne doit
+      // persister sur le VPS) : reflète l'état côté client sans attendre un
+      // nouveau sondage, qui de toute façon s'est arrêté dès "termine".
+      setTache((t) => (t ? { ...t, statut: "telecharge" } : t));
     } catch (e) {
       setErreur(e.message);
     }
@@ -202,6 +206,12 @@ function ExportRetrait() {
           {tache.statut === "termine" && (
             <p>
               Terminé ({tache.jours_total} jour(s)) — <button onClick={telechargerTache}>Télécharger</button>
+            </p>
+          )}
+          {tache.statut === "telecharge" && (
+            <p style={{ color: "#a0a6b5" }}>
+              Téléchargé — le fichier a été supprimé du serveur (rien ne persiste sur le VPS). Relancez une tâche pour
+              l'obtenir à nouveau.
             </p>
           )}
           {tache.statut === "erreur" && <p className="erreur">Échec : {tache.erreur}</p>}

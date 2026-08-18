@@ -201,6 +201,13 @@ def _ecrire_parquet(entetes: list[str], lignes: Iterator[list], chemin: Path) ->
             ecrivain.close()
 
 
+def _suffixe_periode(debut_dt: datetime, fin_dt: datetime) -> str:
+    """Ex. '2026-06-01_2026-06-30' — inclus dans les noms de fichiers export
+    pour que la période couverte reste lisible une fois le fichier isolé de
+    l'écran qui l'a généré."""
+    return f"{debut_dt.date().isoformat()}_{fin_dt.date().isoformat()}"
+
+
 def _reponse_fichier(chemin: Path, nom_telecharge: str) -> FileResponse:
     """FileResponse envoie le fichier en flux puis exécute la tâche de fond
     (suppression du temporaire) — la suppression après coup ne coupe pas
@@ -249,7 +256,7 @@ def exporter_retrait(
     fin_dt = datetime.fromisoformat(fin_iso.replace("Z", "+00:00"))
     entetes = ["temps"] + liste_canaux
     lignes = _lignes_retrait(liste_canaux, champ, debut_dt, fin_dt, resolution)
-    nom = f"retrait_{champ}_{resolution}"
+    nom = f"retrait_{champ}_{resolution}_{_suffixe_periode(debut_dt, fin_dt)}"
 
     if format == "csv":
         return StreamingResponse(
@@ -356,6 +363,12 @@ def demarrer_tache_retrait(
             "jours_traites": 0,
             "jours_total": jours_total,
             "format": format,
+            # Conservés pour reconstruire le nom de fichier au téléchargement
+            # (inclure la période demandée dans le nom, cf. section 35).
+            "champ": champ,
+            "resolution": resolution,
+            "debut": debut_dt.date().isoformat(),
+            "fin": fin_dt.date().isoformat(),
         }
     fil = threading.Thread(
         target=_executer_tache_retrait,
@@ -376,9 +389,23 @@ def etat_tache_retrait(tache_id: str, _utilisateur: dict = Depends(utilisateur_c
     return tache
 
 
+def _apres_telechargement_tache(tache_id: str, chemin: Path) -> None:
+    """Tâche de fond exécutée une fois le fichier envoyé au navigateur :
+    supprime le fichier du VPS (rien ne doit y persister, cf. section 35) et
+    marque la tâche "telecharge" plutôt que de la laisser indéfiniment
+    "termine" alors que le fichier n'existe plus."""
+    chemin.unlink(missing_ok=True)
+    with _verrou_taches:
+        if tache_id in _taches:
+            _taches[tache_id]["statut"] = "telecharge"
+
+
 @router.get("/retrait/tache/{tache_id}/telecharger")
 def telecharger_tache_retrait(tache_id: str, _utilisateur: dict = Depends(utilisateur_courant)):
-    """Télécharge le fichier d'une tâche d'export retrait terminée."""
+    """Télécharge le fichier d'une tâche d'export retrait terminée. Le
+    fichier est supprimé du VPS juste après l'envoi (il ne doit exister que
+    sur le poste qui l'a téléchargé) — un second téléchargement nécessite de
+    relancer la tâche."""
     with _verrou_taches:
         tache = _taches.get(tache_id)
     if not tache:
@@ -390,8 +417,16 @@ def telecharger_tache_retrait(tache_id: str, _utilisateur: dict = Depends(utilis
     chemin = config.EXPORTS_DIR / f"{tache_id}.{tache['format']}"
     if not chemin.exists():
         raise HTTPException(status_code=404, detail="Fichier introuvable (déjà téléchargé ?).")
-    nom = f"retrait_export.{tache['format']}"
-    return FileResponse(chemin, media_type="application/octet-stream", filename=nom)
+    nom = (
+        f"retrait_{tache['champ']}_{tache['resolution']}_{tache['debut']}_{tache['fin']}"
+        f".{tache['format']}"
+    )
+    return FileResponse(
+        chemin,
+        media_type="application/octet-stream",
+        filename=nom,
+        background=BackgroundTask(_apres_telechargement_tache, tache_id, chemin),
+    )
 
 
 # ===========================================================================
@@ -467,6 +502,9 @@ def exporter_hr_t(
         raise HTTPException(status_code=400, detail=f"Format invalide : {format!r}")
     debut_iso, fin_iso = _valider_bornes(debut, fin, "hr_t")
     par_cle = _valeurs_hr_t(mur, couche, position, liste_champs, debut_iso, fin_iso)
+    debut_dt = datetime.fromisoformat(debut_iso.replace("Z", "+00:00"))
+    fin_dt = datetime.fromisoformat(fin_iso.replace("Z", "+00:00"))
+    nom = f"hr_t_export_{_suffixe_periode(debut_dt, fin_dt)}"
 
     entetes = ["temps", "capteur", "mur", "couche", "position"] + liste_champs
     lignes = (
@@ -479,12 +517,12 @@ def exporter_hr_t(
         return StreamingResponse(
             _generer_csv(entetes, lignes),
             media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": 'attachment; filename="hr_t_export.csv"'},
+            headers={"Content-Disposition": f'attachment; filename="{nom}.csv"'},
         )
     chemin = config.EXPORTS_DIR / f"_tmp_{uuid.uuid4().hex}.parquet"
     config.EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     _ecrire_parquet(entetes, lignes, chemin)
-    return _reponse_fichier(chemin, "hr_t_export.parquet")
+    return _reponse_fichier(chemin, f"{nom}.parquet")
 
 
 # ===========================================================================
@@ -522,6 +560,10 @@ from(bucket: "{config.INFLUX_BUCKET}")
             entree = par_cle.setdefault(cle, {})
             entree[record.get_field()] = record.get_value()
 
+    debut_dt = datetime.fromisoformat(debut_iso.replace("Z", "+00:00"))
+    fin_dt = datetime.fromisoformat(fin_iso.replace("Z", "+00:00"))
+    nom = f"teneur_eau_export_{_suffixe_periode(debut_dt, fin_dt)}"
+
     entetes = ["temps", "mur", "couche", "teneur_eau_pourcent", "commentaire"]
     lignes = (
         [t, mur, couche, entree.get("teneur_eau_pourcent"), entree.get("commentaire")]
@@ -532,9 +574,9 @@ from(bucket: "{config.INFLUX_BUCKET}")
         return StreamingResponse(
             _generer_csv(entetes, lignes),
             media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": 'attachment; filename="teneur_eau_export.csv"'},
+            headers={"Content-Disposition": f'attachment; filename="{nom}.csv"'},
         )
     chemin = config.EXPORTS_DIR / f"_tmp_{uuid.uuid4().hex}.parquet"
     config.EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     _ecrire_parquet(entetes, lignes, chemin)
-    return _reponse_fichier(chemin, "teneur_eau_export.parquet")
+    return _reponse_fichier(chemin, f"{nom}.parquet")
