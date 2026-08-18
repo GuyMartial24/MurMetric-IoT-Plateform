@@ -126,6 +126,11 @@ td {
   color: #ff8080;
 }
 
+.avertissement {
+  color: #e0b34d;
+  font-size: 0.9rem;
+}
+
 .selection-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

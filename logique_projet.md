@@ -4432,6 +4432,48 @@ même horodatage, nombre de points final identique (1507) — aucune perte ni
 duplication. Déployé (rebuild image webapp) et testé directement en base,
 sans passer par l'UI.
 
+### Canaux retrait : avertissement à l'édition + sélecteur de canal en liste déroulante
+
+Suite de la discussion précédente : pour `mesures_dewesoft`, le
+réétiquetage rétroactif est délibérément exclu (volume, fragilité
+InfluxDB démontrée le 17-18/08) — la discontinuité mur/couche/position
+entre ancien et nouvel historique reste donc possible après une édition.
+Analyse de l'impact réel : **aucun effet sur le dashboard Grafana** (les
+panels retrait filtrent uniquement par `canal_nom`, jamais par
+mur/couche/position, cf. section 33) ; effet réel côté webapp (Vue
+d'ensemble, statistiques, nomogramme, assistant IA), qui exposent
+mur/couche comme mode de sélection le plus naturel. Découverte
+supplémentaire en creusant `/api/mesures/valeurs-tags` : côté retrait,
+les listes Mur/Couche sont peuplées depuis le **registre actuel**
+(`capteurs_retrait.json`), pas depuis l'historique InfluxDB — après un
+renommage, l'ancienne valeur disparaît purement et simplement de la
+liste déroulante (pas juste "filtrée à vide"). `canal_nom` (clé du
+registre, jamais renommée) reste le seul sélecteur garanti de retrouver
+l'historique complet d'un canal quel que soit son étiquetage passé.
+
+**Implémenté** :
+- `SelecteurMesure.jsx` : le champ "Canal" (visible seulement pour
+  `type === "retrait"`) passe d'un `<input>` texte libre (aucune
+  validation, aucune liste — "ex. HA1" en indication seulement) à un
+  `<select>` strict peuplé dynamiquement depuis
+  `combinaisons.map(c => c.canal_nom)`, même mécanisme et même
+  justification déjà documentée pour Mur/Couche (éviter la classe de bug
+  `<input list>`/datalist rencontrée deux fois le 14/08/2026).
+- `Capteurs.jsx` : nouvelle prop `avertissementEdition` sur
+  `TableauCapteurs`, affichée uniquement pendant l'édition d'une ligne —
+  câblée sur l'instance "Canaux retrait" seulement (pas "Capteurs HR/T",
+  qui réétiquette maintenant rétroactivement et n'a donc plus ce
+  problème). Nouvelle classe CSS `.avertissement` (`index.css`, ambre,
+  distincte de `.erreur` en rouge).
+
+**Vérifié** : build Vite, `oxlint`, `prettier` tous passants ; endpoint
+`/api/mesures/valeurs-tags?type=retrait` confirmé renvoyer les 8
+`canal_nom` réels (HA1/HA2/VA1/VA2/HB1/HB2/VB1/VB2) après déploiement.
+**Non testé visuellement dans un navigateur** (pas d'outil de test
+navigateur disponible dans cet environnement) — vérifié uniquement par
+build/lint/déploiement/réponse API réelle, comme les changements
+frontend précédents de cette session.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

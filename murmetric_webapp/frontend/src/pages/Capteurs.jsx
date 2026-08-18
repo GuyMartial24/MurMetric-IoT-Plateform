@@ -52,6 +52,12 @@ export default function Capteurs() {
         enregistrer={(cle, champs) => api.modifierCapteurRetrait(cle, champs)}
         recharger={charger}
         nomFichierExport="capteurs_retrait"
+        avertissementEdition={
+          "Cette modification ne s'appliquera qu'aux nouvelles mesures — " +
+          "l'historique déjà enregistré gardera l'ancien étiquetage. Pour " +
+          "retrouver l'historique complet d'un canal malgré un renommage, " +
+          "utilisez le sélecteur « Canal » plutôt que Mur/Couche."
+        }
       />
     </div>
   );
@@ -75,6 +81,7 @@ function TableauCapteurs({
   enregistrer,
   recharger,
   nomFichierExport,
+  avertissementEdition,
 }) {
   const [enEdition, setEnEdition] = useState(null); // { cle, valeurs }
   const [enCours, setEnCours] = useState(false);
@@ -114,6 +121,7 @@ function TableauCapteurs({
         nomFichier={nomFichierExport}
       />
       {erreur && <p className="erreur">{erreur}</p>}
+      {enEdition && avertissementEdition && <p className="avertissement">{avertissementEdition}</p>}
       <table>
         <thead>
           <tr>

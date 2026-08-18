@@ -54,6 +54,11 @@ export default function SelecteurMesure({ valeur, onChange }) {
   const cleCouche = valeur.type === "teneur_eau" ? "couche" : "nom_couche";
   const murs = [...new Set(combinaisons.map((c) => c[cleMur]).filter(Boolean))];
   const couches = [...new Set(combinaisons.map((c) => c[cleCouche]).filter(Boolean))];
+  // canal_nom (clé du registre capteurs_retrait.json) ne change jamais, même
+  // après un renommage de Mur/Couche — contrairement à ces derniers, toujours
+  // fiable pour retrouver l'historique complet d'un canal (cf. discussion du
+  // 18/08/2026, logique_projet.md section 34).
+  const canaux = [...new Set(combinaisons.map((c) => c.canal_nom).filter(Boolean))];
 
   return (
     <div className="selection-form">
@@ -92,11 +97,14 @@ export default function SelecteurMesure({ valeur, onChange }) {
       {valeur.type === "retrait" && (
         <div className="champ">
           <label>Canal</label>
-          <input
-            value={valeur.canal_nom || ""}
-            onChange={(e) => definir("canal_nom", e.target.value)}
-            placeholder="ex. HA1"
-          />
+          <select value={valeur.canal_nom || ""} onChange={(e) => definir("canal_nom", e.target.value)}>
+            <option value="">— tous —</option>
+            {canaux.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
         </div>
       )}
       <div className="champ">
