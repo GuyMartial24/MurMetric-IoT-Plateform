@@ -99,6 +99,11 @@ CAPTEURS_RETRAIT_JSON = CAPTEURS_DIR / "capteurs_retrait.json"
 CAPTEURS_JSON_SEED = _ICI.parent / "capteurs.seed.json"
 CAPTEURS_RETRAIT_JSON_SEED = _ICI.parent / "capteurs_retrait.seed.json"
 
+# Export complet en tâche de fond (section 34, 18/08/2026) : fichiers
+# générés progressivement sur le même volume persistant que capteurs.json —
+# survivent à un redémarrage du pod pendant que la génération est en cours.
+EXPORTS_DIR = CAPTEURS_DIR / "exports"
+
 # Secret partagé pour les endpoints machine-à-machine (POST .../enregistrer)
 # appelés sans session utilisateur par ingestion_dewesoft_dxd.py (PC Amiens)
 # et ingestion_capteurs_bluetooth.py (Pi) pour déclarer un nouveau canal/MAC

@@ -120,13 +120,29 @@ spec:
           volumeMounts:
             - name: webapp-data
               mountPath: /data
+          # Mémoire 256Mi -> 1Gi le 18/08/2026 : un export "brut" du retrait
+          # sur 2 jours pour un seul canal (1,7 million de points) a fait
+          # OOM-killer un process dans ce pod deux fois de suite (même après
+          # un premier passage à 1Gi) — cause réelle : `query_api().query()`
+          # matérialise tout le résultat InfluxDB en mémoire avant de le
+          # rendre. Corrigé définitivement côté code (export.py réécrit pour
+          # utiliser `query_stream()` + lecture jour par jour, mémoire
+          # constante quelle que soit la période) — cette marge mémoire reste
+          # en place par prudence, plus comme unique défense.
+          #
+          # CPU 200m -> 500m le 18/08/2026 : la lecture en flux (un
+          # enregistrement Python à la fois, par design pour rester sûre en
+          # mémoire) coûte plus de CPU que l'ancienne lecture en bloc —
+          # mesuré à 200m (plafond) pendant un export d'une heure, causant un
+          # export lent (bridage CPU). Nœud à 87% déjà alloué en limites tous
+          # pods confondus : augmentation mesurée, pas maximale.
           resources:
             requests:
               cpu: 50m
               memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 256Mi
+              cpu: 500m
+              memory: 1Gi
       volumes:
         - name: webapp-data
           persistentVolumeClaim:

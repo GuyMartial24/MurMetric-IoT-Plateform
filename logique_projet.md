@@ -4504,6 +4504,103 @@ redémarrage, mémoire jamais au-dessus de ~3,7Gi pendant les tests,
 largement sous le plafond de 8Gi), dashboard confirmé en version 8 avec
 les 4 panels à `timeFrom: 30d` via l'API Grafana.
 
+## 35. Export en masse retrait/HR-T/teneur en eau — CSV/Parquet (18/08/2026)
+
+### Demande et deux incidents de production en cherchant le bon calibrage
+
+Question utilisateur ("possibilité d'exporter toutes les données de
+retrait/HR-T/point de rosée en CSV ?") → nouvelle page **Export**
+(`/export`, entre "Teneur en eau" et "Capteurs" dans la navigation),
+nouveau routeur `export.py`. Première version : lecture via
+`query_api().query()` (méthode "simple" de la librairie InfluxDB,
+matérialise tout le résultat en objets Python avant de le rendre) +
+garde-fou "canal-jours" calibré à la main. **Deux incidents en testant
+ce garde-fou contre la production** :
+1. Un export "brut" de 1 canal × 2 jours (1,7 million de points) a fait
+   OOM-killer mon propre script de test — révèle que la limite mémoire
+   du pod webapp (256Mi) était largement insuffisante pour ce genre de
+   traitement, jamais anticipée à la conception (dimensionnée pour une
+   API JSON classique).
+2. Après avoir remonté la mémoire à 1Gi et corrigé le garde-fou pour
+   tenir compte du nombre de canaux (pas seulement des jours), **la
+   même requête (1 canal × 2 jours, dans les limites du nouveau
+   garde-fou) a fait OOM-killer le pod de production réel** — pas juste
+   un script de test cette fois. Confirmé récupéré automatiquement
+   (k3s), aucune perte de service au-delà du redémarrage du pod.
+
+**Cause racine identifiée** : `query_api().query()` matérialise
+l'intégralité du résultat InfluxDB en objets Python (`FluxRecord`, un
+par point, chacun portant toutes les colonnes y compris les tags
+répétés) avant de le rendre — plusieurs copies successives du même jeu
+de données (réponse HTTP brute, objets `FluxRecord`, dictionnaire de
+fusion, texte CSV final) coexistent en mémoire au pic. Un simple
+plafond "canal-jours", quelle que soit sa valeur, ne pouvait pas
+compenser ce problème structurel — deux tentatives de calibrage ont
+toutes les deux échoué contre la production.
+
+### Refonte complète — lecture en flux, jour par jour
+
+**Deux principes stricts, appliqués systématiquement** :
+1. **`query_api().query_stream()`** (pas `.query()`) : ne matérialise
+   jamais plus d'un enregistrement InfluxDB à la fois, quelle que soit
+   la taille du résultat — méthode déjà présente dans la même
+   librairie, jamais utilisée ailleurs dans ce projet avant.
+2. **Requêtes bornées jour par jour** (même règle que le reste du
+   projet pour `mesures_dewesoft`), jamais un filtre combinant
+   plusieurs canaux — chaque canal a son propre générateur Python,
+   fusionnés ensuite par horodatage (`_fusionner_par_temps()`, un vrai
+   merge à N voies, tolérant un horodatage absent sur un canal sans
+   désynchroniser les autres — pas un `zip()` naïf, qui aurait
+   silencieusement décalé les données au moindre trou).
+
+Effet : mémoire utilisée à peu près constante, indépendante de la
+période demandée — le garde-fou "canal-jours" devient inutile et a été
+**retiré entièrement**, pas juste recalibré une troisième fois.
+
+**Sérialisation** : CSV en flux direct (`StreamingResponse`, un objet
+"fichier" minimal qui laisse `csv.writer` échapper correctement tout en
+restant un générateur) ; **Parquet ajouté comme format alternatif**
+(nouvelle dépendance `pyarrow`) — écrit par lots de 50 000 lignes vers
+un fichier temporaire (le format Parquet, avec son pied de fichier écrit
+à la fin, ne se prête pas à un envoi HTTP progressif comme le CSV texte),
+servi puis supprimé automatiquement après envoi.
+
+**Deux modes de livraison** :
+- **Téléchargement direct** : réponse HTTP en flux, adapté à une
+  période raisonnable.
+- **Tâche de fond** (`POST /retrait/tache` + `GET .../tache/{id}` pour
+  le suivi + `GET .../tache/{id}/telecharger`) : génère le fichier
+  progressivement sur le volume persistant (`/data/exports/`), suivi
+  d'avancement en jours traités, adapté à une période longue ou à tout
+  l'historique — même moteur de lecture que le mode direct, juste écrit
+  sur disque au lieu d'être streamé au navigateur. Suivi en mémoire
+  (pas en base) : une tâche en cours est perdue si le pod redémarre,
+  acceptable vu le déploiement mono-réplique. Fichier de tâche **non
+  supprimé après téléchargement** (permet un re-téléchargement) —
+  ménage occasionnel de `/data/exports/` à prévoir manuellement, pas
+  encore automatisé.
+
+CPU du pod webapp 200m → 500m au passage : la lecture en flux (un
+enregistrement à la fois, par design) coûte plus de CPU que l'ancienne
+lecture en bloc — mesuré au plafond pendant un test, causant un export
+lent avant l'augmentation.
+
+**Vérifié en conditions réelles, en escaladant prudemment** (mémoire
+observée à chaque étape) :
+- 1 canal, 1h, brut : mémoire stable 82-87Mi (contre OOM immédiat
+  avant la refonte).
+- 3 canaux, 7 jours, agrégé horaire : 1,15s, mémoire inchangée, fusion
+  multi-canaux correcte (colonnes HA1/HA2/VA1 alignées).
+- **1 canal, 1 jour COMPLET, brut (864 000 points, le cas qui avait
+  fait planter la production)** : réussi, 864 001 lignes exactes,
+  46,5 Mo, mémoire restée à 84Mi du début à la fin (6m29s — lent, mais
+  sûr, InfluxDB restée saine tout du long).
+- Tâche de fond de bout en bout (démarrage → suivi → téléchargement) :
+  un bug trouvé et corrigé au passage (le dossier `/data/exports/`
+  n'était créé que dans le chemin d'export direct, pas dans la tâche de
+  fond — `FileNotFoundError` à la première tentative, corrigé en une
+  ligne).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

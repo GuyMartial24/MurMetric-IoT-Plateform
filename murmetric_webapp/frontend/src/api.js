@@ -27,6 +27,33 @@ async function requete(chemin, options = {}) {
   return corps;
 }
 
+// Téléchargement direct d'un CSV généré côté serveur (routes /api/export/*) —
+// distinct de requete() : la réponse est déjà un fichier CSV, pas du JSON.
+async function telechargerExport(chemin) {
+  const token = auth.getToken();
+  const reponse = await fetch(`${BASE_URL}${chemin}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (reponse.status === 401) {
+    auth.deconnecter();
+    window.location.href = "/login";
+    throw new Error("Session expirée, reconnecte-toi.");
+  }
+  if (!reponse.ok) {
+    const corps = await reponse.json().catch(() => null);
+    throw new Error(corps?.detail || `Erreur HTTP ${reponse.status}`);
+  }
+  const entete = reponse.headers.get("Content-Disposition") || "";
+  const nomFichier = /filename="([^"]+)"/.exec(entete)?.[1] || "export.csv";
+  const blob = await reponse.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nomFichier;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   mesures: (params) => requete(`/api/mesures?${new URLSearchParams(params)}`),
   croisement: (params) => requete(`/api/mesures/croisement?${new URLSearchParams(params)}`),
@@ -60,4 +87,11 @@ export const api = {
   monitoringHeartbeats: (pipeline, heures = 24) =>
     requete(`/api/monitoring/heartbeats?${new URLSearchParams({ pipeline, heures })}`),
   monitoringEspaceDisque: (jours = 30) => requete(`/api/monitoring/espace-disque?${new URLSearchParams({ jours })}`),
+  exporterRetrait: (params) => telechargerExport(`/api/export/retrait?${new URLSearchParams(params)}`),
+  exporterHrT: (params) => telechargerExport(`/api/export/hr_t?${new URLSearchParams(params)}`),
+  exporterTeneurEau: (params) => telechargerExport(`/api/export/teneur_eau?${new URLSearchParams(params)}`),
+  demarrerTacheRetrait: (params) =>
+    requete(`/api/export/retrait/tache?${new URLSearchParams(params)}`, { method: "POST" }),
+  etatTacheRetrait: (tacheId) => requete(`/api/export/retrait/tache/${tacheId}`),
+  telechargerTacheRetrait: (tacheId) => telechargerExport(`/api/export/retrait/tache/${tacheId}/telecharger`),
 };

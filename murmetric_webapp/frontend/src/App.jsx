@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import Logo from "./components/Logo.jsx";
 import Assistant from "./pages/Assistant.jsx";
 import Capteurs from "./pages/Capteurs.jsx";
+import Export from "./pages/Export.jsx";
 import Grafana from "./pages/Grafana.jsx";
 import Login from "./pages/Login.jsx";
 import Monitoring from "./pages/Monitoring.jsx";
@@ -15,6 +16,7 @@ const ONGLETS = [
   { chemin: "/", label: "Vue d'ensemble" },
   { chemin: "/grafana", label: "Grafana" },
   { chemin: "/teneur-eau", label: "Teneur en eau" },
+  { chemin: "/export", label: "Export" },
   { chemin: "/capteurs", label: "Capteurs" },
   { chemin: "/monitoring", label: "Monitoring" },
   { chemin: "/assistant", label: "Assistant IA" },
@@ -83,6 +85,14 @@ export default function App() {
             element={
               <EspaceProtege connecte={connecte}>
                 <TeneurEau />
+              </EspaceProtege>
+            }
+          />
+          <Route
+            path="/export"
+            element={
+              <EspaceProtege connecte={connecte}>
+                <Export />
               </EspaceProtege>
             }
           />

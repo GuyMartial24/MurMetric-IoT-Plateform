@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config, monitoring_mqtt
 from .auth import initialiser_bootstrap
-from .routers import assistant, auth, capteurs, mesures, monitoring, parametres, teneur_eau
+from .routers import assistant, auth, capteurs, export, mesures, monitoring, parametres, teneur_eau
 
 
 def _amorcer_capteurs() -> None:
@@ -54,6 +54,7 @@ app.add_middleware(
 )
 
 app.include_router(mesures.router)
+app.include_router(export.router)
 app.include_router(teneur_eau.router)
 app.include_router(capteurs.router)
 app.include_router(assistant.router)
