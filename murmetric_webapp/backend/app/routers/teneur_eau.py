@@ -103,29 +103,38 @@ def corriger(
     correction: CorrectionTeneurEau, utilisateur: dict = Depends(utilisateur_courant)
 ) -> dict:
     """Cible le point original par le triplet exact (mur, couche, date_mesure)
-    fourni par le frontend, cf. section 16 — pas d'ID auto-incrémenté en InfluxDB."""
+    fourni par le frontend, cf. section 16 — pas d'ID auto-incrémenté en InfluxDB.
+
+    Suppression TOUJOURS effectuée avant réécriture, même quand mur/couche/date
+    ne changent pas : le tagset écrit inclut utilisateur_id/utilisateur_nom de
+    la personne qui édite MAINTENANT, pas de l'auteur d'origine. Sans cette
+    suppression inconditionnelle, un point corrigé par un autre utilisateur que
+    l'auteur original ne correspond plus au tagset du point existant — InfluxDB
+    écrit alors un second point au même timestamp au lieu d'écraser le premier
+    (doublon silencieux, masqué par le regroupement mur/couche/date du
+    frontend). Le prédicat ne filtre jamais par utilisateur : il retrouve le
+    point d'origine peu importe qui l'avait créé."""
     identite_inchangee = (
         correction.mur == correction.mur_original
         and correction.couche == correction.couche_original
         and correction.date_mesure == correction.date_mesure_original
     )
-    if not identite_inchangee:
-        predicat = (
-            f'_measurement="{MESURE_TENEUR_EAU}" AND '
-            f'mur="{flux_escape(correction.mur_original)}" AND '
-            f'couche="{flux_escape(correction.couche_original)}"'
+    predicat = (
+        f'_measurement="{MESURE_TENEUR_EAU}" AND '
+        f'mur="{flux_escape(correction.mur_original)}" AND '
+        f'couche="{flux_escape(correction.couche_original)}"'
+    )
+    marge = timedelta(seconds=1)
+    try:
+        delete_points(
+            predicat,
+            correction.date_mesure_original - marge,
+            correction.date_mesure_original + marge,
         )
-        marge = timedelta(seconds=1)
-        try:
-            delete_points(
-                predicat,
-                correction.date_mesure_original - marge,
-                correction.date_mesure_original + marge,
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=502, detail=f"Suppression du point original échouée : {exc}"
-            ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Suppression du point original échouée : {exc}"
+        ) from exc
 
     ligne = _construire_ligne(
         utilisateur,
