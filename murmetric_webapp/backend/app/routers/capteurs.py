@@ -17,12 +17,22 @@ webapp (cf. config.py) et sont la source de vérité :
 
 import json
 import threading
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from .. import config
 from ..auth import utilisateur_courant
+from ..influx import (
+    MESURE_CAPTEURS,
+    delete_points,
+    echap_field_str,
+    echap_tag,
+    flux_escape,
+    query_api,
+    write_point,
+)
 
 router = APIRouter(prefix="/api/capteurs", tags=["capteurs"])
 
@@ -94,12 +104,114 @@ def _modifier_entree(chemin, cle: str, modification: ModificationCapteur) -> dic
         return entree
 
 
+def _tags_capteur(entree: dict) -> dict[str, str]:
+    """Tags InfluxDB tels que kafka_consumer_influx.py les construirait pour ce
+    capteur (mêmes valeurs de repli : "Non défini"/"Inconnu") — sert à détecter
+    si un réétiquetage rétroactif est nécessaire après une modification."""
+    return {
+        "emplacement": str(entree.get("emplacement") or "Non défini"),
+        "nom_capteur": str(entree.get("nom") or "Inconnu"),
+        "nom_couche": str(entree.get("nom_couche") or "Non défini"),
+        "nom_mur": str(entree.get("nom_mur") or "Non défini"),
+        "position": str(entree.get("position") or "Non défini"),
+        "rd": str(entree.get("categorie R&D") or "Non défini"),
+    }
+
+
+def _reetiqueter_mesures_capteurs(mac: str, tags_avant: dict, tags_apres: dict) -> int:
+    """Réécrit tout l'historique InfluxDB (mesures_capteurs) d'un capteur avec
+    les nouveaux tags d'étiquetage, par delete-by-predicate + réécriture (même
+    principe que teneur_eau.corriger(), cf. logique_projet.md section 33 pour
+    le bug de doublon que ce principe corrige quand il est appliqué correctement).
+
+    Sans effet si aucun tag InfluxDB pertinent n'a changé (ingestion/prestation
+    ne sont pas des tags InfluxDB pour cette mesure — inutile de réécrire).
+
+    Volume négligeable pour mesures_capteurs (dizaines de milliers de points au
+    total, largement moins par capteur) — SANS commune mesure avec
+    mesures_dewesoft (1,5 milliard de points), jamais tenté ici après les
+    incidents répétés du 17-18/08/2026 sur cette dernière mesure."""
+    if tags_avant == tags_apres:
+        return 0
+
+    flux = f"""
+from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: 2024-01-01T00:00:00Z)
+  |> filter(fn: (r) => r._measurement == "{MESURE_CAPTEURS}")
+  |> filter(fn: (r) => r.adresse_mac == "{flux_escape(mac)}")
+"""
+    try:
+        tables = query_api().query(flux, org=config.INFLUX_ORG)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Lecture InfluxDB (réétiquetage) échouée : {exc}"
+        ) from exc
+
+    points_par_time: dict = {}
+    for table in tables:
+        for record in table.records:
+            points_par_time.setdefault(record.get_time(), {})[
+                record.get_field()
+            ] = record.get_value()
+
+    if not points_par_time:
+        return 0
+
+    horodatages = sorted(points_par_time)
+    marge = timedelta(seconds=1)
+    tags_ligne = ",".join(f"{cle}={echap_tag(valeur)}" for cle, valeur in tags_apres.items())
+
+    lignes = []
+    for t, champs in points_par_time.items():
+        parts_champs = []
+        for nom_champ, valeur in champs.items():
+            if isinstance(valeur, bool):
+                parts_champs.append(f"{nom_champ}={'true' if valeur else 'false'}")
+            elif isinstance(valeur, int):
+                parts_champs.append(f"{nom_champ}={valeur}i")
+            elif isinstance(valeur, float):
+                parts_champs.append(f"{nom_champ}={valeur}")
+            else:
+                parts_champs.append(f'{nom_champ}="{echap_field_str(str(valeur))}"')
+        ts_ns = int(t.timestamp() * 1_000_000_000)
+        lignes.append(
+            f"{MESURE_CAPTEURS},adresse_mac={echap_tag(mac)},{tags_ligne} "
+            f"{','.join(parts_champs)} {ts_ns}"
+        )
+
+    predicat = f'_measurement="{MESURE_CAPTEURS}" AND adresse_mac="{flux_escape(mac)}"'
+    try:
+        delete_points(predicat, horodatages[0] - marge, horodatages[-1] + marge)
+        for i in range(0, len(lignes), 500):
+            write_point("\n".join(lignes[i : i + 500]))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Réétiquetage InfluxDB échoué après lecture de {len(points_par_time)} "
+                f"points ({exc}) — le registre est déjà mis à jour, l'historique InfluxDB "
+                "peut être incohérent ; relancer la même modification pour réessayer."
+            ),
+        ) from exc
+    return len(points_par_time)
+
+
 @router.put("/hr_t/{mac}")
 def modifier_capteur_hr_t(
     mac: str, modification: ModificationCapteur, _utilisateur: dict = Depends(utilisateur_courant)
 ) -> dict:
-    """Édite l'étiquetage d'un capteur HR/T existant (réservé aux utilisateurs connectés)."""
-    return _modifier_entree(config.CAPTEURS_JSON, mac, modification)
+    """Édite l'étiquetage d'un capteur HR/T existant (réservé aux utilisateurs
+    connectés). Réétiquette aussi rétroactivement tout l'historique InfluxDB de
+    ce capteur si un champ correspondant à un tag InfluxDB a changé — sans quoi
+    l'ancien et le nouvel étiquetage cohabiteraient indéfiniment comme deux
+    entités distinctes dans Grafana/la webapp (cf. _reetiqueter_mesures_capteurs)."""
+    donnees_avant = _lire_json(config.CAPTEURS_JSON)
+    if mac not in donnees_avant:
+        raise HTTPException(status_code=404, detail=f"Entrée inconnue : {mac}")
+    tags_avant = _tags_capteur(donnees_avant[mac])
+    entree = _modifier_entree(config.CAPTEURS_JSON, mac, modification)
+    _reetiqueter_mesures_capteurs(mac, tags_avant, _tags_capteur(entree))
+    return entree
 
 
 @router.put("/retrait/{canal}")

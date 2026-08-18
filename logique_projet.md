@@ -4346,6 +4346,92 @@ coexistent comme deux façons d'interroger la même base — Flux toujours
 utilisé par le backend de la webapp (assistant IA, `mesures.py`, etc.),
 hors du périmètre de ce changement.
 
+## 34. Corrections d'intégrité des registres d'édition (18/08/2026)
+
+### Bug trouvé et corrigé — doublon silencieux en corrigeant une saisie teneur en eau
+
+Question utilisateur sur une capture d'écran ("est-ce qu'une modification de
+valeur ici sera répercutée en base ?") → investigation du code de
+`PUT /api/teneur_eau`. `corriger()` (`teneur_eau.py`) ne supprimait le point
+InfluxDB original que si mur/couche/date changeaient — or le formulaire
+d'édition n'a pas de champ date, donc en pratique cette condition n'est
+presque jamais vraie. Le tagset écrit inclut `utilisateur_id`/`utilisateur_nom`
+de la personne qui **édite**, pas de l'auteur d'origine : si un utilisateur
+différent corrige une saisie sans changer mur/couche (le cas normal), le
+nouveau point ne correspond plus au tagset de l'ancien — InfluxDB écrit un
+second point au même timestamp au lieu d'écraser le premier. Doublon masqué
+par le regroupement mur/couche/date du frontend (une seule ligne affichée,
+deux points réels en base). **Corrigé** : suppression désormais
+systématique avant réécriture, peu importe l'identité ou l'auteur — le
+prédicat de suppression ne filtre jamais par utilisateur, donc retrouve le
+point d'origine quel que soit qui l'avait créé. Déployé et vérifié (rebuild
+image webapp).
+
+### Vérifié sans bug — registres Capteurs HR/T et Canaux retrait
+
+Question de suivi : les tableaux "Capteurs HR/T" et "Canaux retrait" (même
+motif Éditer/Enregistrer visuellement) ont-ils le même risque ? Investigué :
+non — architecture différente. Ces deux tableaux sont un seul et même
+mécanisme (`capteurs.py`, `_modifier_entree()`) : un fichier JSON
+(`capteurs.json`/`capteurs_retrait.json`) sur le volume persistant,
+modification **par clé** (adresse MAC / nom de canal) directement dans le
+dict, jamais de tagset ni de notion d'auteur écrite dans la donnée. Verrou
+`threading.Lock()` partagé + déploiement mono-processus/mono-réplique
+confirmé (`Dockerfile.webapp` sans `--workers`, `replicas: 1`) — aucune
+course possible entre requêtes. Seule limite résiduelle (mineure, sans
+rapport avec le bug teneur en eau) : deux éditions strictement simultanées
+de la **même** ligne par deux personnes différentes suivent un simple
+"dernier écrit gagne" par champ, sans version/ETag.
+
+### Réétiquetage rétroactif InfluxDB — Capteurs HR/T uniquement
+
+Question de suivi : éditer mur/couche/etc. dans la webapp propage-t-il vers
+InfluxDB ? Oui mais seulement pour les **nouvelles** mesures — les scripts
+d'ingestion (Pi/PC Amiens) relisent le registre toutes les
+`CAPTEURS_RAFRAICHISSEMENT_S` (60s par défaut) et taguent chaque nouveau
+point avec l'étiquetage courant, mais rien ne réécrit rétroactivement
+l'historique déjà en base. Impact concret : renommer une couche crée une
+discontinuité — l'ancien historique reste sous l'ancien nom, invisible avec
+un filtre sur le nouveau.
+
+Deux solutions analysées : réécriture physique de l'historique (simple,
+sans dette de maintenance, mais coûteuse/risquée sur un gros volume) vs.
+alias au moment de la requête (fonctionne même sur un gros volume, mais
+demande de maintenir la logique d'alias à chaque endroit qui filtre par ces
+tags — backend ET Grafana — un vrai risque de dette, dans la même veine que
+plusieurs bugs Flux "par table" déjà rencontrés cette session).
+
+**Implémenté pour `mesures_capteurs` uniquement** (décision explicite —
+`mesures_dewesoft` exclu, volume sans commune mesure et fragilité
+InfluxDB démontrée toute la journée du 17-18/08) :
+- `_tags_capteur()` (`capteurs.py`) : reconstruit les tags InfluxDB tels que
+  `kafka_consumer_influx.py` les écrirait pour un capteur donné (mêmes
+  valeurs de repli "Non défini"/"Inconnu"), pour comparer avant/après une
+  modification.
+- `_reetiqueter_mesures_capteurs()` : si un tag InfluxDB pertinent a changé
+  (`emplacement`/`nom_capteur`/`nom_couche`/`nom_mur`/`position`/`rd` —
+  `ingestion`/`prestation` ne sont pas des tags InfluxDB pour cette mesure,
+  donc sans effet), lit tout l'historique du capteur (borné à
+  `2024-01-01`, comme le reste du projet), reconstruit chaque ligne avec
+  les nouveaux tags en préservant horodatage et valeurs de champs exactes
+  (gestion typée bool/int/float pour respecter le Line Protocol), supprime
+  l'ancien historique par prédicat `adresse_mac`, réécrit. Même principe
+  delete-by-predicate + réécriture que `teneur_eau.corriger()` — appliqué
+  ici sans la faille du bug ci-dessus (le prédicat ne dépend jamais de
+  qui édite).
+- Câblé dans `PUT /api/capteurs/hr_t/{mac}` uniquement (pas
+  `/retrait/{canal}`).
+
+**Vérifié en conditions réelles** (capteur `C2123F8D`, 1507 points sur
+l'historique complet) : relabellisation test (`nom_couche` →
+"TEST_REETIQUETAGE_TEMPORAIRE") puis retour à la valeur d'origine —
+confirmé à chaque étape par requête InfluxDB directe : ancien tag
+totalement absent après réétiquetage, valeurs de champs (température,
+humidité, point de rosée, `mac_complete_connue`) identiques au bit près au
+même horodatage, nombre de points final identique (1507) — aucune perte ni
+duplication. Déployé (rebuild image webapp) et testé directement en base,
+sans passer par l'UI.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
