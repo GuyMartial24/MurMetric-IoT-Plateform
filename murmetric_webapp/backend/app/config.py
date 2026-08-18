@@ -22,7 +22,20 @@ INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "Test_Capteurs")
 # le fournisseur change, pas l'architecture (tool use, garde-fou anti-données-
 # brutes, etc.).
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+# "llama-3.3-70b-versatile" décommissionné côté Groq (404 constaté en usage
+# réel le 18/08/2026, absent de client.models.list()) — remplacé par
+# "openai/gpt-oss-120b", seul candidat testé qui gère correctement les
+# appels d'outils avec le schéma _TOOLS de ce projet (openai/gpt-oss-20b et
+# qwen/qwen3.6-27b échouent ou n'appellent pas l'outil, groq/compound* ne
+# supporte pas les outils du tout).
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+# Repli vision (section 36, 18/08/2026) : seul modèle vision disponible sur
+# ce compte Groq (confirmé par test direct — les autres modèles texte
+# rejettent tout contenu image). Modèle "raisonneur" (bloc <think> avant la
+# réponse) : appelé avec `extra_body={"reasoning_format": "hidden"}` pour
+# ne récupérer que la réponse finale, et un max_tokens plus généreux que
+# Gemini (le raisonnement consomme une bonne partie du budget).
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.6-27b")
 
 # Gemini (API OpenAI-compatible de Google AI Studio) — ajouté le 13/08/2026
 # pour la vision (analyse d'image de graphique), indisponible sur Groq

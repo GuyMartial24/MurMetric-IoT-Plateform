@@ -1,13 +1,14 @@
 """Assistant IA — explication de courbe + brouillon de rapport d'instrumentation.
 
-Architecture tranchée en section 32 de logique_projet.md :
+Architecture tranchée en section 32 de logique_projet.md, complétée
+section 36 (18/08/2026) :
 - Gemini (Google AI Studio, API OpenAI-compatible) fournisseur PRIMAIRE
   depuis le 13/08/2026 — texte ET vision (analyse d'image de graphique,
-  cf. /chat-image). Repli automatique sur Groq pour le texte uniquement
-  si Gemini échoue (clé fournie par l'utilisateur le 12/08/2026, app
-  "MurMetric_AI") — jamais l'inverse pour la vision : aucun modèle vision
-  n'est disponible sur ce compte Groq (vérifié en direct le 13/08/2026,
-  les anciens llama-3.2-*-vision-preview sont décommissionnés).
+  cf. /chat-image). Repli automatique sur Groq si Gemini échoue, pour le
+  texte ET la vision depuis le 18/08/2026 (`qwen/qwen3.6-27b`, seul modèle
+  vision disponible sur ce compte Groq — les anciens
+  llama-3.2-*-vision-preview étaient déjà décommissionnés au 13/08/2026,
+  et aucun autre modèle testé n'accepte de contenu image).
 - Jamais de points bruts envoyés au modèle : les tools exposés ne
   renvoient que des statistiques pré-agrégées (calculer_statistiques,
   comparer_periodes, ecart_brut_filtre) — le mode vision voit une IMAGE
@@ -248,14 +249,39 @@ def _executer_tool(nom: str, entree: dict) -> dict:
     return {"erreur": f"Outil inconnu : {nom}"}
 
 
+def _quota_journalier_epuise(exc: APIStatusError) -> bool:
+    """Détecte un 429 causé par un quota JOURNALIER (pas un débit par
+    minute) via `quotaId` dans le corps d'erreur Gemini — repéré en usage
+    réel le 18/08/2026 : le champ `retryDelay` renvoyé à côté (quelques
+    secondes) reste trompeur pour ce cas précis, le quota ne se
+    réinitialise en réalité qu'après plusieurs heures."""
+    try:
+        corps = exc.response.json()
+        erreur = (corps[0] if isinstance(corps, list) else corps).get("error", {})
+        for detail in erreur.get("details", []):
+            if detail.get("@type", "").endswith("QuotaFailure"):
+                for violation in detail.get("violations", []):
+                    if "PerDay" in violation.get("quotaId", ""):
+                        return True
+    except Exception:
+        pass
+    return False
+
+
 def _message_erreur_ia(fournisseur: str, exc: Exception) -> str:
     """Traduit une exception du SDK OpenAI (utilisé pour Gemini ET Groq, tous deux via
     une API compatible) en message lisible — sans ça, une erreur 429/401 remonte le
     corps JSON brut de la réponse (dict Python imbriqué) jusqu'à l'utilisateur."""
     if isinstance(exc, APIStatusError):
         if exc.status_code == 429:
+            if _quota_journalier_epuise(exc):
+                return (
+                    f"{fournisseur} : quota JOURNALIER atteint (plan gratuit, limite très basse) — "
+                    "ne se réinitialisera pas avant plusieurs heures, pas dans quelques secondes. "
+                    "Passe sur un plan payant si l'usage doit être plus soutenu."
+                )
             return (
-                f"{fournisseur} : quota d'appels atteint pour aujourd'hui — "
+                f"{fournisseur} : quota d'appels atteint — "
                 "réessaie plus tard ou augmente le plan associé à la clé API."
             )
         if exc.status_code == 401:
@@ -354,18 +380,8 @@ def chat(demande: DemandeChat, _actuel: dict = Depends(utilisateur_courant)) -> 
 
 @router.post("/chat-image")
 def chat_image(demande: DemandeChatImage, _actuel: dict = Depends(utilisateur_courant)) -> dict:
-    """Analyse d'image de graphique — Gemini exclusivement, aucun repli
-    possible (Groq n'a pas de modèle vision disponible sur ce compte)."""
-    cle_gemini = obtenir_cle_gemini()
-    if not cle_gemini:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Clé API Gemini non configurée — requise pour l'analyse d'image "
-                "(Groq n'a pas de modèle vision disponible)."
-            ),
-        )
-
+    """Analyse d'image de graphique — Gemini en premier, repli automatique
+    sur Groq (`qwen/qwen3.6-27b`) si Gemini échoue (quota, panne...)."""
     contexte_stats = ""
     if demande.selection is not None:
         try:
@@ -389,7 +405,6 @@ def chat_image(demande: DemandeChatImage, _actuel: dict = Depends(utilisateur_co
             # L'image seule suffit à répondre si les stats échouent — pas bloquant pour ce mode.
             pass
 
-    client = OpenAI(api_key=cle_gemini, base_url=config.GEMINI_BASE_URL)
     messages = [
         {"role": "system", "content": _SYSTEME_VISION},
         {
@@ -406,12 +421,50 @@ def chat_image(demande: DemandeChatImage, _actuel: dict = Depends(utilisateur_co
             ],
         },
     ]
-    try:
-        reponse = client.chat.completions.create(
-            model=obtenir_modele_gemini(), max_tokens=2000, messages=messages
-        )
-    except Exception as exc:
+
+    erreurs: list[str] = []
+
+    cle_gemini = obtenir_cle_gemini()
+    if cle_gemini:
+        try:
+            client = OpenAI(api_key=cle_gemini, base_url=config.GEMINI_BASE_URL)
+            reponse = client.chat.completions.create(
+                model=obtenir_modele_gemini(), max_tokens=2000, messages=messages
+            )
+            return {"reponse": reponse.choices[0].message.content, "fournisseur": "gemini"}
+        except Exception as exc:
+            erreurs.append(_message_erreur_ia("Gemini", exc))
+
+    cle_groq = obtenir_cle_groq()
+    if cle_groq:
+        try:
+            client = OpenAI(api_key=cle_groq, base_url=GROQ_BASE_URL)
+            reponse = client.chat.completions.create(
+                model=config.GROQ_VISION_MODEL,
+                max_tokens=2000,
+                messages=messages,
+                # Modèle "raisonneur" par défaut : un premier essai avec
+                # `reasoning_format: hidden` seul a consommé tout le budget
+                # de tokens en raisonnement caché, renvoyant une réponse
+                # vide (constaté en usage réel le 18/08/2026, malgré
+                # max_tokens=4000). `reasoning_effort: none` désactive le
+                # raisonnement entièrement — bien plus fiable pour ce cas
+                # d'usage (décrire une image), vérifié : réponse correcte
+                # en 33 tokens au lieu d'un budget de plusieurs milliers.
+                extra_body={"reasoning_effort": "none"},
+            )
+            contenu = reponse.choices[0].message.content
+            if not contenu or not contenu.strip():
+                raise RuntimeError("réponse vide reçue du modèle — réessaie.")
+            return {"reponse": contenu, "fournisseur": "groq"}
+        except Exception as exc:
+            erreurs.append(_message_erreur_ia("Groq", exc))
+
+    if not erreurs:
         raise HTTPException(
-            status_code=502, detail=f"Analyse d'image échouée — {_message_erreur_ia('Gemini', exc)}"
-        ) from exc
-    return {"reponse": reponse.choices[0].message.content, "fournisseur": "gemini"}
+            status_code=500, detail="Aucun fournisseur IA configuré (ni Gemini ni Groq)."
+        )
+    raise HTTPException(
+        status_code=502,
+        detail="Analyse d'image échouée sur tous les fournisseurs : " + " | ".join(erreurs),
+    )

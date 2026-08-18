@@ -4730,6 +4730,112 @@ nouvelle tentative. Aucun changement backend. Vérifié par build/lint
 fonctionnalité) et confirmation que la chaîne "Réessayer" est bien
 présente dans le bundle déployé sur le VPS.
 
+### Suite immédiate (18/08/2026) — message de quota Gemini trompeur, corrigé
+
+En cliquant "Réessayer" à plusieurs reprises, un vrai `429` Gemini
+("quota d'appels atteint pour aujourd'hui — réessaie plus tard...")
+persiste anormalement longtemps. Diagnostic en direct (appel SDK OpenAI
+isolé, hors endpoint, contre la vraie clé Gemini de prod) : le corps
+d'erreur complet de Gemini contient DEUX informations contradictoires —
+un `google.rpc.RetryInfo` avec `retryDelay: "30s"` (implique un débit
+par minute), mais aussi un `google.rpc.QuotaFailure` avec
+`quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"` (un
+plafond JOURNALIER, limite 20 requêtes/jour pour `gemini-3.7-flash` sur
+le plan gratuit — confirmé en attendant activement plusieurs minutes
+avec un polling toutes les 10s : le `429` persiste malgré le
+`retryDelay` de quelques secondes déjà écoulé plusieurs fois, prouvant
+que c'est bien le quota journalier qui est le facteur bloquant réel, pas
+le débit par minute). Le cumul des tests de cette session (miens +
+utilisateur) a très probablement épuisé la totalité des 20 requêtes du
+jour à lui seul — limite gratuite extrêmement basse.
+
+Corrigé : `_quota_journalier_epuise()` (nouveau, `assistant.py`) parse
+le corps JSON de l'erreur Gemini, cherche `"PerDay"` dans
+`quotaId` — si trouvé, message dédié précisant explicitement "ne se
+réinitialisera pas avant plusieurs heures, pas dans quelques secondes"
+plutôt que le `retryDelay` trompeur de Gemini. Logique de parsing
+vérifiée localement contre le payload JSON réel capturé pendant le
+diagnostic (`detecte PerDay: True`). Vérifié en conditions réelles
+contre `POST /api/assistant/chat-image` de production (quota
+effectivement épuisé au moment du test) : message exact reçu —
+`"Analyse d'image échouée — Gemini : quota JOURNALIER atteint (plan
+gratuit, limite très basse) — ne se réinitialisera pas avant plusieurs
+heures, pas dans quelques secondes. Passe sur un plan payant si l'usage
+doit être plus soutenu."` Seule vraie solution immédiate : passer la
+clé Gemini sur un plan payant (action utilisateur, hors accès Claude
+Code).
+
+### Suite (18/08/2026) — modèle Groq texte mort + ajout d'un repli vision
+
+En cliquant "Réessayer" pour une question texte (pas vision), un
+`404 model_not_found` Groq est apparu : **`llama-3.3-70b-versatile` a été
+totalement décommissionné côté Groq** — absent de
+`client.models.list()` pour cette clé, confirmé par appel direct. Le
+repli texte censé protéger contre une panne Gemini échouait donc lui
+aussi systématiquement, laissant l'assistant totalement inutilisable
+dès que Gemini est indisponible (ce qui venait justement d'arriver avec
+le quota journalier ci-dessus).
+
+**Remplacement du modèle texte** : liste des modèles actuellement
+disponibles sur le compte récupérée en direct, 4 candidats testés avec
+le vrai schéma d'outils du projet (`_TOOLS`, appel réel du tool
+`interroger_statistiques_mesures` + exécution + réponse finale) :
+- `openai/gpt-oss-120b` — fonctionne correctement, retenu.
+- `openai/gpt-oss-20b` — échoue à formater ses arguments d'appel d'outil
+  en JSON valide.
+- `groq/compound` — ne supporte pas les appels d'outils du tout
+  (erreur API explicite).
+- `qwen/qwen3.6-27b` — n'appelle jamais l'outil, épuise son budget de
+  tokens en raisonnement caché avant de produire quoi que ce soit.
+`GROQ_MODEL` mis à jour (`config.py` + `k8s/webapp/deployment.yaml`) :
+`llama-3.3-70b-versatile` → `openai/gpt-oss-120b`. Validé en conditions
+réelles par une boucle complète tool-use (question réelle → appel outil
+→ vraies statistiques InfluxDB → réponse finale cohérente).
+
+**Ajout d'un repli vision** (question utilisateur : un des modèles
+disponibles a-t-il la vision, sans impacter le VPS ? — remet en
+perspective le refus argumenté plus tôt d'un LLM vision **local**,
+cf. section 36 plus haut ; un modèle vision **cloud** via une clé déjà
+configurée ne pose aucun de ces problèmes, contrairement à un modèle
+tournant sur le nœud partagé). Sur les 4 candidats testés en vision,
+seul **`qwen/qwen3.6-27b`** accepte un contenu image (les 3 autres
+rejettent explicitement : "content must be a string") — confirmé en
+identifiant correctement la couleur d'une image de test.
+
+`chat_image()` restructuré sur le même schéma que `chat()` (Gemini
+d'abord, repli Groq si échec, erreurs combinées si les deux échouent) —
+jusque-là Gemini était le seul fournisseur possible pour ce endpoint,
+sans aucun filet. **Piège rencontré et corrigé avant déploiement
+définitif** : `qwen/qwen3.6-27b` est un modèle "raisonneur" (bloc de
+réflexion interne avant la réponse) — un premier essai avec seulement
+`reasoning_format: "hidden"` (masque le raisonnement dans la réponse
+mais ne le limite pas) a renvoyé une **réponse vide** en usage réel
+malgré `max_tokens=4000`, le raisonnement ayant intégralement consommé
+le budget sans qu'aucune réponse finale ne soit produite. Diagnostiqué
+en isolant l'appel direct (reproductible mais pas systématique — forte
+variance du volume de raisonnement d'un appel à l'autre). Corrigé en
+utilisant `reasoning_effort: "none"` (désactive entièrement le
+raisonnement plutôt que de le masquer) : réponse correcte en 33 tokens
+au lieu d'un budget de plusieurs milliers, `max_tokens` ramené à 2000
+(aligné sur Gemini). Garde-fou ajouté au passage : une réponse vide
+malgré un statut HTTP 200 est désormais traitée comme un échec
+(`RuntimeError`, remonté comme une erreur normale plutôt que renvoyée
+telle quelle à l'utilisateur).
+
+Vérifié en conditions réelles contre `POST /api/assistant/chat-image`
+de production (Gemini vision toujours en quota journalier épuisé au
+moment du test, donc le repli Groq était réellement exercé, pas
+seulement disponible en théorie) : deux couleurs de test différentes
+(jaune, vert), les deux identifiées correctement,
+`"fournisseur": "groq"` confirmé dans la réponse, aucune réponse vide
+sur l'ensemble des essais après le correctif `reasoning_effort`.
+
+Bilan : toujours 2 fournisseurs cloud (Gemini + Groq, même clés qu'avant,
+aucune nouvelle clé/secret), mais 3 configurations de modèle au total
+(texte Gemini, texte Groq repli, vision Groq repli) — zéro impact sur
+les ressources du VPS partagé (appels API sortants uniquement, comme
+c'était déjà le cas pour Gemini).
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

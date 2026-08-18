@@ -49,11 +49,19 @@ spec:
                 secretKeyRef:
                   name: murmetric-secrets
                   key: groq-api-key
+            # "llama-3.3-70b-versatile" décommissionné côté Groq (404 constaté
+            # le 18/08/2026) -> openai/gpt-oss-120b (seul candidat testé qui
+            # gère correctement les appels d'outils de ce projet).
             - name: GROQ_MODEL
-              value: llama-3.3-70b-versatile
+              value: openai/gpt-oss-120b
+            # Repli vision (section 36, 18/08/2026) : seul modèle vision
+            # disponible sur ce compte Groq, confirmé par test direct.
+            - name: GROQ_VISION_MODEL
+              value: qwen/qwen3.6-27b
             # Gemini (Google AI Studio) — fournisseur primaire de l'assistant
             # depuis le 13/08/2026 (texte + vision), Groq passant en repli
-            # texte uniquement. Clé fournie par l'utilisateur ce jour-là.
+            # pour les deux depuis le 18/08/2026. Clé fournie par
+            # l'utilisateur le 13/08/2026.
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
