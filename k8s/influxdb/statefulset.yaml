@@ -53,12 +53,21 @@ spec:
           # (1GiB) additionné au working set. Nœud à 23Gi RAM, 9,2Gi
           # disponibles, seulement 31% déjà alloué tous pods confondus :
           # marge large pour absorber le doublement.
+          #
+          # CPU 700m -> 1500m le 18/08/2026 : panels Grafana retrait (90j,
+          # 4 canaux/panel, un seul canal par requête InfluxQL — combiner
+          # plusieurs canaux dans un filtre OR déjà écarté, section 33)
+          # chronométrés à ~9,4s/canal, ~33s pour un panel complet, CPU
+          # observé au ras du plafond de 700m pendant le test (667m). Nœud
+          # 4 cœurs, seulement 67% déjà alloué en limites tous pods
+          # confondus : marge pour laisser InfluxDB utiliser plus de cœurs
+          # sur ces agrégations, sans viser le plafond du nœud.
           resources:
             requests:
               cpu: 250m
               memory: 512Mi
             limits:
-              cpu: 700m
+              cpu: 1500m
               memory: 8Gi
           ports:
             - containerPort: 8086

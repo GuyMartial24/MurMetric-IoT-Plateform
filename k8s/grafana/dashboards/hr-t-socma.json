@@ -3,7 +3,7 @@
   "title": "MurMetric — Vue d'ensemble (SOCMA 1 & 2)",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 7,
+  "version": 8,
   "editable": true,
   "time": { "from": "now-1y", "to": "now" },
   "panels": [
@@ -70,11 +70,11 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Retrait filtré — SOCMA 1 (HA1/HA2/VA1/VA2, 90 derniers jours)",
+      "title": "Retrait filtré — SOCMA 1 (HA1/HA2/VA1/VA2, 30 derniers jours)",
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 18 },
       "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
-      "timeFrom": "90d",
+      "timeFrom": "30d",
       "targets": [
         { "refId": "A", "alias": "HA1", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT mean(\"valeur_filtree\") FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HA1' AND $timeFilter GROUP BY time($__interval) fill(null)", "rawQuery": true, "resultFormat": "time_series" },
         { "refId": "B", "alias": "HA2", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT mean(\"valeur_filtree\") FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HA2' AND $timeFilter GROUP BY time($__interval) fill(null)", "rawQuery": true, "resultFormat": "time_series" },
@@ -85,11 +85,11 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Retrait filtré — SOCMA 2 (HB1/HB2/VB1/VB2, 90 derniers jours)",
+      "title": "Retrait filtré — SOCMA 2 (HB1/HB2/VB1/VB2, 30 derniers jours)",
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
       "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
-      "timeFrom": "90d",
+      "timeFrom": "30d",
       "targets": [
         { "refId": "A", "alias": "HB1", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT mean(\"valeur_filtree\") FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HB1' AND $timeFilter GROUP BY time($__interval) fill(null)", "rawQuery": true, "resultFormat": "time_series" },
         { "refId": "B", "alias": "HB2", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT mean(\"valeur_filtree\") FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HB2' AND $timeFilter GROUP BY time($__interval) fill(null)", "rawQuery": true, "resultFormat": "time_series" },
@@ -100,11 +100,11 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Retrait BRUT — SOCMA 1 (HA1/HA2/VA1/VA2, 90 derniers jours)",
+      "title": "Retrait BRUT — SOCMA 1 (HA1/HA2/VA1/VA2, 30 derniers jours)",
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 27 },
       "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
-      "timeFrom": "90d",
+      "timeFrom": "30d",
       "targets": [
         { "refId": "A", "alias": "HA1", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT mean(\"valeur\") FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HA1' AND $timeFilter GROUP BY time($__interval) fill(null)", "rawQuery": true, "resultFormat": "time_series" },
         { "refId": "B", "alias": "HA2", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT mean(\"valeur\") FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HA2' AND $timeFilter GROUP BY time($__interval) fill(null)", "rawQuery": true, "resultFormat": "time_series" },
@@ -115,11 +115,11 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Retrait BRUT — SOCMA 2 (HB1/HB2/VB1/VB2, 90 derniers jours)",
+      "title": "Retrait BRUT — SOCMA 2 (HB1/HB2/VB1/VB2, 30 derniers jours)",
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 27 },
       "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
-      "timeFrom": "90d",
+      "timeFrom": "30d",
       "targets": [
         { "refId": "A", "alias": "HB1", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT mean(\"valeur\") FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HB1' AND $timeFilter GROUP BY time($__interval) fill(null)", "rawQuery": true, "resultFormat": "time_series" },
         { "refId": "B", "alias": "HB2", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT mean(\"valeur\") FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HB2' AND $timeFilter GROUP BY time($__interval) fill(null)", "rawQuery": true, "resultFormat": "time_series" },

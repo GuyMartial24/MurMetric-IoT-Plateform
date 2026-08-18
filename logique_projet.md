@@ -4474,6 +4474,36 @@ navigateur disponible dans cet environnement) — vérifié uniquement par
 build/lint/déploiement/réponse API réelle, comme les changements
 frontend précédents de cette session.
 
+### Panels retrait Grafana lents — CPU InfluxDB relevé + fenêtre par défaut réduite (18/08/2026)
+
+Question utilisateur suite à une capture d'écran (les 4 panels retrait
+restaient vides longtemps). **Chronométré en direct** via l'API
+`/api/ds/query` de Grafana (mêmes requêtes InfluxQL exactes que les
+panels) : un seul canal sur 90 jours = 9,4s ; les 4 canaux d'un panel
+sont exécutés **séquentiellement** par le datasource (pas en parallèle)
+= 32,9s pour un panel complet. Cause : `mesures_dewesoft` à 10 Hz sur 90
+jours représente ~78 millions de points bruts par canal à parcourir
+avant agrégation — pas un défaut de requête (la consolidation
+multi-canaux en un seul filtre `OR`, plus rapide en théorie, reste
+disproportionnellement coûteuse, déjà écarté plus haut dans cette
+section).
+
+**Deux correctifs appliqués successivement, chacun revérifié par
+chronométrage réel** :
+1. CPU InfluxDB `k8s/influxdb/statefulset.yaml` : 700m → 1500m (nœud 4
+   cœurs, 67% déjà alloué en limites tous pods confondus — marge
+   disponible). Effet mesuré : 32,9s → 22,1s pour le même panel (90j).
+2. Fenêtre par défaut des 4 panels retrait (`hr-t-socma.json`, panels
+   id 5/6/8/9) : 90 → 30 jours (titres mis à jour en conséquence),
+   version dashboard 7→8. Effet mesuré, cumulé avec le point 1 : 22,1s
+   → **6,4s** pour un panel complet — soit ~5x plus rapide que le point
+   de départ.
+
+**Vérifié après déploiement** : InfluxDB saine tout du long (0
+redémarrage, mémoire jamais au-dessus de ~3,7Gi pendant les tests,
+largement sous le plafond de 8Gi), dashboard confirmé en version 8 avec
+les 4 panels à `timeFrom: 30d` via l'API Grafana.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
