@@ -4700,6 +4700,36 @@ experiencing high demand"` retourné par Gemini lui-même (reproduit par
 un appel direct au SDK OpenAI, hors de l'endpoint), pas un bug du
 nouveau code — un second essai a immédiatement réussi.
 
+### Suite (18/08/2026) — bouton "Réessayer" sur erreur transitoire
+
+Un `503 "high demand"` Gemini authentique est remonté à l'utilisateur en
+usage réel juste après la mise en prod ci-dessus, avec le message "Analyse
+d'image échouée — Gemini : erreur API (code 503)." (le SDK OpenAI retente
+déjà 2 fois automatiquement en arrière-plan avant d'abandonner — le
+message affiché a donc déjà survécu à plusieurs tentatives infructueuses
+en quelques secondes). Question complémentaire de l'utilisateur : pourquoi
+pas un LLM vision local sur le VPS en repli de Gemini, vu l'usage
+ponctuel ? Réponse donnée et actée : déconseillé (pas de GPU sur le VPS,
+4 vCPU/23 Go déjà partagés avec d'autres projets — Ollama déjà écarté pour
+l'assistant principal pour cette même raison en section 32 —, qualité de
+lecture de courbe nettement inférieure sur exactement la tâche visée),
+préféré une solution ciblant directement le problème réel (un pic
+transitoire, pas une indisponibilité structurelle).
+
+Implémenté à la place : bouton "Réessayer" à côté du message d'erreur,
+qui rejoue la requête échouée à l'identique (texte + image déjà
+capturée/collée, sans redemander quoi que ce soit à l'utilisateur).
+`envoyer()` factorisé en deux fonctions : `executerEnvoi()` (l'appel
+réseau proprement dit, réutilisable) et `envoyer()` (capture le
+texte/l'image une seule fois, y compris pour "graphique" — la capture
+SVG→image n'est donc plus refaite à chaque réessai). En cas d'échec, la
+requête complète (`question`, `mode`, `source`, `imageDataUri`) est
+gardée en état (`dernierEchec`) jusqu'au prochain envoi réussi ou
+nouvelle tentative. Aucun changement backend. Vérifié par build/lint
+(pas d'outil de test navigateur disponible, comme pour le reste de cette
+fonctionnalité) et confirmation que la chaîne "Réessayer" est bien
+présente dans le bundle déployé sur le VPS.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

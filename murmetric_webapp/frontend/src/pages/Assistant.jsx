@@ -44,6 +44,7 @@ export default function Assistant() {
   const [enCours, setEnCours] = useState(false);
   const [enCoursCourbe, setEnCoursCourbe] = useState(false);
   const [erreur, setErreur] = useState(null);
+  const [dernierEchec, setDernierEchec] = useState(null); // requête à rejouer via "Réessayer"
   const [imageJointe, setImageJointe] = useState(null); // data URI collée/importée par l'utilisateur
   const graphiqueRef = useRef(null);
   const inputFichierRef = useRef(null);
@@ -83,6 +84,36 @@ export default function Assistant() {
     }
   };
 
+  // Exécute réellement l'envoi — factorisé pour pouvoir être rejoué à
+  // l'identique par "Réessayer" sans redemander l'image/le texte à
+  // l'utilisateur (utile pour une erreur transitoire, ex. Gemini
+  // temporairement surchargé, cf. logique_projet.md section 36).
+  const executerEnvoi = async (question, modeEnvoi, source, imageDataUri) => {
+    setEnCours(true);
+    setErreur(null);
+    try {
+      const resultat =
+        source === "texte"
+          ? await api.chatAssistant({ mode: modeEnvoi, prompt: question, selection })
+          : await api.chatAssistantImage({
+              mode: modeEnvoi,
+              prompt: question,
+              image_data_uri: imageDataUri,
+              // Le graphique auto-capturé correspond à la sélection courante ;
+              // une image collée/importée est étrangère à l'appli — l'associer
+              // à des statistiques sans rapport serait trompeur pour l'IA.
+              ...(source === "graphique" ? { selection } : {}),
+            });
+      setHistorique((h) => [...h, { role: "assistant", texte: resultat.reponse }]);
+      setDernierEchec(null);
+    } catch (e) {
+      setErreur(e.message);
+      setDernierEchec({ question, mode: modeEnvoi, source, imageDataUri });
+    } finally {
+      setEnCours(false);
+    }
+  };
+
   const envoyer = async (source) => {
     // source: "texte" | "graphique" (courbe de l'appli, auto-capturée) | "image" (collée/importée)
     if (!prompt.trim()) return;
@@ -90,27 +121,20 @@ export default function Assistant() {
     const etiquette = source === "graphique" ? "graphique joint" : source === "image" ? "image jointe" : null;
     setHistorique((h) => [...h, { role: "utilisateur", texte: question, etiquette }]);
     setPrompt("");
-    setEnCours(true);
-    setErreur(null);
-    try {
-      let resultat;
-      if (source === "graphique") {
-        const imageDataUri = await svgVersDataUrl(graphiqueRef.current);
-        resultat = await api.chatAssistantImage({ mode, prompt: question, image_data_uri: imageDataUri, selection });
-      } else if (source === "image") {
-        // Image étrangère à la sélection courante (capture externe) : pas de
-        // statistiques mur/couche jointes, ce serait trompeur pour l'IA.
-        resultat = await api.chatAssistantImage({ mode, prompt: question, image_data_uri: imageJointe });
-        setImageJointe(null);
-      } else {
-        resultat = await api.chatAssistant({ mode, prompt: question, selection });
-      }
-      setHistorique((h) => [...h, { role: "assistant", texte: resultat.reponse }]);
-    } catch (e) {
-      setErreur(e.message);
-    } finally {
-      setEnCours(false);
+    let imageDataUri = null;
+    if (source === "graphique") {
+      imageDataUri = await svgVersDataUrl(graphiqueRef.current);
+    } else if (source === "image") {
+      imageDataUri = imageJointe;
+      setImageJointe(null);
     }
+    await executerEnvoi(question, mode, source, imageDataUri);
+  };
+
+  const reessayer = () => {
+    if (!dernierEchec) return;
+    const { question, mode: modeEnvoi, source, imageDataUri } = dernierEchec;
+    executerEnvoi(question, modeEnvoi, source, imageDataUri);
   };
 
   return (
@@ -171,7 +195,16 @@ export default function Assistant() {
             {m.role === "assistant" ? <TexteAssistant texte={m.texte} /> : m.texte}
           </div>
         ))}
-        {erreur && <p className="erreur">{erreur}</p>}
+        {erreur && (
+          <p className="erreur">
+            {erreur}
+            {dernierEchec && (
+              <button onClick={reessayer} disabled={enCours} style={{ marginLeft: "0.6rem" }}>
+                Réessayer
+              </button>
+            )}
+          </p>
+        )}
         {imageJointe && (
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" }}>
             <img
