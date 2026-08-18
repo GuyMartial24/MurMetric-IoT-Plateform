@@ -44,13 +44,22 @@ spec:
           # Un premier passage à 3Gi suffisait tout juste (dashboard retrait
           # SOCMA à ~3067Mi, à quelques Mio du kill) — remonté à 4Gi pour une
           # marge réelle plutôt qu'une configuration à la limite.
+          #
+          # 4Gi -> 8Gi le 17/08/2026 (reprise Phase 1, section 33) : deux
+          # OOM réels sur mesures_dewesoft (10 Hz continu, 8 canaux) même
+          # avec un motif de requête journalier déjà prouvé sûr ailleurs
+          # (mesures_capteurs, Phase 0) — la densité de cette mesure semble
+          # dépasser la marge de 4Gi une fois le quota mémoire par requête
+          # (1GiB) additionné au working set. Nœud à 23Gi RAM, 9,2Gi
+          # disponibles, seulement 31% déjà alloué tous pods confondus :
+          # marge large pour absorber le doublement.
           resources:
             requests:
               cpu: 250m
               memory: 512Mi
             limits:
               cpu: 700m
-              memory: 4Gi
+              memory: 8Gi
           ports:
             - containerPort: 8086
           env:

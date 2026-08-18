@@ -22,3 +22,22 @@ data:
           tlsSkipVerify: true
         secureJsonData:
           token: ${INFLUX_TOKEN}
+      # Datasource InfluxQL (17/08/2026, section 33 addendum — abandon de la
+      # migration TimescaleDB) : syntaxe proche du SQL classique
+      # (SELECT/FROM/WHERE/GROUP BY), sans migration de données, sur la même
+      # instance InfluxDB via sa couche de compatibilité v1. "database" ici
+      # correspond au bucket InfluxDB v2 (mapping natif de la couche de
+      # compatibilité, pas une vraie base séparée).
+      - name: InfluxDB - MurMetric (InfluxQL)
+        type: influxdb
+        access: proxy
+        url: http://influxdb:8086
+        editable: true
+        jsonData:
+          version: InfluxQL
+          httpMode: GET
+          dbName: Test_Capteurs
+          tlsSkipVerify: true
+          httpHeaderName1: Authorization
+        secureJsonData:
+          httpHeaderValue1: Token ${INFLUX_TOKEN}

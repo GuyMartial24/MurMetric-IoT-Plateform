@@ -4252,6 +4252,100 @@ qu'un jour (par heure ?) pour `_points_jour()` sur cette mesure
 spécifiquement, et/ou augmentation de la limite mémoire du pod InfluxDB
 (actuellement 4Gi) si la RAM du nœud le permet.
 
+### RAM InfluxDB relevée à 8Gi, reprise puis panne totale de production (18/08/2026)
+
+**Reprise avec RAM augmentée.** Piste RAM retenue en premier : InfluxDB
+relevé 4Gi → 8Gi (nœud à 23Gi RAM, large marge). Retest à froid confirmé
+rapide (0,614s). `mesures_capteurs` migré intégralement (59/59 adresses
+MAC, 5888 lots, aucun écart) — deux bugs de script trouvés et corrigés au
+passage (`pivot()` perdant les tags point-par-point pour les mesures sans
+tag de découpage ; lookback silencieux de -30j par défaut sur
+`schema.tagValues()`). `mesures_dewesoft` relancé avec la RAM à 8Gi : un
+nouvel argument `--jour-min` ajouté pour éviter `first()` (identifié comme
+significativement plus coûteux que `last()`, a fait OOM-killer le pod même
+avec un timeout client remonté à 120s) — a confirmé exactement la date de
+campagne documentée (21/11/2025) et migré ce jour avec succès. Watchdog
+ajouté (`setsid`, relance automatique sur crash, même principe que le
+watchdog DeweSoft) pour rendre la migration autonome — élargie aux 8
+canaux d'un coup plutôt qu'un par un. 136 jours HA1 migrés avant un
+troisième OOM (à 8Gi cette fois), le watchdog relançant automatiquement
+comme prévu.
+
+**Panne totale de production, découverte ~09h15 le 18/08/2026, cause
+réelle : saturation disque.** Le PVC TimescaleDB (nominal 30Gi, mais
+`local-path-provisioner` ne fait respecter aucune limite réelle) avait
+grossi à **135 Go** pour HA1+HA2 seuls — extrapolé aux 8 canaux, largement
+au-delà des 193 Go de disque total du VPS. Le disque saturé à 93% a fait
+passer le nœud k3s en condition `DiskPressure` à 02h26, évinçant **tous**
+les pods de production (InfluxDB, Kafka, Mosquitto, webapp, Grafana,
+TimescaleDB) — panne totale pendant ~7h, jusqu'à intervention manuelle.
+**Verrou mort découvert en résolvant** : le pod d'aide de
+`local-path-provisioner` chargé de supprimer l'ancien volume se faisait
+lui-même évincer faute de disque — contourné en supprimant le répertoire
+directement sur le nœud (`sudo rm -rf`, watchdog arrêté d'abord pour ne
+pas relancer d'écriture pendant l'opération). Nettoyage sûr (cache
+Docker/journal/pip, ~2,7 Go) tenté en premier, insuffisant seul. Une fois
+le répertoire supprimé : disque 93%→21%, `DiskPressure` levée après le
+délai de transition de kubelet (5 min), tous les pods reprogrammés.
+**Effet de bord découvert pendant la remise en route** : `docker system
+prune -af` (fait pendant le nettoyage d'urgence) avait supprimé les 3
+images locales du projet (`murmetric-webapp`, `murmetric-kafka-consumer`,
+`murmetric-bridge`) — jamais poussées vers un registre, invisibles pour
+un prune qui ne regarde que les conteneurs actifs. Reconstruites depuis
+les Dockerfile du dépôt sur le VPS, pods forcés à se recréer avec les
+images fraîches. **Aucune perte de données confirmée** côté pipelines
+(buffer SQLite PC Amiens vide après coup, dernier fichier .dxd traité
+avant le début de la panne).
+
+### Décision finale : abandon de TimescaleDB, InfluxQL à la place (18/08/2026)
+
+Face à un chantier de migration devenu chronophage et risqué (4 incidents
+de production le 17/08, une panne totale de 7h le 18/08, toutes deux
+causées par le volume de `mesures_dewesoft`), l'utilisateur a proposé une
+alternative après ses propres recherches : garder InfluxDB tel quel, mais
+utiliser InfluxQL (dialecte proche du SQL, couche de compatibilité
+InfluxDB v1 déjà intégrée à InfluxDB v2) pour les requêtes Grafana plutôt
+que Flux. Alternative écartée en même temps : passer à InfluxDB 3.0 (SQL
+standard via Apache DataFusion) — analysé et rejeté, car il n'existe pas
+de mise à niveau in-place 2.x→3.0 (formats de stockage incompatibles) :
+cela aurait réintroduit exactement le risque qu'on cherchait à éviter
+(migrer le même gros volume), vers un produit auto-hébergé encore moins
+éprouvé que TimescaleDB.
+
+**Implémenté** (`k8s/grafana/configmap.yaml`) : deuxième datasource
+Grafana provisionnée à côté de la Flux existante, pointant sur la même
+instance InfluxDB (aucune donnée déplacée). **Piège découvert en testant** :
+la combinaison `jsonData.version: InfluxQL` + `secureJsonData.token`
+(mécanisme d'authentification par défaut, hérité du mode Flux) échoue
+silencieusement côté Grafana — l'erreur ne sort même pas jusqu'à InfluxDB
+(confirmé : aucune requête reçue côté logs InfluxDB pendant l'échec).
+Résolu avec la méthode exacte que l'utilisateur avait trouvée par ses
+propres recherches : en-tête HTTP personnalisé explicite
+(`httpHeaderName1: Authorization` / `secureJsonData.httpHeaderValue1: Token
+${INFLUX_TOKEN}`) plutôt que le champ token dédié — validé de bout en bout
+via l'API `/api/ds/query` de Grafana (macros `$timeFilter`/`$__interval`
+comprises) avant tout déploiement sur le dashboard réel.
+
+**Les 9 panels du dashboard** (`k8s/grafana/dashboards/hr-t-socma.json`)
+réécrits en InfluxQL. **Piège retrouvé, déjà documenté dans ce projet**
+(section 32, investigation InfluxDB du 13/08) : combiner plusieurs canaux
+dans un seul filtre `OR` reste disproportionnellement coûteux — une
+première tentative de consolider les 4 canaux de chaque panel retrait en
+une seule requête (`canal_nom = 'HA1' OR ... OR canal_nom = 'VA2'`) a fait
+grimper InfluxDB à 700m CPU (plafond) et time-out après 30s côté Grafana.
+Revenu à la structure d'origine (4 requêtes séparées, une par canal,
+comme les panels Flux existants) — validé à 8,3s pour un seul canal sur
+90 jours, sans incident InfluxDB.
+
+**Décommissionnement TimescaleDB** (accord explicite, "on abandonne
+timescaledb") : StatefulSet/PVC/Service/ConfigMap supprimés du VPS, clé
+`timescaledb-password` retirée du secret `murmetric-secrets` et du
+template, `migration_influx_timescale.py` et `k8s/timescaledb/` supprimés
+du dépôt. InfluxDB reste l'unique source de données, Flux et InfluxQL
+coexistent comme deux façons d'interroger la même base — Flux toujours
+utilisé par le backend de la webapp (assistant IA, `mesures.py`, etc.),
+hors du périmètre de ce changement.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).
