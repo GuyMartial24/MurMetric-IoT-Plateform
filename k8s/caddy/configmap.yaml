@@ -1,0 +1,22 @@
+# Reverse proxy HTTPS (section 37 addendum, 19/08/2026) — obtention et
+# renouvellement automatique des certificats Let's Encrypt via Caddy, sans
+# toucher aux Services existants (grafana/murmetric-webapp restent
+# accessibles tels quels en HTTP direct, en parallèle).
+#
+# Domaines gratuits sslip.io (résolvent automatiquement vers l'IP du VPS,
+# aucune inscription requise) — à remplacer par un vrai nom de domaine plus
+# tard si besoin, seule cette ConfigMap change.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddy-config
+  namespace: murmetric
+data:
+  Caddyfile: |
+    grafana.89-168-34-201.sslip.io {
+        reverse_proxy grafana:3000
+    }
+
+    webapp.89-168-34-201.sslip.io {
+        reverse_proxy murmetric-webapp:8090
+    }

@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  namespace: murmetric
+spec:
+  # Pas de HPA : les certificats/état ACME vivent sur un seul PVC
+  # (ReadWriteOnce) — plusieurs replicas se disputeraient le même volume.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: caddy
+  template:
+    metadata:
+      labels:
+        app: caddy
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2-alpine
+          # Simple reverse proxy TLS : charge négligeable comparée à
+          # Grafana/la webapp qu'il expose.
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          ports:
+            - containerPort: 80
+            - containerPort: 443
+          volumeMounts:
+            - name: caddy-config
+              mountPath: /etc/caddy
+            - name: caddy-data
+              mountPath: /data
+      volumes:
+        - name: caddy-config
+          configMap:
+            name: caddy-config
+        - name: caddy-data
+          persistentVolumeClaim:
+            claimName: caddy-pvc

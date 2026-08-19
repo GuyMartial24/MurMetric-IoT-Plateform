@@ -9,6 +9,8 @@ spec:
   ports:
     - port: 3000
       targetPort: 3000
-  # LoadBalancer : accès direct depuis un navigateur externe au cluster.
-  # Remplacer par NodePort si le cluster ne supporte pas LoadBalancer.
-  type: LoadBalancer
+  # ClusterIP depuis le 19/08/2026 (section 37 addendum) : plus d'exposition
+  # directe hors cluster — seul le reverse proxy Caddy (k8s/caddy/, HTTPS)
+  # sert désormais de porte d'entrée externe. Caddy route en interne vers
+  # ce Service (grafana:3000), donc le changement ne l'affecte pas.
+  type: ClusterIP

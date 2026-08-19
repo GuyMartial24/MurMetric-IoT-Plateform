@@ -32,14 +32,19 @@ spec:
           # de production prise juste avant bascule
           # (grafana_backup_avant_13_20260819.tar.gz sur le VPS).
           image: grafana/grafana-oss:13.0.2
-          # Consultation seulement : aucune raison de peser sur un nœud partagé.
+          # Mémoire 256Mi -> 768Mi le 19/08/2026 : OOMKilled constaté en
+          # usage réel (255/256Mi juste avec l'Assistant + quelques onglets)
+          # — la 13.0.2 embarque bien plus que la 11.1.0 (plugins Drilldown
+          # groupés, Grafana Assistant, couche API unifiée), 256Mi était
+          # dimensionné pour l'ancienne version. Marge large (nœud partagé à
+          # 47% de mémoire allouée en limites, largement de la place).
           resources:
             requests:
               cpu: 50m
-              memory: 128Mi
+              memory: 192Mi
             limits:
               cpu: 200m
-              memory: 256Mi
+              memory: 768Mi
           ports:
             - containerPort: 3000
           env:

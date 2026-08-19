@@ -1,0 +1,14 @@
+# Persiste /data (comptes ACME + certificats Let's Encrypt) à travers les
+# redémarrages du pod — sans ça, chaque redémarrage redemanderait de
+# nouveaux certificats (Let's Encrypt limite le nombre de délivrances).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: caddy-pvc
+  namespace: murmetric
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 256Mi

@@ -9,10 +9,10 @@ spec:
   ports:
     - port: 8090
       targetPort: 8000
-  # LoadBalancer (ServiceLB k3s), même pattern que grafana/service.yaml.
-  # Port 8090 choisi libre sur le VPS (vérifié le 12/08/2026) — mais non
-  # joignable depuis Internet tant que le port n'est pas ouvert au niveau
-  # de la Security List Oracle Cloud (hors de portée SSH/kubectl, seuls les
-  # ports 22 et 8883 y sont actuellement autorisés — cf. logique_projet.md
-  # section 32). Ce Service est déjà prêt pour le jour où ce port sera ouvert.
-  type: LoadBalancer
+  # ClusterIP depuis le 19/08/2026 (section 37 addendum) : plus d'exposition
+  # directe hors cluster (le port 8090 avait fini par être ouvert au niveau
+  # de la Security List Oracle Cloud, cf. historique section 32) — seul le
+  # reverse proxy Caddy (k8s/caddy/, HTTPS) sert désormais de porte d'entrée
+  # externe. Caddy route en interne vers ce Service
+  # (murmetric-webapp:8090), donc le changement ne l'affecte pas.
+  type: ClusterIP

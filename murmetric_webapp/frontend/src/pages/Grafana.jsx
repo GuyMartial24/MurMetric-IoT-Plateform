@@ -1,9 +1,11 @@
 // Grafana embarqué en iframe (logique_projet.md section 32) : accès anonyme
 // lecture seule + allow_embedding activés côté Grafana le 12/08/2026.
-// URL en dur pour l'instant (IP publique du VPS, port 3000) — à revoir si
-// Grafana passe un jour par un proxy same-origin plutôt qu'un port public
-// séparé.
-const GRAFANA_BASE = "http://89.168.34.201:3000";
+// HTTPS depuis le 19/08/2026 (reverse proxy Caddy, section 37 addendum) —
+// requis notamment par Grafana Assistant (crypto.randomUUID indisponible
+// hors contexte sécurisé). Domaine sslip.io gratuit (résout vers l'IP du
+// VPS) ; à remplacer par un vrai nom de domaine plus tard si besoin, seule
+// cette constante change.
+const GRAFANA_BASE = "https://grafana.89-168-34-201.sslip.io";
 const GRAFANA_URL = `${GRAFANA_BASE}/d/murmetric-hrt-socma?kiosk&theme=dark`;
 
 export default function Grafana() {

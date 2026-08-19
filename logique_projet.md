@@ -5005,6 +5005,109 @@ depuis l'abandon de la migration TimescaleDB, section 33 addendum).
 Déployé et revérifié : `isDefault: true` confirmé sur InfluxQL via
 l'API, dashboard de production toujours opérationnel après coup.
 
+### Suite (19/08/2026) — Assistant muet en usage réel, deux incidents trouvés et corrigés, HTTPS mis en place
+
+Premier vrai test utilisateur de l'Assistant (question triviale "bonjour") :
+**rien ne se passe**, aucune réponse, aucune erreur visible. Diagnostic en
+plusieurs étapes, chacune ayant révélé un problème réel distinct — aucune
+piste n'était un faux problème :
+
+**1. Cause racine identifiée via la console navigateur (F12)** :
+`Uncaught TypeError: crypto.randomUUID is not a function`. L'API Web
+Crypto `randomUUID()`, utilisée par le plugin pour générer les
+identifiants de message, n'est disponible que dans un **contexte
+sécurisé** (HTTPS ou `localhost`) — or Grafana était servi en HTTP simple
+(`http://89.168.34.201:3000`). L'envoi de message échouait silencieusement
+dès le départ, cohérent avec les logs serveur (connexion SSE établie mais
+jamais de contenu échangé, coupée après 5 minutes).
+
+**2. Contournement de diagnostic — tunnel SSH vers `localhost`** :
+`ssh -L 3000:localhost:3000 ...` pour que le navigateur traite Grafana
+comme un contexte sécurisé sans toucher au déploiement. Deux obstacles
+annexes rencontrés et résolus en cours de route :
+- Clé privée SSH refusée par OpenSSH côté Windows (permissions NTFS trop
+  ouvertes, `AUTORITE NT\Utilisateurs authentifiés` et
+  `BUILTIN\Utilisateurs` avaient un accès direct) — corrigé avec `icacls
+  /remove`, en gardant uniquement l'utilisateur, Administrateurs et
+  Système.
+- Une fois le tunnel actif, connexion admin refusée avec le mot de passe
+  attendu (`admin` + valeur du secret `grafana-admin-password`) — piste
+  suivie jusqu'à découvrir l'incident ci-dessous.
+
+**3. Deuxième incident, indépendant : Grafana OOMKilled en production**
+(`kubectl describe pod` → `Last State: Terminated, Reason: OOMKilled,
+Exit Code: 137`), confirmé au moment précis du test : mémoire mesurée à
+**255/256Mi**, littéralement collée à la limite. La 13.0.2 embarque
+nettement plus que la 11.1.0 (plugins Drilldown groupés, Grafana
+Assistant, couche API unifiée) — 256Mi, dimensionné pour l'ancienne
+version, n'était plus suffisant. C'est ce crash qui expliquait le refus
+de connexion admin (état incohérent après coupure brutale). Corrigé :
+mémoire 256Mi → 768Mi (`k8s/grafana/deployment.yaml`), requêtes 128Mi →
+192Mi — marge large, nœud partagé toujours à seulement 47% de mémoire
+allouée en limites. Redéployé, revérifié : connexion admin réussie,
+mémoire stabilisée à 359/768Mi (47%, sain).
+
+Une fois authentifié via le tunnel, l'Assistant a répondu correctement au
+message de test — confirmant le diagnostic n°1 comme cause unique du
+silence initial, les deux autres incidents ayant simplement compliqué le
+diagnostic en cours de route sans être la cause première.
+
+**4. Passage en HTTPS pour supprimer le besoin du tunnel** (accord
+explicite, "go avec sslip.io") : nouveau composant **Caddy**
+(`k8s/caddy/`, reverse proxy + obtention/renouvellement automatique de
+certificats Let's Encrypt), domaines gratuits `sslip.io` (résolvent
+automatiquement vers l'IP du VPS, aucune inscription requise, remplaçable
+par un vrai nom de domaine plus tard sans autre changement que la
+ConfigMap) :
+- `https://grafana.89-168-34-201.sslip.io` → service `grafana:3000`
+- `https://webapp.89-168-34-201.sslip.io` → service `murmetric-webapp:8090`
+
+Prérequis vérifiés avant de commencer : ports 80/443 injoignables depuis
+l'extérieur au départ (testé en direct, pas depuis le VPS) — Security
+List Oracle Cloud à ouvrir manuellement par l'utilisateur (comme pour le
+port 3000 en son temps, jamais fait pour 80/443 jusqu'ici). Une fois fait,
+confirmé joignables.
+
+**Obstacle trouvé et résolu au déploiement** : Caddy restait
+indéfiniment `<pending>` côté IP externe, et Let's Encrypt échouait ses
+défis de validation (TLS-ALPN-01 : `tls: unrecognized name` ; HTTP-01 :
+`404`). Cause identifiée : **k3s installe Traefik par défaut**, déjà
+propriétaire des ports 80/443 sur l'IP publique via son propre
+LoadBalancer — jamais utilisé par ce projet (`kubectl get ingress -A` :
+aucune ressource, confirmé avant toute action), mais bloquant l'attribution
+des mêmes ports à Caddy. Résolu en repassant le Service `traefik` (namespace
+`kube-system`) de `LoadBalancer` à `ClusterIP` — libère les ports sans
+désinstaller Traefik (réversible, rien retiré du cluster). Caddy a alors
+immédiatement obtenu ses deux certificats Let's Encrypt (vérifiés :
+émetteur réel, dates de validité correctes, testés depuis l'extérieur en
+HTTPS sur les deux domaines).
+
+`murmetric_webapp/frontend/src/pages/Grafana.jsx` mis à jour
+(`GRAFANA_BASE` → `https://grafana.89-168-34-201.sslip.io`) — seule
+référence en dur à l'ancienne URL HTTP dans le code. Les accès directs
+existants (`89.168.34.201:3000`/`:8090`) restent fonctionnels en
+parallèle, en HTTP, rien retiré.
+
+**Vérifié en conditions réelles, de bout en bout, sans tunnel** :
+utilisateur connecté directement via `https://grafana.89-168-34-201.sslip.io`,
+question réelle posée à l'Assistant sur la datasource InfluxQL — réponse
+correcte et détaillée reçue (type, URL, langage de requête, 7
+measurements détectées, datasource Flux liée identifiée).
+
+**HTTPS passé en porte d'entrée unique** (demande explicite, "https en
+principal") : les Services `grafana` et `murmetric-webapp` repassés de
+`LoadBalancer` à `ClusterIP` (`k8s/grafana/service.yaml`,
+`k8s/webapp/service.yaml`) — plus d'exposition directe des ports
+3000/8090 sur l'IP publique, seul Caddy (80/443, HTTPS) reste joignable
+depuis l'extérieur. Caddy route en interne vers ces Services par leur nom
+DNS de cluster, donc le changement ne l'affecte pas. Choix délibéré de ne
+pas ajouter de redirection HTTP → HTTPS sur les anciens ports (ni bookmark
+externe à préserver, ni intérêt à maintenir un point d'entrée
+supplémentaire) — un accès à l'ancienne adresse échoue simplement
+(connexion refusée) plutôt que de rediriger. Vérifié : ports 3000/8090
+injoignables depuis l'extérieur, les deux domaines HTTPS toujours
+pleinement fonctionnels après coup.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

@@ -1,0 +1,20 @@
+# LoadBalancer (k3s ServiceLB) expose 80/443 sur l'IP publique du VPS —
+# 80 nécessaire pour la validation ACME HTTP-01 en plus de la redirection
+# vers HTTPS, 443 pour le trafic HTTPS lui-même. Mêmes ports que ceux
+# ouverts début août dans la Security List Oracle Cloud (19/08/2026).
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  namespace: murmetric
+spec:
+  selector:
+    app: caddy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
+  type: LoadBalancer
