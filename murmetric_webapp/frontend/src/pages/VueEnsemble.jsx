@@ -5,14 +5,15 @@ import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import Nomogramme from "../components/Nomogramme.jsx";
 import Nomogramme3D from "../components/Nomogramme3D.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
+import { useEtatVueEnsemble } from "../EtatPagesContext.jsx";
 import { libelleGrandeur } from "../nomogrammeAxes.js";
 
 export default function VueEnsemble() {
-  const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1" });
-  const [points, setPoints] = useState(null); // null = pas encore chargé, [] = chargé mais vide
+  // Sélection/courbe/mode 3D préservés en changeant d'onglet (EtatPagesContext) —
+  // erreur/chargement restent locaux, purement transitoires.
+  const { selection, setSelection, points, setPoints, mode3D, setMode3D } = useEtatVueEnsemble();
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
-  const [mode3D, setMode3D] = useState(false);
 
   const charger = async () => {
     setEnCours(true);

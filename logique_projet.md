@@ -5108,6 +5108,66 @@ supplémentaire) — un accès à l'ancienne adresse échoue simplement
 injoignables depuis l'extérieur, les deux domaines HTTPS toujours
 pleinement fonctionnels après coup.
 
+## 38. Retrait de Parquet en export direct + préservation d'état entre onglets (19/08/2026)
+
+Deux demandes distinctes suite à des questions utilisateur sur l'export en
+masse et l'ergonomie de l'appli :
+
+**1. Parquet retiré du téléchargement direct** (retrait) : questionnement
+sur la prudence de stocker même temporairement un fichier Parquet sur le
+volume du VPS en mode direct (`_reponse_fichier`, fichier temporaire —
+nécessaire car le format Parquet écrit son pied de fichier à la fin,
+incompatible avec un flux HTTP réellement progressif comme le CSV).
+Alternative "tmpfs en mémoire" écartée après analyse : sur Kubernetes, un
+volume `emptyDir` en mémoire consomme le même budget RAM du pod que celui
+justement sécurisé lors de la refonte de section 34/35 — n'aurait fait que
+déplacer le risque du disque vers la mémoire, pas le résoudre. Solution
+retenue : Parquet disponible **uniquement** en tâche de fond (`/retrait
+/tache`), où l'écriture progressive et bornée sur le volume persistant est
+déjà surveillée et n'a jamais été signalée comme un risque, contrairement
+au direct qui n'a ni suivi ni bornage de taille. `exporter_retrait()`
+renvoie désormais une erreur 400 explicite si `format=parquet` est demandé
+en direct. CSV direct inchangé (déjà 100 % flux, jamais de fichier sur le
+VPS). Scope volontairement limité au retrait — HR/T et teneur en eau
+restent "volume négligeable", pas concernés par le même risque
+(historique complet + haute fréquence + multi-canaux propres au retrait).
+Frontend (`Export.jsx`) : `SelecteurFormat` n'affiche Parquet qu'en mode
+"Tâche de fond", et repasse automatiquement en CSV si l'utilisateur revient
+sur "Téléchargement direct" avec Parquet déjà sélectionné.
+
+**2. Préservation d'état ciblée entre onglets** (Assistant IA + Vue
+d'ensemble) : par défaut, React Router démonte entièrement une page en
+changeant d'onglet — toute conversation Assistant IA ou courbe chargée
+dans Vue d'ensemble était perdue en revenant dessus. Option "tout garder
+monté en permanence" écartée (impact réel : les pages qui interrogent
+régulièrement le serveur continueraient de le faire même invisibles,
+charge supplémentaire sur un InfluxDB déjà fragile cette session) au
+profit d'un état déplacé au-dessus des routes, ciblé sur les deux pages
+concernées seulement. Nouveau `EtatPagesContext.jsx` : un contexte React
+porté dans `App.jsx`, au-dessus des `<Routes>` — les pages elles-mêmes
+continuent de se démonter/remonter normalement à chaque navigation
+(comportement React Router inchangé), seul l'état qui les intéresse (pas
+les indicateurs de chargement/erreur, purement transitoires) survit,
+puisqu'il vit dans un composant qui, lui, ne se démonte jamais tant que
+la session reste active. `Assistant.jsx`/`VueEnsemble.jsx` adaptés pour
+lire/écrire cet état via `useEtatAssistant()`/`useEtatVueEnsemble()` au
+lieu de `useState` local — même noms de variables, changement mécanique,
+pas de logique métier modifiée.
+
+Ce que ça préserve : navigation entre onglets, mise en arrière-plan de
+l'onglet navigateur, aussi longtemps que voulu. Ce qui réinitialise :
+rechargement de page, fermeture de l'onglet/navigateur, déconnexion —
+état purement en mémoire côté navigateur, rien de partagé entre onglets/
+appareils, rien persisté côté serveur.
+
+Vérifié : build de production réussi, lint propre, endpoint retrait
+direct confirmé rejeter `format=parquet` (400, message explicite) tout en
+laissant passer CSV direct et Parquet en tâche de fond (aucune
+régression). **Comportement interactif du changement d'onglet non testé
+en navigateur** (pas d'outil de test navigateur disponible dans cet
+environnement, comme pour le reste des fonctionnalités UI de ce projet) —
+à valider par l'utilisateur.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

@@ -238,9 +238,10 @@ def exporter_retrait(
     """Export "large" : une colonne par canal, une ligne par horodatage —
     les canaux retrait partagent la même grille temporelle (DeweSoft les
     enregistre tous simultanément), la fusion en colonnes est donc directe.
-    Réponse en flux : adapté à une période raisonnable — pour une période
-    longue, préférer /retrait/tache (génération en arrière-plan, suivi
-    d'avancement, téléchargement une fois prête)."""
+    Réponse en flux, CSV uniquement : adapté à une période raisonnable —
+    pour une période longue ou pour Parquet, préférer /retrait/tache
+    (génération en arrière-plan, suivi d'avancement, téléchargement une
+    fois prête)."""
     liste_canaux = [c.strip() for c in canaux.split(",") if c.strip()]
     if not liste_canaux:
         raise HTTPException(status_code=400, detail="Au moins un canal requis.")
@@ -248,8 +249,22 @@ def exporter_retrait(
         raise HTTPException(status_code=400, detail=f"Champ invalide : {champ!r}")
     if resolution not in ("brut", "heure", "jour"):
         raise HTTPException(status_code=400, detail=f"Résolution invalide : {resolution!r}")
-    if format not in _FORMATS:
-        raise HTTPException(status_code=400, detail=f"Format invalide : {format!r}")
+    if format != "csv":
+        # Parquet retiré du téléchargement direct (19/08/2026) : la
+        # sérialisation Parquet nécessite un fichier temporaire (footer en
+        # fin de fichier, incompatible avec un flux HTTP réellement
+        # progressif) — sans suivi ni bornage de taille comme en tâche de
+        # fond, une période mal choisie pourrait écrire un fichier énorme
+        # sur le volume du VPS. Le CSV, lui, ne touche jamais le disque
+        # serveur (flux HTTP pur), aucune restriction nécessaire.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Parquet n'est pas disponible en téléchargement direct — "
+                "utilise /retrait/tache (tâche de fond), qui écrit de façon "
+                "bornée et surveillée."
+            ),
+        )
 
     debut_iso, fin_iso = _valider_bornes(debut, fin, "retrait")
     debut_dt = datetime.fromisoformat(debut_iso.replace("Z", "+00:00"))
@@ -258,17 +273,11 @@ def exporter_retrait(
     lignes = _lignes_retrait(liste_canaux, champ, debut_dt, fin_dt, resolution)
     nom = f"retrait_{champ}_{resolution}_{_suffixe_periode(debut_dt, fin_dt)}"
 
-    if format == "csv":
-        return StreamingResponse(
-            _generer_csv(entetes, lignes),
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{nom}.csv"'},
-        )
-
-    chemin = config.EXPORTS_DIR / f"_tmp_{uuid.uuid4().hex}.parquet"
-    config.EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    _ecrire_parquet(entetes, lignes, chemin)
-    return _reponse_fichier(chemin, f"{nom}.parquet")
+    return StreamingResponse(
+        _generer_csv(entetes, lignes),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{nom}.csv"'},
+    )
 
 
 # ===========================================================================

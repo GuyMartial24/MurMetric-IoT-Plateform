@@ -31,13 +31,13 @@ export default function Export() {
   );
 }
 
-function SelecteurFormat({ format, onChange }) {
+function SelecteurFormat({ format, onChange, avecParquet = true }) {
   return (
     <div className="champ">
       <label>Format</label>
       <select value={format} onChange={(e) => onChange(e.target.value)}>
         <option value="csv">CSV</option>
-        <option value="parquet">Parquet</option>
+        {avecParquet && <option value="parquet">Parquet</option>}
       </select>
     </div>
   );
@@ -150,7 +150,7 @@ function ExportRetrait() {
             <option value="brut">Points bruts (10 Hz)</option>
           </select>
         </div>
-        <SelecteurFormat format={format} onChange={setFormat} />
+        <SelecteurFormat format={format} onChange={setFormat} avecParquet={mode === "tache"} />
         <div className="champ">
           <label>Début{mode === "tache" ? " (vide = tout l'historique)" : ""}</label>
           <input type="date" value={debut} onChange={(e) => setDebut(e.target.value)} />
@@ -164,7 +164,16 @@ function ExportRetrait() {
         <label>Livraison</label>
         <div style={{ display: "flex", gap: "1rem" }}>
           <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-            <input type="radio" checked={mode === "direct"} onChange={() => setMode("direct")} />
+            <input
+              type="radio"
+              checked={mode === "direct"}
+              onChange={() => {
+                setMode("direct");
+                // Parquet indisponible en direct (pas de fichier temporaire
+                // sans borne sur le volume du VPS) : retombe sur CSV.
+                setFormat((f) => (f === "parquet" ? "csv" : f));
+              }}
+            />
             Téléchargement direct
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
@@ -176,7 +185,7 @@ function ExportRetrait() {
       {mode === "direct" && (
         <p style={{ color: "#a0a6b5", fontSize: "0.85rem", marginTop: "0.4rem" }}>
           Adapté à une période raisonnable — la réponse arrive au fur et à mesure, sans limite stricte, mais reste une
-          requête classique (l'onglet doit rester ouvert).
+          requête classique (l'onglet doit rester ouvert). CSV uniquement (Parquet nécessite la tâche de fond).
         </p>
       )}
       {mode === "tache" && (

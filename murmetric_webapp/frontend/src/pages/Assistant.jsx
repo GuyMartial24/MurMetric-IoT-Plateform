@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { api } from "../api.js";
 import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
+import { useEtatAssistant } from "../EtatPagesContext.jsx";
 import { svgVersDataUrl } from "../exportGraphique.js";
 import { libelleGrandeur } from "../nomogrammeAxes.js";
 
@@ -36,16 +37,28 @@ function TexteAssistant({ texte }) {
 }
 
 export default function Assistant() {
-  const [selection, setSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1", couche: "" });
-  const [points, setPoints] = useState(null); // null = pas encore chargé, [] = chargé mais vide
-  const [mode, setMode] = useState("explain");
-  const [prompt, setPrompt] = useState("");
-  const [historique, setHistorique] = useState([]);
+  // Sélection/courbe/conversation/etc. préservées en changeant d'onglet
+  // (EtatPagesContext) — enCours/enCoursCourbe/erreur restent locaux,
+  // purement transitoires (n'ont pas de sens une fois la page démontée).
+  const {
+    selection,
+    setSelection,
+    points,
+    setPoints,
+    mode,
+    setMode,
+    prompt,
+    setPrompt,
+    historique,
+    setHistorique,
+    imageJointe,
+    setImageJointe,
+    dernierEchec,
+    setDernierEchec,
+  } = useEtatAssistant();
   const [enCours, setEnCours] = useState(false);
   const [enCoursCourbe, setEnCoursCourbe] = useState(false);
   const [erreur, setErreur] = useState(null);
-  const [dernierEchec, setDernierEchec] = useState(null); // requête à rejouer via "Réessayer"
-  const [imageJointe, setImageJointe] = useState(null); // data URI collée/importée par l'utilisateur
   const graphiqueRef = useRef(null);
   const inputFichierRef = useRef(null);
 
