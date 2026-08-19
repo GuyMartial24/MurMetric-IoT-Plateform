@@ -4836,7 +4836,7 @@ aucune nouvelle clé/secret), mais 3 configurations de modèle au total
 les ressources du VPS partagé (appels API sortants uniquement, comme
 c'était déjà le cas pour Gemini).
 
-## 37. Plugin IA dans Grafana — tenté puis ABANDONNÉ (bug plugin, 18/08/2026)
+## 37. Assistant IA dans Grafana — grafana-llm-app abandonné, Grafana Assistant activé (18-19/08/2026)
 
 Question utilisateur : Grafana propose-t-il un assistant IA intégré, et
 comment l'activer sur le Grafana du projet (self-hosted,
@@ -4904,6 +4904,84 @@ dans le plugin lui-même, pas dans notre configuration. Vérifier d'abord
 si une version plus récente de `grafana-llm-app` a corrigé
 `Model.toProvider()` (chercher un changelog mentionnant un fix sur le
 mapping de modèles) avant de reprendre cette piste.
+
+### Suite (19/08/2026) — Grafana Assistant activé, avec montée de version
+
+L'utilisateur a créé un compte Grafana Cloud et souhaite reconsidérer
+"Grafana Assistant" (écarté initialement pour rester 100% self-hosted).
+Clarification apportée : ce n'est pas "tout Grafana Cloud" contre "tout
+self-hosted" — Grafana Assistant en mode **self-managed** est un
+hybride où seule la fonctionnalité Assistant traverse vers le cloud
+(prompts + contexte de requête minimal, jamais les données brutes des
+datasources), tout le reste (dashboards, datasource InfluxDB, embedding
+dans la webapp) reste sur le VPS sans changement. Retenu par
+l'utilisateur.
+
+Plugin `grafana-assistant-app` (v2.0.52) installé
+(`GF_INSTALL_PLUGINS`, même mécanisme que `grafana-llm-app`) — mais
+page du plugin affichant *"This plugin doesn't support your version of
+Grafana"* : dépendance **Grafana ≥13.0.0**, le projet tournait en
+`11.1.0`. Contrairement au chantier `grafana-llm-app`, ce blocage est
+un vrai prérequis de version documenté, pas un bug — a nécessité une
+montée de version Grafana, un changement plus large que l'installation
+d'un plugin.
+
+**Recherche préalable** (avant tout changement) : **Grafana v13.0.0 a
+été retiré par Grafana Labs** suite à un bug de migration ayant fait
+perdre/revenir en arrière des dashboards et dossiers chez certains
+utilisateurs — cible fixée à `13.0.2` (dernier tag stable disponible),
+jamais `13.0.0`. Chemin recommandé officiellement : montée séquentielle
+11.x → 12.x → 13.x (pas d'interdiction explicite du saut direct, mais
+pratique conseillée). Breaking changes pertinents identifiés :
+validation stricte du format d'UID des datasources (v12, non-problème :
+UID auto-générés déjà conformes), migration de la table d'annotations
+nécessitant 2-3x l'espace actuel (v12, non-problème : 58 Mo de données
+Grafana contre 147 Go libres sur le VPS), retrait complet de
+`grafana-cli`/`grafana-server` au profit de `grafana cli`/`grafana
+server` (v13, déjà anticipé), migration automatique des dashboards/
+dossiers vers un "unified storage" au démarrage (v13, zone d'incertitude
+réelle pour des dashboards provisionnés par fichier — pas documentée
+précisément, seul un test réel pouvait trancher).
+
+**Validation sur instance isolée avant toute action en production**
+(vu l'incident de disque plein de cette même session sur un autre
+chantier, et le bug v13.0.0 confirmé ci-dessus) : pod Grafana temporaire
+distinct (`grafana-test-upgrade`), volume copié depuis les vraies
+données de production (58 Mo), image `grafana-oss:13.0.2`, mêmes
+ConfigMaps de provisioning (datasources/dashboards, montage en lecture
+seule, sans risque). Vérifié : migrations de démarrage sans erreur liée
+à notre configuration (une seule erreur sans rapport, plugin
+Elasticsearch groupé inutilisé) ; les deux datasources InfluxDB (Flux
+et InfluxQL) fonctionnelles avec de **vraies requêtes retournant de
+vraies données** (heartbeat pipeline retrait) ; dashboard "Vue
+d'ensemble SOCMA 1 & 2" provisionné intact ; affichage en iframe (mode
+kiosk, celui utilisé par la webapp) toujours opérationnel, aucun header
+de blocage ; plugin Grafana Assistant pleinement compatible une fois la
+version satisfaite (composant "Connect to Grafana Cloud" exposé,
+message d'incompatibilité disparu). Instance de test entièrement
+supprimée après validation (pod + volume), production jamais touchée
+pendant cette phase.
+
+**Bascule en production**, avec l'accord explicite de l'utilisateur :
+sauvegarde du volume Grafana réel prise juste avant
+(`grafana_backup_avant_13_20260819.tar.gz`, ~17 Mo, sur le VPS hors du
+pod) ; `k8s/grafana/deployment.yaml` mis à jour (image
+`grafana-oss:13.0.2`) ; déployé et re-vérifié avec les mêmes contrôles
+que sur l'instance de test, cette fois contre les vraies données de
+production : migrations réelles sans aucune erreur/avertissement lié à
+notre configuration, datasources et dashboard intacts, requête Flux
+réelle réussie, embedding iframe opérationnel, plugin Grafana Assistant
+confirmé compatible (`version: 13.0.2` via `/api/health`).
+
+**Dernière étape, volontairement non automatisée** : la connexion OAuth
+du plugin à Grafana Cloud (*Administration → Plugins → Grafana
+Assistant → Connection → Start Connection*) ne peut être faite que par
+l'utilisateur lui-même — proposition de le faire à sa place avec ses
+identifiants explicitement refusée (pas d'outil de navigateur
+disponible dans cet environnement pour un flux OAuth interactif, et
+principe général de ne jamais manipuler les identifiants d'un compte
+externe même si techniquement possible, cohérent avec la pratique de ce
+projet de ne stocker aucun mot de passe en mémoire).
 
 ## Points ouverts / non implémentés
 

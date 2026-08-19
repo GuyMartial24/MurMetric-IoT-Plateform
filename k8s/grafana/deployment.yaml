@@ -20,7 +20,18 @@ spec:
     spec:
       containers:
         - name: grafana
-          image: grafana/grafana-oss:11.1.0
+          # 11.1.0 -> 13.0.2 le 19/08/2026 (section 37 addendum) : requis par
+          # Grafana Assistant (>=13.0.0-0). Jamais 13.0.0 pile — version
+          # retirée par Grafana Labs suite à un bug de migration ayant fait
+          # perdre des dashboards/dossiers chez certains utilisateurs.
+          # Validé au préalable sur une instance de test isolée (copie des
+          # données réelles, même provisioning) : migrations sans erreur,
+          # datasources InfluxDB Flux+InfluxQL fonctionnelles (vraies
+          # requêtes testées), dashboard provisionné intact, embedding en
+          # iframe (mode kiosk) toujours opérationnel. Sauvegarde du volume
+          # de production prise juste avant bascule
+          # (grafana_backup_avant_13_20260819.tar.gz sur le VPS).
+          image: grafana/grafana-oss:13.0.2
           # Consultation seulement : aucune raison de peser sur un nœud partagé.
           resources:
             requests:
@@ -59,6 +70,17 @@ spec:
               value: "true"
             - name: GF_AUTH_ANONYMOUS_ORG_ROLE
               value: Viewer
+            # Grafana Assistant (section 37 addendum, 19/08/2026) : chat IA
+            # officiel Grafana — contrairement à grafana-llm-app (abandonné,
+            # bug plugin), l'inférence tourne côté Grafana Cloud, aucun
+            # mapping de modèle local à configurer. Installation seule ici
+            # (comme grafana-llm-app, survit à une recréation du PVC) ; la
+            # connexion au compte Grafana Cloud (OAuth) se fait ensuite
+            # manuellement dans l'interface (Administration > Plugins >
+            # Grafana Assistant > Connection > Start Connection) — étape que
+            # seul l'utilisateur peut réaliser avec ses identifiants.
+            - name: GF_INSTALL_PLUGINS
+              value: grafana-assistant-app
           volumeMounts:
             - name: grafana-data
               mountPath: /var/lib/grafana
