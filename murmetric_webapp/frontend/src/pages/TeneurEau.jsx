@@ -143,82 +143,87 @@ export default function TeneurEau() {
       <div className="carte">
         <h2>Saisies existantes</h2>
         <BoutonsExportDonnees lignes={groupes} nomFichier="teneur_eau" />
-        <table>
-          <thead>
-            <tr>
-              <th>Mur</th>
-              <th>Couche</th>
-              <th>Valeur (%)</th>
-              <th>Date</th>
-              <th>Commentaire</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {groupes.map((g) => (
-              <tr key={`${g.mur}|${g.couche}|${g.time}`}>
-                {enEdition?.original.mur === g.mur &&
-                enEdition.original.couche === g.couche &&
-                enEdition.original.date_mesure === g.time ? (
-                  <>
-                    <td>
-                      <input
-                        value={enEdition.valeurs.mur}
-                        onChange={(e) =>
-                          setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, mur: e.target.value } })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        value={enEdition.valeurs.couche}
-                        onChange={(e) =>
-                          setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: e.target.value } })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={enEdition.valeurs.valeur_pourcent}
-                        onChange={(e) =>
-                          setEnEdition({
-                            ...enEdition,
-                            valeurs: { ...enEdition.valeurs, valeur_pourcent: e.target.value },
-                          })
-                        }
-                      />
-                    </td>
-                    <td colSpan={2}>
-                      <input
-                        value={enEdition.valeurs.commentaire}
-                        onChange={(e) =>
-                          setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, commentaire: e.target.value } })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <button onClick={enregistrerCorrection}>Enregistrer</button>{" "}
-                      <button onClick={() => setEnEdition(null)}>Annuler</button>
-                    </td>
-                  </>
-                ) : (
-                  <>
-                    <td>{g.mur}</td>
-                    <td>{g.couche}</td>
-                    <td>{g.value?.toFixed(2)}</td>
-                    <td>{new Date(g.time).toLocaleString("fr-FR")}</td>
-                    <td>{g.commentaire}</td>
-                    <td>
-                      <button onClick={() => demarrerEdition(g)}>Éditer</button>
-                    </td>
-                  </>
-                )}
+        <div className="tableau-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Mur</th>
+                <th>Couche</th>
+                <th>Valeur (%)</th>
+                <th>Date</th>
+                <th>Commentaire</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {groupes.map((g) => (
+                <tr key={`${g.mur}|${g.couche}|${g.time}`}>
+                  {enEdition?.original.mur === g.mur &&
+                  enEdition.original.couche === g.couche &&
+                  enEdition.original.date_mesure === g.time ? (
+                    <>
+                      <td>
+                        <input
+                          value={enEdition.valeurs.mur}
+                          onChange={(e) =>
+                            setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, mur: e.target.value } })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={enEdition.valeurs.couche}
+                          onChange={(e) =>
+                            setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: e.target.value } })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={enEdition.valeurs.valeur_pourcent}
+                          onChange={(e) =>
+                            setEnEdition({
+                              ...enEdition,
+                              valeurs: { ...enEdition.valeurs, valeur_pourcent: e.target.value },
+                            })
+                          }
+                        />
+                      </td>
+                      <td colSpan={2}>
+                        <input
+                          value={enEdition.valeurs.commentaire}
+                          onChange={(e) =>
+                            setEnEdition({
+                              ...enEdition,
+                              valeurs: { ...enEdition.valeurs, commentaire: e.target.value },
+                            })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <button onClick={enregistrerCorrection}>Enregistrer</button>{" "}
+                        <button onClick={() => setEnEdition(null)}>Annuler</button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{g.mur}</td>
+                      <td>{g.couche}</td>
+                      <td>{g.value?.toFixed(2)}</td>
+                      <td>{new Date(g.time).toLocaleString("fr-FR")}</td>
+                      <td>{g.commentaire}</td>
+                      <td>
+                        <button onClick={() => demarrerEdition(g)}>Éditer</button>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

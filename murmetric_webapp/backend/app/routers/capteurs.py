@@ -17,7 +17,7 @@ webapp (cf. config.py) et sont la source de vérité :
 
 import json
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -274,6 +274,39 @@ def enregistrer_capteur_hr_t(enregistrement: EnregistrementHrT) -> dict:
             "ingestion": False,
         }
         donnees[enregistrement.mac] = entree
+        _ecrire_json(config.CAPTEURS_JSON, donnees)
+        return entree
+
+
+class TelemetrieCapteur(BaseModel):
+    """Télémétrie ponctuelle (santé radio/batterie) envoyée par le script
+    d'ingestion à chaque détection — distincte d'une mesure physique."""
+
+    rssi: int | None = None
+    batterie: int | None = None
+
+
+@router.post("/hr_t/{mac}/telemetrie", dependencies=[Depends(_verifier_cle_ingestion)])
+def mettre_a_jour_telemetrie_hr_t(mac: str, telemetrie: TelemetrieCapteur) -> dict:
+    """Met à jour la dernière détection/RSSI/batterie d'un capteur BLE déjà
+    enregistré — appelée par le script d'ingestion indépendamment du flag
+    `ingestion` (utile pour surveiller un capteur pas encore activé, ou
+    anticiper une perte de signal avant qu'elle ne se produise). N'écrit
+    jamais dans InfluxDB (pas une mesure physique) et ne déclenche aucun
+    réétiquetage — à distinguer de modifier_capteur_hr_t (édition humaine
+    de l'identité/l'étiquetage)."""
+    with _verrou:
+        donnees = _lire_json(config.CAPTEURS_JSON)
+        macs_existantes = {k.upper(): k for k in donnees if not k.startswith("_")}
+        cle = macs_existantes.get(mac.upper())
+        if cle is None:
+            raise HTTPException(status_code=404, detail=f"Capteur inconnu : {mac}")
+        entree = donnees[cle]
+        entree["derniere_detection"] = datetime.now(timezone.utc).isoformat()
+        if telemetrie.rssi is not None:
+            entree["dernier_rssi"] = telemetrie.rssi
+        if telemetrie.batterie is not None:
+            entree["derniere_batterie"] = telemetrie.batterie
         _ecrire_json(config.CAPTEURS_JSON, donnees)
         return entree
 

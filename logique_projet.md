@@ -5168,6 +5168,240 @@ en navigateur** (pas d'outil de test navigateur disponible dans cet
 environnement, comme pour le reste des fonctionnalités UI de ce projet) —
 à valider par l'utilisateur.
 
+## 39. Audit projet + test de portée BLE du Pi — deux correctifs trouvés (19/08/2026)
+
+**Audit général demandé** ("passe de l'ensemble du projet") : infrastructure
+saine (tous pods `Running`, mémoire Grafana 383Mi/768Mi et webapp
+216Mi/1Gi après les correctifs du jour, disque 25% utilisé), git propre.
+Deux résidus mineurs trouvés et supprimés sur accord explicite : un pod
+`mosquitto` fantôme (`0/1 Completed`, 11 jours, rattaché au ReplicaSet
+actif mais jamais nettoyé par Kubernetes) et un fichier Parquet de test
+(818 octets, tâche de fond jamais téléchargée).
+
+**Analyse "traces d'origine IA"** (question utilisateur) : le design
+visuel de la webapp lui-même (polices système, pas de hero en dégradé,
+thème sombre cohérent avec Grafana, aucun emoji décoratif) ne présente
+pas les marqueurs habituels des interfaces générées par IA — jugé peu
+susceptible d'être repéré par un tiers sur ce seul critère. Signaux plus
+caractéristiques identifiés côté dépôt : structure très uniforme des 84
+commits (préfixes conventionnels, corps expliquant le "pourquoi"),
+densité et style des commentaires de code référençant systématiquement
+des dates et `logique_projet.md`, et l'existence même de ce journal de
+décisions chronologique. Recommandation donnée : ne pas modifier le
+design (pas le signal réellement révélateur) ; prudence recommandée
+avant de vouloir dissimuler le processus de développement, notamment si
+le projet a un cadre académique (déclarer l'usage d'outils IA est
+généralement attendu plutôt qu'à cacher).
+
+**Test de portée BLE du Pi** (demande utilisateur, "vérifier la
+performance/portée du Raspberry+antenne Bluetooth") : deux problèmes
+réels trouvés et corrigés en cours de diagnostic, avec accord explicite
+avant chaque action.
+
+1. **Antenne USB externe (hci1) trouvée DOWN** — le service tournait
+   depuis le début en repli sur l'adaptateur intégré (hci0), plus
+   faible, sans qu'aucune alerte ne le signale (le repli est un
+   comportement voulu du script, cf. commentaire "hci1 = antenne USB
+   externe, repli automatique sur hci0"). Cause : interface **bloquée
+   par RF-kill** (soft block, confirmé via `rfkill list` — pas une
+   panne matérielle, le dongle USB Realtek était bien détecté par le
+   noyau). Corrigé : `rfkill unblock` + `hciconfig hci1 up`, service
+   redémarré pour repasser sur hci1. **Gain mesuré, même capteur, avant/
+   après** : RSSI passé de **-97 dBm (hci0, quasi injoignable) à
+   -58 dBm (hci1)** — un gain d'environ 39 dB. Trois autres capteurs
+   BLE désormais visibles avec des RSSI tout aussi bons (-56 à
+   -62 dBm), contre un seul détecté (à peine) avant correctif. Répond à
+   la question initiale : la portée de l'antenne, une fois réellement
+   active, est bonne depuis la position actuelle du Pi.
+2. **Régression trouvée, causée par le chantier HTTPS du jour** :
+   `CAPTEURS_API_URL` sur le Pi pointait encore vers l'ancienne adresse
+   HTTP directe (`http://89.168.34.201:8090`), rendue injoignable par
+   le passage des Services Grafana/webapp en `ClusterIP` (section 37
+   addendum, plus tôt aujourd'hui) — confirmé dans les logs
+   (`journalctl`) : erreur de connexion répétée toutes les ~30-60s
+   depuis ce matin. Le Pi restait fonctionnel entre-temps (repli sur le
+   cache local `capteurs.json`), mais aucune mise à jour du registre
+   (mur/couche/position) ne lui parvenait plus. Corrigé : URL mise à
+   jour vers `https://webapp.89-168-34-201.sslip.io` directement dans
+   `/home/murmetric/murmetric_pi5/lancer_ingestion_capteurs.sh` sur le
+   Pi (fichier non versionné dans ce dépôt — déployé par SFTP à
+   l'origine, pas de clone git sur cette machine, cf. section 30/31).
+   Vérifié après redémarrage du service : plus aucune erreur de
+   connexion, registre capteurs republié sur MQTT (65 capteurs), broker
+   MQTT cloud toujours connecté normalement.
+
+Accès Pi via SSH par mot de passe (paramiko, comme pour PC Amiens
+historiquement) — mot de passe fourni en session, jamais stocké.
+
+## 40. Télémétrie capteurs HR/T — dernière détection, RSSI, batterie (19/08/2026)
+
+**Origine** : en affichant le tableau "Capteurs HR/T (65)", question
+utilisateur sur la pertinence d'exposer le niveau de batterie de chaque
+capteur — les capteurs sont noyés dans les parois de test, impossible de
+vérifier physiquement une batterie faible avant que le signal ne se
+perde. Étendu à la dernière détection (le capteur répond-il encore ?) et
+au RSSI (la qualité du signal se dégrade-t-elle avant la perte totale ?).
+
+**Découverte bloquante en cours de conception** : `mesures_capteurs`
+(mesures physiques HR/T dans InfluxDB) n'a reçu aucune donnée depuis
+40 jours, et 0 des 65 capteurs enregistrés n'ont `ingestion: true`.
+Remonté immédiatement à l'utilisateur avant de poursuivre — confirmé
+comme **volontaire** ("l'ingestion des capteurs HR/T n'est pas encore
+en service"), pas un bug. Conséquence directe sur la conception : la
+télémétrie devait être **indépendante du flag `ingestion`**, sans quoi
+la fonctionnalité n'aurait rien affiché pour aucun capteur dans l'état
+actuel de la campagne — c'est justement son intérêt (surveiller un
+capteur avant même son activation).
+
+**Conception** :
+- Nouveaux champs dans `capteurs.json` (registre, par capteur HR/T) :
+  `derniere_detection` (horodatage ISO 8601 UTC), `dernier_rssi` (dBm),
+  `derniere_batterie` (%, uniquement Blue Maestro — le protocole ELA
+  n'expose qu'un indicateur binaire faible/normal sous 15%, non décodé
+  actuellement par `ingestion_capteurs_bluetooth.py`).
+- Nouvel endpoint backend `POST /api/capteurs/hr_t/{mac}/telemetrie`
+  (clé d'ingestion `X-Ingestion-Key`, comme les autres routes
+  d'ingestion), appelé par le Pi à chaque détection. N'écrit jamais dans
+  InfluxDB (pas une mesure physique) et ne déclenche aucun réétiquetage
+  — à distinguer de `modifier_capteur_hr_t` (édition humaine).
+- Côté Pi (`callback()` dans `ingestion_capteurs_bluetooth.py`) : appel
+  `envoyer_telemetrie(mac, rssi, batterie)` placé **avant** le filtre
+  `ingestion`, juste après l'auto-enregistrement — throttlé à un envoi
+  par capteur toutes les 5 minutes (`TELEMETRIE_INTERVALLE_S`, dict
+  `dernier_envoi_telemetrie` en mémoire), pour ne pas solliciter l'API à
+  chaque paquet BLE (plusieurs par minute). Best-effort : une erreur
+  réseau n'interrompt jamais le scan, retentée au prochain paquet.
+- Frontend (`Capteurs.jsx`, tableau "Capteurs HR/T" uniquement — pas
+  "Canaux retrait", qui sont des voies DeweSoft filaires sans notion de
+  pile/RSSI) : 3 colonnes ajoutées avec pastilles de couleur. Dernière
+  détection : vert < 15 min, orange < 3 h, rouge au-delà, gris "Jamais
+  vu" si absent — seuils calés sur l'intervalle d'envoi de 5 min, un
+  capteur sain devrait quasi toujours apparaître "récent". Batterie :
+  vert ≥ 30 %, orange ≥ 15 %, rouge en dessous. RSSI affiché brut (dBm).
+
+**Vérifications** :
+- Backend testé directement (avant déploiement Pi) : MAC connue avec
+  RSSI seul → 200 et champ batterie omis ; MAC connue avec RSSI+batterie
+  → 200 et les 3 champs présents ; MAC inconnue → 404.
+- Script Pi vérifié statiquement (`py_compile`, `black --check`, `ruff`)
+  avant déploiement SFTP, puis service redémarré en conditions réelles.
+  **Confirmé de bout en bout avec de vraies détections BLE** : les 5
+  capteurs vus dans `journalctl` juste après redémarrage
+  (`disc-maxi-A03`, `F1A107CCEADE`, `F1C6BE279485`, `Test`, et le
+  capteur ELA `P RHT 9078CF`) apparaissent tous dans
+  `GET /api/capteurs/hr_t` avec un horodatage cohérent (~13:38 UTC) et
+  un RSSI plausible (-50 à -66 dBm) ; les 4 capteurs Blue Maestro
+  affichent `derniere_batterie: 100`, le capteur ELA affiche
+  `derniere_batterie: null` — comme attendu (limitation du protocole).
+- **Rendu visuel non vérifié en navigateur** (pas d'outil de test
+  navigateur disponible dans cet environnement) — build/lint frontend
+  passent, mais l'affichage réel des pastilles reste à valider par
+  l'utilisateur.
+
+**Addendum — décodage batterie ELA en mode Service Data (19/08/2026)** :
+question utilisateur sur la possibilité de suivre la batterie du capteur
+ELA (limitation notée juste au-dessus). Deux pistes explorées :
+
+1. **Connexion GATT directe (Battery Service standard 0x180F/0x2A19)** —
+   testée en conditions réelles sur le capteur ELA du projet
+   (`D2:46:BB:82:B7:1C`), deux fois : en fonctionnement normal (timeout
+   25s) puis avec le service d'ingestion mis en pause pour écarter une
+   contention radio (même timeout). **Écartée** : le capteur n'accepte
+   aucune connexion GATT (advertising non-connectable, choix de
+   conception courant sur ce type de capteur à batterie).
+2. **Champ batterie natif du protocole ELA, via Scan Response** —
+   documentation officielle consultée (ELA Innovation, "BLE Frame
+   specifications" v11B, section 5 "Battery information", PDF récupéré
+   directement, le WebFetch standard étant bloqué en 403 par leur
+   serveur). Contrairement à l'hypothèse initiale ("signal binaire"), il
+   s'agit d'un **vrai pourcentage** (1 octet brut, comme Blue Maestro),
+   transmis dans un bloc Service Data sur l'UUID standard Bluetooth SIG
+   **0x2A19** ("Battery Level") — mais **uniquement lorsque la batterie
+   réelle est déjà sous 15%** ; rien n'est transmis au-dessus de ce
+   seuil (pas de pourcentage "sain" annoncé, à la différence de Blue
+   Maestro qui transmet en continu).
+   **Implémenté** : nouvelle constante `ELA_UUID_BATTERIE`, décodée dans
+   `_decoder_ela_service()` (mode Service Data, celui réellement utilisé
+   par le capteur ELA du projet) — même mécanisme exact que
+   température/humidité déjà en place, aucun nouveau code de scan
+   nécessaire. Volontairement **pas implémenté** pour
+   `_decoder_ela_manufacturer()` (mode Manufacturer Specific Data,
+   inutilisé sur ce projet) : la batterie y arriverait comme un bloc
+   séparé partageant le même company ID (0x0757) que le bloc RHT dans le
+   dict `manufacturer_data` de bleak (indexé par company ID) — risque de
+   collision non vérifiable sans capteur réellement configuré dans ce
+   mode.
+   **Limite assumée de la vérification** : le champ n'étant transmis que
+   sous 15% de batterie réelle, un test fonctionnel de bout en bout
+   n'est pas possible à la demande (pas de moyen de simuler une batterie
+   faible sans outil NFC ELA dédié, absent de ce projet). Seul un test
+   **structurel** a pu être fait : déployé sur le Pi, service redémarré,
+   vérifié sain (aucune erreur dans `journalctl`, capteur ELA toujours
+   détecté et décodé normalement), télémétrie confirmée intacte via
+   l'API (`derniere_batterie: null`, comportement attendu tant que la
+   batterie reste saine). La confirmation fonctionnelle se fera
+   naturellement, sans intervention supplémentaire, le jour où un
+   capteur ELA franchira réellement ce seuil pendant la campagne.
+   **Point d'attention corrigé côté frontend** (question utilisateur
+   immédiate) : pour Blue Maestro, `derniere_batterie: null` veut dire
+   "jamais reçu" ; pour ELA, ça voudra désormais le plus souvent dire
+   "batterie saine, rien à signaler" — même valeur `null`, deux
+   significations différentes selon la famille. `etatBatterie()`
+   (`Capteurs.jsx`) distingue maintenant les deux cas : pour un capteur
+   `famille_capteur === "ela"` ayant déjà au moins une détection
+   confirmée (`derniere_detection` non vide), affiche "Saine (> 15 %)"
+   (pastille verte) au lieu du "—" ambigu ; reste "—" si le capteur n'a
+   jamais été détecté du tout (aucune base pour affirmer quoi que ce
+   soit). Déployé (image webapp reconstruite, pod redémarré) et vérifié
+   sain (API `/api/capteurs/hr_t` répond 200, logs de démarrage propres)
+   — rendu visuel des pastilles toujours non vérifié en navigateur, comme
+   pour le reste de cette fonctionnalité.
+
+**Addendum — largeur de page élargie, 1100px → 1400px (19/08/2026)** :
+première capture d'écran réelle de la fonctionnalité fournie par
+l'utilisateur (tableau "Capteurs HR/T" en conditions réelles) — confirme
+le rendu correct des pastilles (RSSI, dernière détection, batterie),
+mais révèle deux textes qui retombent sur 2 lignes ("SOCMA 1",
+"Saine (> 15 %)") faute de place. Cause : `.app-main` (`index.css`), le
+conteneur unique partagé par **toutes** les pages (`App.jsx`, un seul
+`<main className="app-main">` autour de `<Routes>`), plafonné à
+`max-width: 1100px` — d'où aussi les marges vides de part et d'autre sur
+un écran large. Un seul changement de constante affecte donc
+uniformément toutes les pages (Vue d'ensemble, Grafana, Export,
+Monitoring, etc.), pas seulement Capteurs — confirmé à l'utilisateur
+avant de modifier. Relevé à 1400px. Déployé (rebuild image webapp, pod
+redémarré) et vérifié sain (API 200). Rendu visuel du nouvel espacement
+non revérifié par capture d'écran après coup.
+
+**Addendum — responsive minimal (19/08/2026)** : question utilisateur sur
+les tailles d'écran supportées. Audit du code (pas de test navigateur
+réel, comme d'habitude) : balise viewport correcte, graphiques SVG
+(`viewBox` + `width: 100%`) et nomogrammes canvas (dimensionnés depuis
+`clientWidth` au tracé) déjà adaptatifs — mais **aucune media query nulle
+part** dans le CSS, barre de navigation (8 onglets + compte) sur une
+seule ligne sans repli, et tableaux sans défilement horizontal confiné.
+Concrètement desktop-only en dessous d'environ 1024px. Deux correctifs
+ciblés, avec accord explicite avant modification (portée app-wide, un
+seul conteneur/nav partagé par toutes les pages) :
+1. **Tableaux** : nouvelle classe `.tableau-scroll` (`overflow-x: auto`)
+   enveloppant chaque `<table>` — seuls deux fichiers en contiennent un
+   (`Capteurs.jsx`, `TeneurEau.jsx`), les deux corrigés. Un écran étroit
+   fait maintenant défiler le tableau lui-même plutôt que d'écraser les
+   colonnes ou toute la page.
+2. **Navigation** : bouton hamburger (`menu-bascule`, masqué par défaut,
+   visible sous 860px) ajouté dans `App.jsx`, nouvel état `menuOuvert`
+   (`useState`). Nav + bloc compte regroupés dans un seul
+   `.app-header-panel` replié sous ce seuil (`display: none` sauf classe
+   `.ouvert`) plutôt que gérés séparément — évite de dupliquer la logique
+   de repli sur deux éléments. Clic sur un lien referme le menu
+   automatiquement (`onClick` sur chaque `NavLink`).
+Seuil de 860px choisi par estimation (largeur cumulée des 8 onglets +
+logo + compte), non calibré par mesure réelle en navigateur. Déployé
+(rebuild image webapp, pod redémarré) et vérifié sain (API 200) — comme
+pour le reste de cette session, le rendu visuel réel (bascule du menu,
+défilement du tableau) n'a pas pu être revérifié faute d'outil de test
+navigateur dans cet environnement.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

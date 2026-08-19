@@ -33,6 +33,7 @@ function EspaceProtege({ connecte, children }) {
 
 export default function App() {
   const [connecte, setConnecte] = useState(auth.estConnecte());
+  const [menuOuvert, setMenuOuvert] = useState(false);
 
   const deconnecter = () => {
     auth.deconnecter();
@@ -52,16 +53,32 @@ export default function App() {
       <div className="app">
         <header className="app-header">
           <Logo taille={30} />
-          <nav>
-            {ONGLETS.map((onglet) => (
-              <NavLink key={onglet.chemin} to={onglet.chemin} end={onglet.chemin === "/"}>
-                {onglet.label}
-              </NavLink>
-            ))}
-          </nav>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <span style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>{auth.getNomAffiche()}</span>
-            <button onClick={deconnecter}>Déconnexion</button>
+          <button
+            type="button"
+            className="menu-bascule"
+            onClick={() => setMenuOuvert((v) => !v)}
+            aria-label="Basculer le menu de navigation"
+            aria-expanded={menuOuvert}
+          >
+            ☰
+          </button>
+          <div className={`app-header-panel${menuOuvert ? " ouvert" : ""}`}>
+            <nav>
+              {ONGLETS.map((onglet) => (
+                <NavLink
+                  key={onglet.chemin}
+                  to={onglet.chemin}
+                  end={onglet.chemin === "/"}
+                  onClick={() => setMenuOuvert(false)}
+                >
+                  {onglet.label}
+                </NavLink>
+              ))}
+            </nav>
+            <div className="app-header-compte">
+              <span style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>{auth.getNomAffiche()}</span>
+              <button onClick={deconnecter}>Déconnexion</button>
+            </div>
           </div>
         </header>
         <main className="app-main">

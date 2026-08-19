@@ -28,6 +28,15 @@ body {
   border-bottom: 1px solid #2a2e3a;
 }
 
+/* Panneau regroupant nav + compte — un seul élément à replier en dessous du
+   seuil (860px, non revérifié en navigateur), plutôt que deux séparément. */
+.app-header-panel {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  flex: 1;
+}
+
 .app-header nav {
   display: flex;
   gap: 1.25rem;
@@ -45,10 +54,50 @@ body {
   border-bottom-color: #7fd4ff;
 }
 
+.app-header-compte {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Bouton hamburger — masqué par défaut, visible seulement sous le seuil. */
+.menu-bascule {
+  display: none;
+  margin-left: auto;
+}
+
+@media (max-width: 860px) {
+  .menu-bascule {
+    display: inline-flex;
+  }
+
+  .app-header-panel {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 0.75rem;
+  }
+
+  .app-header-panel.ouvert {
+    display: flex;
+  }
+
+  .app-header nav {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .app-header-compte {
+    margin-left: 0;
+  }
+}
+
 .app-main {
   flex: 1;
   padding: 1.5rem;
-  max-width: 1100px;
+  max-width: 1400px;
   width: 100%;
   margin: 0 auto;
 }
@@ -107,6 +156,12 @@ button:hover {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Défile horizontalement plutôt que d'écraser les colonnes ou de forcer un
+   défilement de toute la page sur un écran étroit. */
+.tableau-scroll {
+  overflow-x: auto;
 }
 
 table {
