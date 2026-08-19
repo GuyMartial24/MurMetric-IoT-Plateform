@@ -4983,6 +4983,28 @@ principe général de ne jamais manipuler les identifiants d'un compte
 externe même si techniquement possible, cohérent avec la pratique de ce
 projet de ne stocker aucun mot de passe en mémoire).
 
+Connexion OAuth finalisée par l'utilisateur, vérifiée active côté
+plugin (`isAccessTokenSet: true`, `instanceId` renseigné, `backendUrl`
+pointant vers `assistant-prod-eu-west-2.grafana.net` — traitement UE).
+
+### Suite (19/08/2026) — InfluxQL comme datasource par défaut
+
+Question utilisateur : mettre `InfluxDB - MurMetric (InfluxQL)` par
+défaut plutôt que la datasource Flux ? Vérifié avant tout changement :
+le dashboard de production (`hr-t-socma.json`) référence déjà son
+datasource **explicitement par UID** sur chaque panel
+(`P15E06DA4BAFBC791`, l'InfluxQL) — donc changer le réglage "par
+défaut" n'a **aucun impact** sur l'existant (dashboard et webapp, cette
+dernière interrogeant InfluxDB directement en Python, indépendamment de
+Grafana). Seul effet réel : le datasource pré-sélectionné dans Explore,
+un nouveau panel sans choix explicite, ou l'Assistant sans ciblage
+`@nom-datasource` dans le prompt. Changé (`grafana-datasources`
+ConfigMap, `isDefault` déplacé de Flux vers InfluxQL) pour cohérence
+avec la pratique réelle du projet (Flux abandonné au profit d'InfluxQL
+depuis l'abandon de la migration TimescaleDB, section 33 addendum).
+Déployé et revérifié : `isDefault: true` confirmé sur InfluxQL via
+l'API, dashboard de production toujours opérationnel après coup.
+
 ## Points ouverts / non implémentés
 
 - Pas de décodage de la pression (versions 27/43).

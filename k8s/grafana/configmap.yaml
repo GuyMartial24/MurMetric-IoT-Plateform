@@ -13,7 +13,6 @@ data:
         type: influxdb
         access: proxy
         url: http://influxdb:8086
-        isDefault: true
         editable: true
         jsonData:
           version: Flux
@@ -32,6 +31,12 @@ data:
         type: influxdb
         access: proxy
         url: http://influxdb:8086
+        # Par défaut depuis le 19/08/2026 : seule syntaxe utilisée par le
+        # dashboard de prod (hr-t-socma.json référence son UID explicitement,
+        # donc aucun impact sur l'existant) — Flux avait causé plusieurs bugs
+        # "par table" cette session (cf. section 33 addendum), InfluxQL
+        # retenu comme syntaxe de référence du projet.
+        isDefault: true
         editable: true
         jsonData:
           version: InfluxQL
