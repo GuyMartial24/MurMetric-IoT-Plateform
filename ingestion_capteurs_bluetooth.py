@@ -191,6 +191,15 @@ ELA_TEMP_DATA_ID = 0x12
 # (forme canonique des UUID 16 bits Bluetooth SIG 0x2A6E/0x2A6F).
 ELA_UUID_TEMPERATURE = "00002a6e-0000-1000-8000-00805f9b34fb"
 ELA_UUID_HUMIDITE = "00002a6f-0000-1000-8000-00805f9b34fb"
+# Batterie (19/08/2026, cf. logique_projet.md section 40 addendum) — UUID
+# "Battery Level" standard Bluetooth SIG (0x2A19), réutilisé par ELA comme clé
+# du bloc Service Data qui porte le pourcentage. Source : ELA Innovation "BLE
+# Frame specifications" v11B, section 5 "Battery information" — ce champ n'est
+# transmis par le capteur QUE lorsque sa batterie réelle est déjà sous 15%
+# (rien avant ce seuil, aucune notion de pourcentage "sain" annoncé) : absent
+# de la trame ne veut donc pas dire "batterie inconnue" comme pour Blue
+# Maestro, mais "rien à signaler pour l'instant".
+ELA_UUID_BATTERIE = "00002a19-0000-1000-8000-00805f9b34fb"
 
 # ---------------------------------------------------------------------------
 # Gestion du registre capteurs — API webapp (source unique, section 32,
@@ -216,6 +225,12 @@ CAPTEURS_API_URL = (
     + "/api/capteurs/hr_t"
 )
 INGESTION_API_KEY = os.getenv("INGESTION_API_KEY", "")
+# Fréquence d'envoi de la télémétrie (dernière détection/RSSI/batterie,
+# 19/08/2026) — throttlée par capteur, indépendamment du rythme réel des
+# paquets BLE (souvent plusieurs par minute), pour ne pas solliciter l'API
+# à chaque détection. Volontairement peu fréquent : sert à anticiper une
+# perte de signal ou une batterie faible, pas à suivre en temps réel.
+TELEMETRIE_INTERVALLE_S = int(os.getenv("TELEMETRIE_INTERVAL", str(5 * 60)))
 CHAMPS_TECHNIQUES_LOCAUX = (
     "famille_capteur",
     "mac_complete_connue",
@@ -764,6 +779,37 @@ def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
     )
 
 
+def envoyer_telemetrie(mac: str, rssi: int, batterie: int | None) -> None:
+    """Signale à la webapp la dernière détection/RSSI/batterie d'un capteur
+    déjà enregistré — throttlé à un envoi par TELEMETRIE_INTERVALLE_S et par
+    MAC, indépendamment du flag ingestion (sert justement à surveiller un
+    capteur pas encore activé, ou anticiper une perte de signal avant
+    qu'elle ne se produise). Best-effort : une erreur réseau n'interrompt
+    jamais le scan, retentée simplement au prochain paquet une fois le délai
+    de throttling écoulé — comme enregistrer_capteur_si_inconnu()."""
+    maintenant = time.monotonic()
+    dernier_envoi = dernier_envoi_telemetrie.get(mac)
+    if (
+        dernier_envoi is not None
+        and maintenant - dernier_envoi < TELEMETRIE_INTERVALLE_S
+    ):
+        return
+
+    try:
+        reponse = requests.post(
+            f"{CAPTEURS_API_URL}/{mac}/telemetrie",
+            json={"rssi": rssi, "batterie": batterie},
+            headers={"X-Ingestion-Key": INGESTION_API_KEY},
+            timeout=10,
+        )
+        reponse.raise_for_status()
+        dernier_envoi_telemetrie[mac] = maintenant
+    except requests.RequestException as exc:
+        print(
+            f"Attention : envoi télémétrie de {mac} impossible ({exc}) — retenté plus tard."
+        )
+
+
 # ===========================================================================
 # Décodage et calculs physiques.
 # ===========================================================================
@@ -800,6 +846,10 @@ def calculer_point_de_rosee(
 
 # Horodatage (time.monotonic) de la dernière trame BLE reçue par MAC.
 dernieres_detections: dict[str, float] = {}
+
+# Horodatage (time.monotonic) du dernier envoi de télémétrie réussi par MAC
+# — sert au throttling de envoyer_telemetrie().
+dernier_envoi_telemetrie: dict[str, float] = {}
 
 # ---------------------------------------------------------------------------
 # Initialisation SQLite et chargement des capteurs.
@@ -953,8 +1003,16 @@ def _decoder_ela_manufacturer(payload_bytes: list) -> dict | None:
         "protocole": "ela_rht_mfr",
         "temperature": temperature,
         "humidite": humidite,
-        # Transmise uniquement en "Scan Response" sous 15% (cf. doc ELA,
-        # section 5) — bleak/BleakScanner en mode passif ne la capte pas ici.
+        # Non implémenté ici (19/08/2026) : en mode Manufacturer Specific
+        # Data, la batterie sous 15% arrive comme un bloc séparé portant le
+        # même company ID 0x0757 que le bloc RHT — bleak indexe
+        # manufacturer_data par company ID, donc les deux risqueraient de se
+        # marcher dessus dans le même dict (une seule valeur par clé). Non
+        # testable sans capteur réellement configuré dans ce mode (aucun ici,
+        # cf. section 40 addendum) — laissé de côté plutôt que codé à
+        # l'aveugle. Implémenté à la place pour le mode "Service Data" (mode
+        # usine, cf. _decoder_ela_service), qui est celui réellement utilisé
+        # par les capteurs de ce projet.
         "batterie": None,
         "intervalle_log_secondes": None,
         "bruts": payload_bytes,
@@ -965,18 +1023,25 @@ def _decoder_ela_service(service_data: dict) -> dict | None:
     """Décode une trame ELA Innovation en mode "Service Data" — le mode par
     défaut usine du Blue Puck RHT, sans configuration NFC préalable requise.
 
-    Deux blocs Service Data distincts, sur les UUID caractéristiques
+    Trois blocs Service Data distincts, sur les UUID caractéristiques
     Bluetooth SIG standard :
         0x2A6E (température) : int16 little-endian, ×0,01 °C, signé.
         0x2A6F (humidité)    : uint8 (%), direct.
+        0x2A19 (batterie)    : uint8 (%), direct — présent UNIQUEMENT quand
+            la batterie réelle du capteur est déjà sous 15% (cf. doc ELA,
+            section 5 "Battery information", 19/08/2026) ; absent sinon, ce
+            qui n'a donc pas la même signification que `batterie is None`
+            côté Blue Maestro (où l'absence veut dire "jamais reçu").
 
     Args:
         service_data: advertising_data.service_data (dict UUID -> bytes).
 
-    Source : ELA Innovation "BLE Frame specifications" v12B, section 6.e.
+    Source : ELA Innovation "BLE Frame specifications" v12B, section 6.e
+    (RHT) et v11B, section 5 (batterie).
     """
     temp_bytes = service_data.get(ELA_UUID_TEMPERATURE)
     hum_bytes = service_data.get(ELA_UUID_HUMIDITE)
+    batt_bytes = service_data.get(ELA_UUID_BATTERIE)
     if temp_bytes is None:
         return None  # Sans temperature, rien d'exploitable a publier.
 
@@ -988,14 +1053,19 @@ def _decoder_ela_service(service_data: dict) -> dict | None:
     temperature = raw_temp / 100.0
 
     humidite = hum_bytes[0] if hum_bytes else None
+    batterie = batt_bytes[0] if batt_bytes else None
+
+    bruts = list(temp_bytes) + (list(hum_bytes) if hum_bytes else [])
+    if batt_bytes:
+        bruts += list(batt_bytes)
 
     return {
         "protocole": "ela_rht_service",
         "temperature": temperature,
         "humidite": humidite,
-        "batterie": None,
+        "batterie": batterie,
         "intervalle_log_secondes": None,
-        "bruts": list(temp_bytes) + (list(hum_bytes) if hum_bytes else []),
+        "bruts": bruts,
     }
 
 
@@ -1042,6 +1112,9 @@ def callback(device, advertising_data) -> None:
         "bluemaestro" if resultat["protocole"].startswith("bluemaestro_") else "ela"
     )
     enregistrer_capteur_si_inconnu(mac_adresse, famille)
+    # Indépendant du flag ingestion (filtre 4 ci-dessous) : sert justement à
+    # surveiller un capteur pas encore activé.
+    envoyer_telemetrie(mac_adresse, rssi, resultat["batterie"])
 
     local_name = advertising_data.local_name
     infos_capteur = CAPTEURS_CONNUS.get(mac_adresse, {})
