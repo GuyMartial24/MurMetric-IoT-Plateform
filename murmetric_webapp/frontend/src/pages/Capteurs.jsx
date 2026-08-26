@@ -55,8 +55,9 @@ export default function Capteurs() {
           "dernier_rssi",
           "derniere_batterie",
           "derniere_mesure",
+          "lint_cible_s",
         ]}
-        champsEditables={["nom", "nom_mur", "nom_couche", "ingestion"]}
+        champsEditables={["nom", "nom_mur", "nom_couche", "ingestion", "lint_cible_s"]}
         cleColonne="MAC / clé"
         enregistrer={(cle, champs) => api.modifierCapteurHrT(cle, champs)}
         recharger={charger}
@@ -91,10 +92,45 @@ const LIBELLES = {
   position: "Position",
   ingestion: "Ingestion",
   derniere_detection: "Dernière détection",
-  dernier_rssi: "RSSI",
+  dernier_rssi: "RSSI (dBm)",
   derniere_batterie: "Batterie",
   derniere_mesure: "Dernière mesure",
+  lint_cible_s: "Intervalle mesure",
 };
+
+// Intervalle de mesure Blue Maestro (26/08/2026) — réglable par capteur,
+// GATT via configure_capteurs.py sur le Pi (cf. logique_projet.md). Non
+// applicable à ELA : configuration NFC uniquement, aucune commande à
+// distance possible (encore moins une fois le capteur noyé dans le mur).
+function formatDuree(s) {
+  if (s == null) return "?";
+  if (s % 86400 === 0) return `${s / 86400} j`;
+  if (s % 3600 === 0) return `${s / 3600} h`;
+  if (s % 60 === 0) return `${s / 60} min`;
+  return `${s} s`;
+}
+
+// Valeurs proposées pour lint_cible_s (26/08/2026) — menu déroulant plutôt
+// qu'un champ en secondes brutes, plus lisible et évite les erreurs de
+// saisie (ex. "864000" au lieu de "86400"). Bornes matérielles Blue
+// Maestro : 1 s - 86 400 s (24 h), cf. configure_capteurs.py.
+const PRESETS_LINT_CIBLE_S = [
+  { s: 60, libelle: "1 min" },
+  { s: 120, libelle: "2 min" },
+  { s: 180, libelle: "3 min" },
+  { s: 240, libelle: "4 min" },
+  { s: 300, libelle: "5 min" },
+  { s: 900, libelle: "15 min" },
+  { s: 1800, libelle: "30 min" },
+  { s: 3600, libelle: "1 h" },
+  { s: 7200, libelle: "2 h" },
+  { s: 10800, libelle: "3 h" },
+  { s: 14400, libelle: "4 h" },
+  { s: 21600, libelle: "6 h" },
+  { s: 28800, libelle: "8 h" },
+  { s: 43200, libelle: "12 h" },
+  { s: 86400, libelle: "24 h" },
+];
 
 // Télémétrie (dernière détection/RSSI/batterie, 19/08/2026) : envoyée par le
 // script d'ingestion du Pi indépendamment du flag ingestion (utile pour
@@ -175,7 +211,10 @@ function TableauCapteurs({
     setEnEdition({
       cle,
       valeurs: Object.fromEntries(
-        champsEditables.map((champ) => [champ, c[champ] ?? (champ === "ingestion" ? false : "")]),
+        champsEditables.map((champ) => [
+          champ,
+          c[champ] ?? (champ === "ingestion" ? false : champ === "lint_cible_s" ? 86400 : ""),
+        ]),
       ),
     });
   };
@@ -236,6 +275,26 @@ function TableauCapteurs({
                               })
                             }
                           />
+                        ) : champ === "lint_cible_s" ? (
+                          c.famille_capteur === "bluemaestro" ? (
+                            <select
+                              value={enEdition.valeurs.lint_cible_s}
+                              onChange={(e) =>
+                                setEnEdition({
+                                  ...enEdition,
+                                  valeurs: { ...enEdition.valeurs, lint_cible_s: Number(e.target.value) },
+                                })
+                              }
+                            >
+                              {PRESETS_LINT_CIBLE_S.map((p) => (
+                                <option key={p.s} value={p.s}>
+                                  {p.libelle}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            "— (NFC uniquement)"
+                          )
                         ) : (
                           <input
                             value={enEdition.valeurs[champ]}
@@ -262,9 +321,28 @@ function TableauCapteurs({
                         })()
                       ) : champ === "dernier_rssi" ? (
                         c.dernier_rssi !== undefined && c.dernier_rssi !== null ? (
-                          `${c.dernier_rssi} dBm`
+                          c.dernier_rssi
                         ) : (
                           "—"
+                        )
+                      ) : champ === "lint_cible_s" ? (
+                        c.famille_capteur !== "bluemaestro" ? (
+                          "—"
+                        ) : (
+                          (() => {
+                            const cible = c.lint_cible_s ?? 86400;
+                            const applique = c.lint_max_confirme_s;
+                            return applique === cible ? (
+                              <Pastille etat="ok" texte={formatDuree(applique)} />
+                            ) : (
+                              <Pastille
+                                etat="attention"
+                                texte={`${formatDuree(cible)} (cible${
+                                  applique != null ? `, ${formatDuree(applique)} appliqué` : ", en attente"
+                                })`}
+                              />
+                            );
+                          })()
                         )
                       ) : champ === "derniere_mesure" ? (
                         (() => {

@@ -20,13 +20,23 @@ Format des commandes (selon génération firmware) :
 
 Séquence d'exécution :
     Phase 1 — Scan passif 30 s : collecte les objets BLEDevice complets.
-    Phase 2 — Connexion GATT  : envoi de la commande d'intervalle.
-    Phase 3 — Vérification    : lecture du champ lint dans la prochaine trame
-                                 advertising pour confirmer l'application.
+    Phase 2 — Par capteur, séquentiellement : connexion GATT (envoi de la
+              commande d'intervalle) PUIS vérification immédiate (lecture du
+              champ lint dans les trames advertising suivantes, captées par
+              le scan Phase 1 resté actif en continu) et écriture dans
+              capteurs.json avant de passer au capteur suivant (27/08/2026 —
+              remplace l'ancien enchaînement "Phase 2 pour tous, puis Phase 3
+              pour tous", qui ne donnait aucune confirmation visible avant la
+              toute fin d'un run complet).
 
 Usage :
     python -u configure_capteurs.py
     (lancé automatiquement par start.py et périodiquement par test_ingestion.py)
+
+    Variables d'environnement reconnues (27/08/2026, remontée de confirmation
+    vers la webapp — cf. pousser_confirmation_lint) :
+        CAPTEURS_API_URL   Base URL de l'API webapp (défaut : http://localhost:8090)
+        INGESTION_API_KEY  Clé partagée pour les endpoints script→webapp (défaut : vide)
 """
 
 import asyncio
@@ -35,11 +45,27 @@ import os
 import re
 import sys
 
+import requests
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 
 # Requis pour afficher les accents sous Windows (console cp1252 par défaut).
 sys.stdout.reconfigure(encoding="utf-8")
+
+# ---------------------------------------------------------------------------
+# Remontée de la confirmation vers la webapp (27/08/2026) — ce script écrivait
+# jusqu'ici lint_configure/lint_max_confirme_s UNIQUEMENT dans le
+# capteurs.json local du Pi, jamais vers la webapp (aucun accès réseau avant
+# ce correctif), qui ne pouvait donc jamais refléter une reconfiguration
+# pourtant réussie. Mêmes variables d'environnement que
+# ingestion_capteurs_bluetooth.py (pas d'import croisé entre les deux
+# scripts, pour rester indépendants, cf. demarrer_scanner_avec_repli).
+# ---------------------------------------------------------------------------
+CAPTEURS_API_URL = (
+    os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/")
+    + "/api/capteurs/hr_t"
+)
+INGESTION_API_KEY = os.getenv("INGESTION_API_KEY", "")
 
 # ---------------------------------------------------------------------------
 # Constantes protocole Blue Maestro.
@@ -101,10 +127,13 @@ NORDIC_UART_RX = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  # host → device
 # Durée du scan BLE passif pour collecter les BLEDevice (Phase 1).
 DUREE_SCAN_INITIAL = 30
 
-# Valeur d'intervalle de log cible en secondes :
+# Valeur d'intervalle de log cible par défaut, en secondes (26/08/2026 :
+# devenue réglable par capteur via le champ registre lint_cible_s, éditable
+# depuis la webapp — cette constante ne sert plus que de repli pour les
+# capteurs sans valeur personnalisée, comportement historique inchangé) :
 #   - Disc Maxi v41/42/43 : 1 s – 86 400 s (24 h), commande setlog~<s>
 #   - Disc Mini v13/23/27 : 2 s – 86 400 s (24 h), commande *lint<s>
-LINT_CIBLE = 86400
+LINT_CIBLE_DEFAUT = 86400
 
 # Chemin vers le fichier de mapping MAC → infos capteur.
 CAPTEURS_FILE = os.path.join(os.path.dirname(__file__), "capteurs.json")
@@ -150,6 +179,28 @@ def ecrire_capteurs_json(donnees: dict) -> None:
     """
     with open(CAPTEURS_FILE, "w", encoding="utf-8") as f:
         json.dump(donnees, f, indent=2, ensure_ascii=False)
+
+
+def pousser_confirmation_lint(mac: str, lint_confirme: float) -> None:
+    """Remonter la confirmation d'intervalle de log vers la webapp
+    (27/08/2026) — sans cet appel, lint_configure/lint_max_confirme_s ne
+    vivent que dans le capteurs.json local du Pi, jamais visibles depuis la
+    webapp (colonne "Intervalle mesure" bloquée sur "en attente"
+    indéfiniment, même une fois la reconfiguration réellement réussie).
+    Best-effort, comme envoyer_telemetrie() côté ingestion_capteurs_
+    bluetooth.py : une erreur réseau n'interrompt jamais la boucle
+    principale, capteurs.json local reste la source de vérité immédiate
+    (déjà écrit avant cet appel), retentée simplement au prochain run."""
+    try:
+        reponse = requests.post(
+            f"{CAPTEURS_API_URL}/{mac}/lint-confirme",
+            json={"lint_max_confirme_s": lint_confirme},
+            headers={"X-Ingestion-Key": INGESTION_API_KEY},
+            timeout=10,
+        )
+        reponse.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"    Attention : remontée webapp de {mac} impossible ({exc}).")
 
 
 def decoder_lint(payload_bytes: list[int], version: int) -> float | None:
@@ -293,21 +344,30 @@ async def configurer_capteur_gatt(
                     print(f"       {c.uuid}  [{props}]{label}")
 
             if not rx_present:
-                print("    Caractéristique RX Nordic UART absente " "— GATT non supporté.")
+                print(
+                    "    Caractéristique RX Nordic UART absente " "— GATT non supporté."
+                )
                 return {"texte": "", "reconnue": False, "gatt_absent": True}
 
-            cmd_str = f"setlog~{lint_cible}" if version in (41, 42, 43) else f"*lint{lint_cible}"
+            cmd_str = (
+                f"setlog~{lint_cible}"
+                if version in (41, 42, 43)
+                else f"*lint{lint_cible}"
+            )
             print(f"    Connecté. Envoi : {cmd_str}")
 
             # Souscription aux notifications TX (optionnelle).
             # Si la caractéristique n'expose pas NOTIFY (cas Disc Maxi), on
-            # envoie quand même la commande et on vérifiea en Phase 3.
+            # envoie quand même la commande et on vérifie juste après (cf.
+            # verifier_lint_via_scan_actif, appelée par main()).
             notifications_actives = False
             try:
                 await client.start_notify(NORDIC_UART_TX, handle_notif)
                 notifications_actives = True
             except Exception:
-                print("    Notifications TX non disponibles " "— envoi sans retour texte.")
+                print(
+                    "    Notifications TX non disponibles " "— envoi sans retour texte."
+                )
 
             await client.write_gatt_char(NORDIC_UART_RX, commande, response=False)
             commande_envoyee = True
@@ -328,15 +388,18 @@ async def configurer_capteur_gatt(
                     # commande — comportement normal documenté.
                     pass
             else:
-                print("    Commande envoyée — résultat vérifié en Phase 3.")
+                print("    Commande envoyée — résultat vérifié juste après.")
 
     except Exception as exc:
         exc_msg = str(exc).lower()
-        if commande_envoyee and ("not connected" in exc_msg or "disconnected" in exc_msg):
+        if commande_envoyee and (
+            "not connected" in exc_msg or "disconnected" in exc_msg
+        ):
             # Déconnexion post-commande : comportement attendu (le firmware
             # coupe la connexion après avoir traité la commande).
             print(
-                "    Device déconnecté après traitement de la commande " "(comportement attendu)."
+                "    Device déconnecté après traitement de la commande "
+                "(comportement attendu)."
             )
         else:
             print(f"    Erreur GATT : {exc}")
@@ -345,7 +408,8 @@ async def configurer_capteur_gatt(
     texte_final = "".join(fragments).strip()
     # Commande reconnue si la réponse ne contient pas "Unknown" ni "ERR".
     # En l'absence de réponse (timeout ou pas de notifications), on suppose
-    # que la commande a été traitée et on laisse la Phase 3 trancher.
+    # que la commande a été traitée et on laisse la vérification qui suit
+    # (verifier_lint_via_scan_actif) trancher.
     reconnue = "Unknown" not in texte_final and "ERR" not in texte_final
     return {"texte": texte_final, "reconnue": reconnue, "gatt_absent": False}
 
@@ -355,56 +419,45 @@ async def configurer_capteur_gatt(
 # ---------------------------------------------------------------------------
 
 
-async def verifier_lint_apres_config(
+async def verifier_lint_via_scan_actif(
     mac: str,
+    lint_avant: float | None,
     timeout_s: float = 30.0,
 ) -> float | None:
-    """Attendre la prochaine trame advertising du capteur et lire son lint.
+    """Attendre qu'une nouvelle valeur lint apparaisse pour ce capteur.
 
-    Après une commande GATT, le firmware efface ses logs internes et redémarre
-    l'advertising (opération pouvant prendre jusqu'à quelques dizaines de
-    secondes). Cette fonction lance un scan BLE ciblé et résout le futur dès
-    qu'un paquet valide du capteur est reçu.
+    Remplace l'ancienne verifier_lint_apres_config() (27/08/2026), qui
+    arrêtait le scan Phase 1 puis lançait un second scan ciblé rien que pour
+    cette vérification — ça forçait à traiter tous les capteurs en deux
+    lots séparés (tous les envois GATT, puis toutes les vérifications), donc
+    aucune confirmation visible dans capteurs.json avant la toute fin d'un
+    run complet. Ici, le scan Phase 1 reste actif en continu pendant toute
+    la boucle (callback_scan() met déjà à jour capteurs_detectes[mac]["lint"]
+    à chaque paquet reçu, cf. plus haut) — pas besoin d'un second scanner, on
+    se contente d'attendre que cette valeur change.
 
     Args:
-        mac:       Adresse MAC du capteur à surveiller (majuscules).
-        timeout_s: Durée max d'attente avant d'abandonner la vérification.
+        mac:        Adresse MAC du capteur à surveiller (majuscules).
+        lint_avant: Valeur lint connue juste avant l'envoi de la commande —
+            sert à détecter un vrai changement, pas une trame déjà en vol.
+        timeout_s:  Durée max d'attente avant d'abandonner.
 
     Returns:
-        Valeur lint en secondes si confirmée, None si timeout.
+        Valeur lint en secondes dès qu'elle diffère de lint_avant, None si
+        timeout (capteur non reçu, ou valeur inchangée pendant tout
+        l'intervalle — le firmware peut avoir ignoré la commande).
     """
     print(f"    Attente trame advertising post-config " f"(max {int(timeout_s)}s)...")
-    boucle = asyncio.get_running_loop()
-    future_lint: asyncio.Future = boucle.create_future()
-
-    def cb_verif(device, advertising_data) -> None:
-        """Résoudre le futur dès qu'un paquet valide du capteur cible arrive."""
-        if device.address.upper() != mac:
-            return
-        rssi = advertising_data.rssi
-        if rssi is None or rssi <= RSSI_MIN_VALIDE:
-            return
-        raw_payload = advertising_data.manufacturer_data
-        if BLUEMAESTRO_COMPANY_ID not in raw_payload:
-            return
-        payload_bytes = list(raw_payload[BLUEMAESTRO_COMPANY_ID])
-        version = payload_bytes[0] if payload_bytes else None
-        if version not in VERSIONS_CONNUES:
-            return
-        lint = decoder_lint(payload_bytes, version)
-        if lint is not None and not future_lint.done():
-            future_lint.set_result(lint)
-
-    scanner = await demarrer_scanner_avec_repli(cb_verif)
-    try:
-        lint_confirme = await asyncio.wait_for(future_lint, timeout=timeout_s)
-        print(f"    Valeur confirmée depuis trame advertising : " f"{lint_confirme} s")
-        return lint_confirme
-    except asyncio.TimeoutError:
-        print("    Attention : capteur non reçu dans les délais " "— vérification impossible.")
-        return None
-    finally:
-        await scanner.stop()
+    for _ in range(int(timeout_s)):
+        await asyncio.sleep(1.0)
+        info = capteurs_detectes.get(mac)
+        if info is not None and info["lint"] != lint_avant:
+            print(f"    Valeur confirmée depuis trame advertising : {info['lint']} s")
+            return info["lint"]
+    print(
+        "    Attention : capteur non reçu dans les délais " "— vérification impossible."
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -413,16 +466,26 @@ async def verifier_lint_apres_config(
 
 
 async def main() -> None:
-    """Orchestrer les trois phases de configuration active.
+    """Orchestrer la configuration active, capteur par capteur.
 
-    Phase 1 — Scan passif 30 s, scanner maintenu actif pendant Phase 2.
-    Phase 2 — Connexion GATT sur chaque capteur non encore configuré.
-    Phase 3 — Vérification de la valeur appliquée sur le paquet advertising.
+    Phase 1 — Scan passif 30 s, scanner maintenu actif pour toute la suite.
+    Phase 2 — Par capteur : connexion GATT (envoi) puis vérification
+              immédiate (via le même scan Phase 1, cf.
+              verifier_lint_via_scan_actif) et écriture dans capteurs.json,
+              avant de passer au capteur suivant (27/08/2026 — les deux
+              anciennes phases 2/3 par lots séparés ne donnaient aucune
+              confirmation avant la fin complète d'un run, potentiellement
+              plusieurs dizaines de minutes avec de nombreux capteurs).
     """
-    print(f"Phase 1 — Scan passif {DUREE_SCAN_INITIAL}s " "(collecte des objets BLEDevice)...\n")
+    print(
+        f"Phase 1 — Scan passif {DUREE_SCAN_INITIAL}s "
+        "(collecte des objets BLEDevice)...\n"
+    )
 
-    # Le scanner reste actif pendant Phase 2 pour garder les BLEDevice "frais"
-    # dans le cache WinRT — indispensable pour les adresses BLE aléatoires.
+    # Le scanner reste actif pour toute la suite — garde les BLEDevice
+    # "frais" (indispensable pour les adresses BLE aléatoires) ET sert
+    # directement à la vérification post-GATT de chaque capteur (plus besoin
+    # d'un second scanner ciblé, cf. verifier_lint_via_scan_actif).
     scanner = await demarrer_scanner_avec_repli(callback_scan)
     await asyncio.sleep(DUREE_SCAN_INITIAL)
 
@@ -439,13 +502,17 @@ async def main() -> None:
         )
 
     donnees = lire_capteurs_json()
-    print(f"\nPhase 2 — Configuration *lint{LINT_CIBLE} " "(scanner BLE maintenu actif)...\n")
-
-    macs_a_verifier: list[str] = []
+    print(
+        "\nPhase 2 — Configuration + vérification immédiate, capteur par "
+        "capteur (scanner BLE maintenu actif)...\n"
+    )
 
     for mac, info in list(capteurs_detectes.items()):
         # Les clés _schema et autres métadonnées JSON sont ignorées.
         entree = donnees.get(mac, {})
+        # Cible réglable par capteur depuis la webapp (lint_cible_s) — repli
+        # sur LINT_CIBLE_DEFAUT si jamais personnalisée (26/08/2026).
+        lint_cible = entree.get("lint_cible_s") or LINT_CIBLE_DEFAUT
         lint_actuel = info["lint"]
         lint_max_connu = entree.get("lint_max_confirme_s")
         device = info["device"]
@@ -455,37 +522,48 @@ async def main() -> None:
         # Skip : déjà marqué comme non configurable lors d'un run précédent.
         if entree.get("lint_gatt_non_supporte"):
             print(
-                "  Commande *lintX non supportée " "(détectée lors d'un run précédent). Ignoré.\n"
+                "  Commande *lintX non supportée "
+                "(détectée lors d'un run précédent). Ignoré.\n"
             )
             continue
         if entree.get("lint_gatt_absent"):
-            print("  Service GATT absent " "(détecté lors d'un run précédent). Ignoré.\n")
+            print(
+                "  Service GATT absent " "(détecté lors d'un run précédent). Ignoré.\n"
+            )
             continue
 
-        # Skip : déjà configuré à la valeur max et toujours à cette valeur.
-        if entree.get("lint_configure") and lint_max_connu and lint_actuel == lint_max_connu:
-            print(f"  Déjà à la valeur max confirmée ({lint_actuel}s). Ignoré.\n")
+        # Skip : déjà configuré, et toujours à la cible ACTUELLE (pas
+        # forcément 86400 — un changement de lint_cible_s depuis la webapp
+        # doit au contraire relancer une configuration, cf. comparaison
+        # explicite à lint_cible plutôt qu'à une valeur fixe).
+        if entree.get("lint_configure") and lint_max_connu == lint_cible:
+            print(f"  Déjà à la valeur cible confirmée ({lint_cible}s). Ignoré.\n")
             continue
 
-        # Skip avec mise à jour du flag si déjà à la valeur cible.
-        if lint_actuel == LINT_CIBLE:
-            print(f"  Intervalle déjà à {LINT_CIBLE}s. Flag mis à jour.\n")
+        # Skip avec mise à jour du flag si déjà à la valeur cible (mesurée
+        # sur l'advertising, avant même toute connexion GATT).
+        if lint_actuel == lint_cible:
+            print(f"  Intervalle déjà à {lint_cible}s. Flag mis à jour.\n")
             entree.setdefault("mac", mac)
             entree.setdefault("nom", "")
             entree.setdefault("emplacement", "")
             entree["lint_configure"] = True
-            entree["lint_max_confirme_s"] = LINT_CIBLE
+            entree["lint_max_confirme_s"] = lint_cible
             donnees[mac] = entree
             ecrire_capteurs_json(donnees)
+            pousser_confirmation_lint(mac, lint_cible)
             continue
 
-        print(f"  Intervalle actuel : {lint_actuel}s → cible : {LINT_CIBLE}s")
-        reponse = await configurer_capteur_gatt(device, LINT_CIBLE, version=info["version"])
+        print(f"  Intervalle actuel : {lint_actuel}s → cible : {lint_cible}s")
+        reponse = await configurer_capteur_gatt(
+            device, lint_cible, version=info["version"]
+        )
 
         # Cas 1 — Échec transitoire (pas de marquage permanent).
         if reponse is None:
             print(
-                "  Attention : connexion GATT échouée (transitoire) " "— non marqué comme absent.\n"
+                "  Attention : connexion GATT échouée (transitoire) "
+                "— non marqué comme absent.\n"
             )
             continue
 
@@ -504,26 +582,16 @@ async def main() -> None:
             entree["lint_gatt_non_supporte"] = True
             donnees[mac] = entree
             ecrire_capteurs_json(donnees)
-            print(f"  *lintX non supportée ({reponse['texte']}) " "— marqué définitivement.\n")
+            print(
+                f"  *lintX non supportée ({reponse['texte']}) "
+                "— marqué définitivement.\n"
+            )
             continue
 
-        # Cas 4 — Commande envoyée : planifier la vérification en Phase 3.
-        macs_a_verifier.append(mac)
-        print("  Commande envoyée. Vérification à venir en Phase 3.\n")
-
-    # Arrêt du scanner Phase 1 avant de lancer les scanners ciblés de Phase 3.
-    await scanner.stop()
-
-    if not macs_a_verifier:
-        print("Configuration terminée (aucune vérification nécessaire).")
-        return
-
-    print("\nPhase 3 — Vérification de la valeur appliquée " "par le firmware...\n")
-
-    for mac in macs_a_verifier:
-        entree = donnees.get(mac, {})
-        print(f"━━━ {mac} ━━━")
-        lint_confirme = await verifier_lint_apres_config(mac)
+        # Cas 4 — Commande envoyée : vérification et écriture IMMÉDIATES,
+        # avant de passer au capteur suivant (27/08/2026).
+        print("  Commande envoyée. Vérification immédiate...")
+        lint_confirme = await verifier_lint_via_scan_actif(mac, lint_avant=lint_actuel)
 
         if lint_confirme is not None:
             entree.setdefault("mac", mac)
@@ -532,19 +600,22 @@ async def main() -> None:
             entree["lint_configure"] = True
             entree["lint_max_confirme_s"] = lint_confirme
 
-            if lint_confirme == LINT_CIBLE:
-                print(f"  Valeur max appliquée : {lint_confirme}s (= cible envoyée)")
+            if lint_confirme == lint_cible:
+                print(f"  Valeur cible appliquée : {lint_confirme}s (= cible envoyée)")
             else:
                 print(
-                    f"  Firmware a plafonné à {lint_confirme}s " "(max réel de ce modèle/firmware)"
+                    f"  Firmware a plafonné à {lint_confirme}s "
+                    "(max réel de ce modèle/firmware)"
                 )
 
             donnees[mac] = entree
             ecrire_capteurs_json(donnees)
+            pousser_confirmation_lint(mac, lint_confirme)
             print("  capteurs.json mis à jour.\n")
         else:
             print("  Attention : non vérifiable — capteurs.json non modifié.\n")
 
+    await scanner.stop()
     print("Configuration terminée.")
 
 

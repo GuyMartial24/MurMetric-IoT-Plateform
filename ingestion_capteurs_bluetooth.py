@@ -40,7 +40,7 @@ Usage :
         MQTT_TLS_ENABLED  Active TLS (1/true)          (défaut : désactivé)
         MQTT_CA_CERT      Certificat à faire confiance  (obligatoire si MQTT_TLS_ENABLED)
         MQTT_TOPIC        Topic de publication         (défaut : frd/capteurs/bruts)
-        RECONF_INTERVAL   Intervalle reconfiguration en secondes (défaut : 21600)
+        RECONF_INTERVAL   Intervalle reconfiguration en secondes (défaut : 120)
         SQLITE_RETENTION  Rétention du buffer local en jours     (défaut : 7)
         SYNC_BATCH_SIZE   Messages envoyés par batch de rattrapage (défaut : 50)
         SYNC_INTERVAL     Intervalle entre deux tentatives de sync en secondes (défaut : 30)
@@ -851,6 +851,14 @@ dernieres_detections: dict[str, float] = {}
 # — sert au throttling de envoyer_telemetrie().
 dernier_envoi_telemetrie: dict[str, float] = {}
 
+# Anti-doublon avant publication MQTT/InfluxDB (27/08/2026, demande
+# utilisateur) — cf. callback() : (temperature, humidite) et horodatage
+# (time.monotonic) de la dernière mesure réellement PUBLIÉE par MAC,
+# distincts de dernieres_detections ci-dessus (chaque paquet BLE reçu, pas
+# chaque mesure publiée).
+dernieres_valeurs_publiees: dict[str, tuple] = {}
+dernier_envoi_mesure: dict[str, float] = {}
+
 # ---------------------------------------------------------------------------
 # Initialisation SQLite et chargement des capteurs.
 # ---------------------------------------------------------------------------
@@ -1185,6 +1193,31 @@ def callback(device, advertising_data) -> None:
     # les valeurs décodées restent consultables via la webapp (colonne
     # "Dernière mesure") ou dans payload_iot ci-dessus si besoin ponctuel.
 
+    # Anti-doublon avant publication (27/08/2026, demande utilisateur) : le
+    # capteur ne mesure réellement qu'une fois par lint_cible_s (jusqu'à 24h
+    # par défaut côté Blue Maestro), mais rediffuse la même valeur en boucle
+    # par BLE toutes les quelques secondes — sans ce filtre, InfluxDB
+    # recevrait jusqu'à des milliers de points identiques par vraie mesure.
+    # Deux filtres combinés (cf. logique_projet.md pour la discussion) :
+    # - Fréquence, Blue Maestro uniquement (lint_cible_s n'a de sens que
+    #   pour cette famille, cf. reconciliation faite plus haut dans la
+    #   session) : au plus une publication par intervalle configuré.
+    # - Valeur, toutes familles : ne jamais republier une mesure identique
+    #   à la précédente pour ce capteur — filet de sécurité pendant la
+    #   fenêtre de transition après un changement de réglage (jusqu'à 6h
+    #   avant confirmation GATT), et seul filtre actif pour ELA (pas de
+    #   notion de lint_cible_s connue côté Pi pour cette famille).
+    if famille == "bluemaestro":
+        intervalle_min_s = infos_capteur.get("lint_cible_s") or 86400
+        dernier_envoi = dernier_envoi_mesure.get(mac_adresse)
+        if dernier_envoi is not None and maintenant - dernier_envoi < intervalle_min_s:
+            return
+
+    if dernieres_valeurs_publiees.get(mac_adresse) == (temperature, humidite):
+        return
+    dernieres_valeurs_publiees[mac_adresse] = (temperature, humidite)
+    dernier_envoi_mesure[mac_adresse] = maintenant
+
     # Publication cloud ou stockage local selon disponibilité.
     global _nb_publies, _nb_bufferises
     if publier_ou_stocker(MQTT_TOPIC, payload_iot):
@@ -1225,7 +1258,16 @@ async def tache_heartbeat() -> None:
 # Reconfiguration périodique des capteurs.
 # ===========================================================================
 
-INTERVALLE_RECONF_SECONDES = int(os.getenv("RECONF_INTERVAL", str(6 * 3600)))
+# Réduit de 6h à 120s le 27/08/2026 (demande utilisateur, suite au réglage
+# lint_cible_s par capteur depuis la webapp) : la vérification elle-même
+# (lecture capteurs.json + comparaison lint_max_confirme_s/lint_cible_s)
+# ne coûte rien et ne touche jamais le scanner — seul un passage GATT réel
+# (si non_configures non vide) le met en pause, donc raccourcir l'intervalle
+# de vérification n'a aucun coût tant qu'il n'y a rien à faire. 120s (pas
+# 60s) pour garder une marge sur CAPTEURS_RAFRAICHISSEMENT_S (60s,
+# fraîcheur du registre local) — inutile de vérifier plus vite que le
+# registre lui-même ne se met à jour.
+INTERVALLE_RECONF_SECONDES = int(os.getenv("RECONF_INTERVAL", "120"))
 
 
 async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
@@ -1254,12 +1296,23 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
         # par NFC, pas de commande GATT setlog~/lint) — sans cette exclusion,
         # un capteur ELA apparaîtrait "non configuré" indéfiniment et
         # déclencherait un scan+pause GATT à chaque cycle pour rien.
+        #
+        # Comparaison à lint_cible_s plutôt qu'au seul flag lint_configure
+        # (26/08/2026) : un changement de cible depuis la webapp doit
+        # redéclencher une reconfiguration même sur un capteur déjà marqué
+        # configuré à l'ancienne valeur — même repli 86400 que
+        # configure_capteurs.py (LINT_CIBLE_DEFAUT, pas d'import croisé entre
+        # les deux scripts). lint_gatt_absent/lint_gatt_non_supporte exclus
+        # ici aussi : un capteur définitivement non configurable ne doit pas
+        # redéclencher un scan+pause GATT à chaque cycle pour rien non plus.
         non_configures = [
             m
             for m, i in donnees.items()
             if not m.startswith("_")
-            and not i.get("lint_configure")
             and i.get("famille_capteur", "bluemaestro") == "bluemaestro"
+            and not i.get("lint_gatt_absent")
+            and not i.get("lint_gatt_non_supporte")
+            and i.get("lint_max_confirme_s") != (i.get("lint_cible_s") or 86400)
         ]
 
         if non_configures:
@@ -1292,10 +1345,9 @@ async def tache_reconfiguration_periodique(scanner: BleakScanner) -> None:
                 await scanner.start()
                 print("    Reprise du scan d'ingestion.")
         else:
-            heures = INTERVALLE_RECONF_SECONDES // 3600
             print(
                 f"Reconfiguration périodique : tous les capteurs configurés. "
-                f"Prochain check dans {heures}h."
+                f"Prochain check dans {INTERVALLE_RECONF_SECONDES}s."
             )
 
         await asyncio.sleep(INTERVALLE_RECONF_SECONDES)

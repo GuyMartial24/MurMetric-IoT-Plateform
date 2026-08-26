@@ -20,7 +20,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import config
 from ..auth import utilisateur_courant
@@ -125,7 +125,15 @@ from(bucket: "{config.INFLUX_BUCKET}")
 
 
 class ModificationCapteur(BaseModel):
-    """Champs d'identité/étiquetage modifiables par un utilisateur connecté."""
+    """Champs d'identité/étiquetage modifiables par un utilisateur connecté.
+
+    lint_cible_s (26/08/2026) déroge volontairement à la règle "lint_* est
+    la propriété locale de configure_capteurs.py" (cf. commentaire plus haut) :
+    c'est la SEULE partie de la config lint qu'un humain doit pouvoir piloter
+    (l'intervalle de mesure souhaité) — lint_configure/lint_max_confirme_s
+    restent en lecture seule, écrits uniquement par le Pi une fois la
+    commande GATT réellement confirmée. Bornes 1-86400s : plage matérielle
+    documentée (configure_capteurs.py, Disc Maxi/Mini)."""
 
     nom: str | None = None
     emplacement: str | None = None
@@ -135,6 +143,7 @@ class ModificationCapteur(BaseModel):
     prestation: str | None = None
     categorie_rd: str | None = None
     ingestion: bool | None = None
+    lint_cible_s: int | None = Field(None, ge=1, le=86400)
 
 
 _ALIAS_CHAMPS = {"categorie_rd": "categorie R&D"}
@@ -486,6 +495,40 @@ def mettre_a_jour_telemetrie_hr_t(mac: str, telemetrie: TelemetrieCapteur) -> di
             entree["dernier_rssi"] = telemetrie.rssi
         if telemetrie.batterie is not None:
             entree["derniere_batterie"] = telemetrie.batterie
+        _ecrire_json(config.CAPTEURS_JSON, donnees)
+        return entree
+
+
+class ConfirmationLintCapteur(BaseModel):
+    """Intervalle de log réellement confirmé par un capteur Blue Maestro,
+    après une commande GATT (setlog~/lint) et lecture de la trame
+    advertising suivante."""
+
+    lint_max_confirme_s: float
+
+
+@router.post(
+    "/hr_t/{mac}/lint-confirme", dependencies=[Depends(_verifier_cle_ingestion)]
+)
+def confirmer_lint_hr_t(mac: str, confirmation: ConfirmationLintCapteur) -> dict:
+    """Enregistre la confirmation d'intervalle de log poussée par le Pi
+    (configure_capteurs.py) après une reconfiguration GATT réussie
+    (27/08/2026). Avant cet endpoint, lint_configure/lint_max_confirme_s
+    n'étaient écrits que dans le capteurs.json LOCAL du Pi (configure_
+    capteurs.py n'a pas d'accès réseau) — jamais remontés vers la webapp,
+    qui ne pouvait donc jamais refléter une reconfiguration pourtant
+    réussie (colonne "Intervalle mesure" bloquée indéfiniment sur "en
+    attente"). Même mécanisme que mettre_a_jour_telemetrie_hr_t : clé
+    d'ingestion, écrit uniquement les champs techniques concernés."""
+    with _verrou:
+        donnees = _lire_json(config.CAPTEURS_JSON)
+        macs_existantes = {k.upper(): k for k in donnees if not k.startswith("_")}
+        cle = macs_existantes.get(mac.upper())
+        if cle is None:
+            raise HTTPException(status_code=404, detail=f"Capteur inconnu : {mac}")
+        entree = donnees[cle]
+        entree["lint_configure"] = True
+        entree["lint_max_confirme_s"] = confirmation.lint_max_confirme_s
         _ecrire_json(config.CAPTEURS_JSON, donnees)
         return entree
 
