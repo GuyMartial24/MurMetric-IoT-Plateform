@@ -9,21 +9,31 @@ import Pastille from "../components/Pastille.jsx";
 // le Pi interrogent son API au lieu de leur copie locale, donc une
 // modification faite ici a un effet réel sur l'étiquetage des prochaines
 // mesures (pas seulement cosmétique comme avant ce chantier).
+const INTERVALLE_RAFRAICHISSEMENT_MS = 30_000; // même cadence que Monitoring.jsx
+
 export default function Capteurs() {
   const [hrT, setHrT] = useState(null);
   const [retrait, setRetrait] = useState(null);
   const [erreur, setErreur] = useState(null);
 
   const charger = () =>
-    Promise.all([api.capteursHrT(), api.capteursRetrait()])
-      .then(([h, r]) => {
-        setHrT(h);
+    Promise.all([api.capteursHrT(), api.capteursRetrait(), api.dernieresMesuresHrT()])
+      .then(([h, r, mesures]) => {
+        setHrT(
+          Object.fromEntries(
+            Object.entries(h).map(([cle, c]) =>
+              cle === "_schema" ? [cle, c] : [cle, { ...c, derniere_mesure: mesures[cle] }],
+            ),
+          ),
+        );
         setRetrait(r);
       })
       .catch((e) => setErreur(e.message));
 
   useEffect(() => {
     charger();
+    const id = setInterval(charger, INTERVALLE_RAFRAICHISSEMENT_MS);
+    return () => clearInterval(id);
   }, []);
 
   const lignes = (donnees) => (donnees ? Object.entries(donnees).filter(([cle]) => cle !== "_schema") : []);
@@ -44,6 +54,7 @@ export default function Capteurs() {
           "derniere_detection",
           "dernier_rssi",
           "derniere_batterie",
+          "derniere_mesure",
         ]}
         champsEditables={["nom", "nom_mur", "nom_couche", "ingestion"]}
         cleColonne="MAC / clé"
@@ -82,6 +93,7 @@ const LIBELLES = {
   derniere_detection: "Dernière détection",
   dernier_rssi: "RSSI",
   derniere_batterie: "Batterie",
+  derniere_mesure: "Dernière mesure",
 };
 
 // Télémétrie (dernière détection/RSSI/batterie, 19/08/2026) : envoyée par le
@@ -118,6 +130,29 @@ function etatBatterie(pourcentage, familleCapteur, derniereDetection) {
     return { texte: "Saine (> 15 %)", etat: "ok" };
   }
   return null;
+}
+
+// Dernière mesure réellement écrite dans InfluxDB (température/humidité,
+// 26/08/2026) — distincte de la télémétrie détection/RSSI/batterie
+// ci-dessus, qui ne prouve que la réception du signal BLE, pas qu'une
+// mesure ait été publiée (n'existe que pour les capteurs ingestion: true,
+// cf. dernieres_mesures_hr_t côté backend). Mêmes seuils de fraîcheur que
+// etatDerniereDetection. Date affichée seulement si différente d'aujourd'hui
+// (question utilisateur : sans ça, rien ne distingue "aujourd'hui 19:26"
+// d'un horodatage vieux de plusieurs jours à la même heure).
+function texteMesure(mesure) {
+  if (!mesure || mesure.heure == null) return null;
+  const parties = [];
+  if (mesure.temperature != null) parties.push(`${mesure.temperature.toFixed(1)}°C`);
+  if (mesure.humidite != null) parties.push(`${mesure.humidite.toFixed(0)} %`);
+  const date = new Date(mesure.heure);
+  const aujourdhui = date.toDateString() === new Date().toDateString();
+  const heure = aujourdhui
+    ? date.toLocaleTimeString("fr-FR")
+    : `${date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} ${date.toLocaleTimeString("fr-FR")}`;
+  const minutes = (Date.now() - date.getTime()) / 60000;
+  const etat = minutes < 15 ? "ok" : minutes < 180 ? "attention" : "erreur";
+  return { texte: `${parties.join(" · ")} — ${heure}`, etat };
 }
 
 function TableauCapteurs({
@@ -231,6 +266,11 @@ function TableauCapteurs({
                         ) : (
                           "—"
                         )
+                      ) : champ === "derniere_mesure" ? (
+                        (() => {
+                          const info = texteMesure(c.derniere_mesure);
+                          return info ? <Pastille etat={info.etat} texte={info.texte} /> : "—";
+                        })()
                       ) : (
                         c[champ]
                       )}

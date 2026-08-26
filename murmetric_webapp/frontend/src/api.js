@@ -62,6 +62,7 @@ export const api = {
   mesuresValeursTags: (params) => requete(`/api/mesures/valeurs-tags?${new URLSearchParams(params)}`),
   statistiques: (params) => requete(`/api/mesures/statistiques?${new URLSearchParams(params)}`),
   capteursHrT: () => requete("/api/capteurs/hr_t"),
+  dernieresMesuresHrT: () => requete("/api/capteurs/hr_t/dernieres_mesures"),
   capteursRetrait: () => requete("/api/capteurs/retrait"),
   modifierCapteurHrT: (mac, champs) =>
     requete(`/api/capteurs/hr_t/${encodeURIComponent(mac)}`, { method: "PUT", body: JSON.stringify(champs) }),

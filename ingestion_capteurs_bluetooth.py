@@ -96,7 +96,9 @@ HEARTBEAT_INTERVAL_S = float(os.getenv("HEARTBEAT_INTERVAL_S", "300"))
 # ---------------------------------------------------------------------------
 
 # Chemin du fichier SQLite de buffer (même répertoire que ce script).
-SQLITE_BUFFER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "murmetric_buffer.db")
+SQLITE_BUFFER_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "murmetric_buffer.db"
+)
 
 # Durée maximale de rétention des mesures en attente (protection contre une
 # croissance illimitée du buffer en cas de longue indisponibilité cloud).
@@ -210,7 +212,8 @@ ELA_UUID_HUMIDITE = "00002a6f-0000-1000-8000-00805f9b34fb"
 
 CAPTEURS_FILE = os.path.join(os.path.dirname(__file__), "capteurs.json")
 CAPTEURS_API_URL = (
-    os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/") + "/api/capteurs/hr_t"
+    os.getenv("CAPTEURS_API_URL", "http://localhost:8090").rstrip("/")
+    + "/api/capteurs/hr_t"
 )
 INGESTION_API_KEY = os.getenv("INGESTION_API_KEY", "")
 CHAMPS_TECHNIQUES_LOCAUX = (
@@ -350,7 +353,9 @@ def publier_ou_stocker(topic: str, payload_iot: dict) -> bool:
                 "— stockage local SQLite."
             )
         except Exception as exc:
-            print(f"Attention : erreur publication MQTT : {exc} — stockage local SQLite.")
+            print(
+                f"Attention : erreur publication MQTT : {exc} — stockage local SQLite."
+            )
 
     # Cloud indisponible ou publication échouée : buffer local.
     stocker_localement(topic, payload_json)
@@ -431,7 +436,10 @@ async def tache_sync_sqlite() -> None:
         if en_attente == 0:
             continue
 
-        print(f"Synchronisation SQLite → MQTT cloud : " f"{en_attente} message(s) en attente.")
+        print(
+            f"Synchronisation SQLite → MQTT cloud : "
+            f"{en_attente} message(s) en attente."
+        )
 
         envoyes = 0
         erreurs = 0
@@ -439,7 +447,8 @@ async def tache_sync_sqlite() -> None:
         with sqlite3.connect(SQLITE_BUFFER_FILE) as conn:
             # Lecture par batch, dans l'ordre chronologique.
             rows = conn.execute(
-                "SELECT id, topic, payload FROM buffer_mqtt " "ORDER BY horodatage ASC LIMIT ?",
+                "SELECT id, topic, payload FROM buffer_mqtt "
+                "ORDER BY horodatage ASC LIMIT ?",
                 (SYNC_BATCH_SIZE,),
             ).fetchall()
 
@@ -467,7 +476,8 @@ async def tache_sync_sqlite() -> None:
 
         restants = compter_messages_en_attente()
         print(
-            f"Sync batch terminé : {envoyes} envoyés, " f"{erreurs} erreurs, {restants} restants."
+            f"Sync batch terminé : {envoyes} envoyés, "
+            f"{erreurs} erreurs, {restants} restants."
         )
 
         # S'il reste des messages, se re-déclencher immédiatement.
@@ -660,7 +670,9 @@ def charger_capteurs_connus() -> None:
 
     with _fichier_lock:
         _rafraichir_capteurs_connus()
-        _capteurs_prochain_rafraichissement = time.monotonic() + CAPTEURS_RAFRAICHISSEMENT_S
+        _capteurs_prochain_rafraichissement = (
+            time.monotonic() + CAPTEURS_RAFRAICHISSEMENT_S
+        )
 
 
 def verifier_et_recharger_capteurs() -> None:
@@ -675,10 +687,14 @@ def verifier_et_recharger_capteurs() -> None:
 
     with _fichier_lock:
         if _rafraichir_capteurs_connus():
-            print(f"Registre capteurs rechargé ({len(CAPTEURS_CONNUS)} capteurs connus)")
+            print(
+                f"Registre capteurs rechargé ({len(CAPTEURS_CONNUS)} capteurs connus)"
+            )
             # Republier le registre pour refléter les changements dans InfluxDB.
             publier_registre()
-        _capteurs_prochain_rafraichissement = time.monotonic() + CAPTEURS_RAFRAICHISSEMENT_S
+        _capteurs_prochain_rafraichissement = (
+            time.monotonic() + CAPTEURS_RAFRAICHISSEMENT_S
+        )
 
 
 def enregistrer_capteur_si_inconnu(mac: str, famille: str) -> None:
@@ -1022,7 +1038,9 @@ def callback(device, advertising_data) -> None:
     if rssi is None or rssi <= RSSI_MIN_VALIDE:
         return
 
-    famille = "bluemaestro" if resultat["protocole"].startswith("bluemaestro_") else "ela"
+    famille = (
+        "bluemaestro" if resultat["protocole"].startswith("bluemaestro_") else "ela"
+    )
     enregistrer_capteur_si_inconnu(mac_adresse, famille)
 
     local_name = advertising_data.local_name
@@ -1043,7 +1061,9 @@ def callback(device, advertising_data) -> None:
     derniere_fois = dernieres_detections.get(mac_adresse)
     dernieres_detections[mac_adresse] = maintenant
     intervalle = (
-        f"{maintenant - derniere_fois:.2f}s" if derniere_fois is not None else "premier paquet"
+        f"{maintenant - derniere_fois:.2f}s"
+        if derniere_fois is not None
+        else "premier paquet"
     )
     horodatage = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
@@ -1083,19 +1103,14 @@ def callback(device, advertising_data) -> None:
         "liste_chiffres": resultat["bruts"],
     }
 
-    print(f"[CAPTEUR DECODE] {payload_iot['capteur_id']} ({payload_iot['mac']})")
-    print(f"    Température      : {payload_iot['temperature_c']} °C")
-    print(f"    Humidité         : {payload_iot['humidite_percent']} %")
-    print(f"    Point de rosée   : {payload_iot['point_de_rosee_c']} °C")
-    print(f"    Batterie         : {payload_iot['batterie_percent']} %")
-    print(f"    RSSI             : {payload_iot['rssi_dbm']} dBm")
-    print(f"    Intervalle log   : {payload_iot['intervalle_log_secondes']} s")
-    print(f"    Liste entiers    : {payload_iot['liste_chiffres']}")
-
-    # Indique la destination réelle (cloud ou buffer local).
-    dest = "MQTT cloud" if _mqtt_connecte else "SQLite local"
-    print(f"    Destination      : {dest}")
-    print("-" * 50)
+    # Détail temperature/humidite/batterie/octets bruts volontairement pas
+    # loggué ligne par ligne (retiré le 26/08/2026) : avec 18 capteurs
+    # ingestion:true diffusant en continu, ce bloc à 11 lignes/paquet
+    # saturait le journal journald en ~1h (78,8 Mo), rendant tout historique
+    # au-delà impossible (cf. logique_projet.md). La ligne concise ci-dessus
+    # (id/emplacement/MAC/RSSI/intervalle) suffit au diagnostic courant ;
+    # les valeurs décodées restent consultables via la webapp (colonne
+    # "Dernière mesure") ou dans payload_iot ci-dessus si besoin ponctuel.
 
     # Publication cloud ou stockage local selon disponibilité.
     global _nb_publies, _nb_bufferises
@@ -1243,7 +1258,9 @@ async def demarrer_scanner_avec_repli(detection_callback) -> BleakScanner:
                 bluez={"adapter": BLE_ADAPTER},
             )
             await scanner.start()
-            print(f"[MurMetric] Scan multi-capteurs démarré (adaptateur {BLE_ADAPTER}).")
+            print(
+                f"[MurMetric] Scan multi-capteurs démarré (adaptateur {BLE_ADAPTER})."
+            )
             return scanner
         except Exception as exc:
             print(

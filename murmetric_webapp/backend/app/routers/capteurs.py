@@ -66,6 +66,55 @@ def capteurs_retrait() -> dict:
     return _lire_json(config.CAPTEURS_RETRAIT_JSON)
 
 
+@router.get("/hr_t/dernieres_mesures")
+def dernieres_mesures_hr_t() -> dict:
+    """Dernière température/humidité connue par capteur HR/T actif
+    (`ingestion: true`), public — une seule requête InfluxDB groupée pour
+    toute la page Capteurs (cf. Capteurs.jsx, colonne "Dernière mesure",
+    26/08/2026) plutôt qu'une requête par ligne. Capteurs `ingestion: false`
+    volontairement absents du résultat : jamais aucune mesure écrite pour
+    eux (cf. kafka_consumer_influx.py), pas la peine de les interroger."""
+    donnees = _lire_json(config.CAPTEURS_JSON)
+    macs_actifs = [
+        k for k, v in donnees.items() if not k.startswith("_") and v.get("ingestion")
+    ]
+    if not macs_actifs:
+        return {}
+
+    filtre_macs = " or ".join(
+        f'r.adresse_mac == "{flux_escape(m)}"' for m in macs_actifs
+    )
+    flux = f"""
+from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: -90d)
+  |> filter(fn: (r) => r._measurement == "{MESURE_CAPTEURS}")
+  |> filter(fn: (r) => r._field == "temperature" or r._field == "humidite")
+  |> filter(fn: (r) => {filtre_macs})
+  |> group(columns: ["adresse_mac", "_field"])
+  |> last()
+"""
+    try:
+        tables = query_api().query(flux, org=config.INFLUX_ORG)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Requête InfluxDB échouée : {exc}"
+        ) from exc
+
+    resultat: dict[str, dict] = {}
+    for table in tables:
+        for record in table.records:
+            mac = record.values.get("adresse_mac")
+            entree = resultat.setdefault(mac, {})
+            entree[record.get_field()] = record.get_value()
+            t = record.get_time()
+            if t and (entree.get("heure") is None or t > entree["heure"]):
+                entree["heure"] = t
+    for entree in resultat.values():
+        if entree.get("heure") is not None:
+            entree["heure"] = entree["heure"].isoformat()
+    return resultat
+
+
 # ===========================================================================
 # Édition par un utilisateur connecté — champs d'identité/étiquetage
 # seulement (jamais les champs techniques BLE lint_*/mac_complete_connue/
@@ -118,20 +167,28 @@ def _tags_capteur(entree: dict) -> dict[str, str]:
     }
 
 
-def _reetiqueter_mesures_capteurs(mac: str, tags_avant: dict, tags_apres: dict) -> int:
+def _reetiqueter_mesures_capteurs(
+    mac: str, tags_avant: dict, tags_apres: dict, mac_apres: str | None = None
+) -> int:
     """Réécrit tout l'historique InfluxDB (mesures_capteurs) d'un capteur avec
     les nouveaux tags d'étiquetage, par delete-by-predicate + réécriture (même
     principe que teneur_eau.corriger(), cf. logique_projet.md section 33 pour
     le bug de doublon que ce principe corrige quand il est appliqué correctement).
 
-    Sans effet si aucun tag InfluxDB pertinent n'a changé (ingestion/prestation
-    ne sont pas des tags InfluxDB pour cette mesure — inutile de réécrire).
+    mac_apres : si fourni, réécrit aussi le tag adresse_mac lui-même — fusion
+    d'une clé provisoire de backfill vers sa MAC complète (cf.
+    reconcilier_capteur_hr_t / enregistrer_capteur_hr_t, 26/08/2026) ; sinon
+    le tag adresse_mac reste `mac` comme avant.
+
+    Sans effet si ni les tags ni la MAC n'ont changé (ingestion/prestation ne
+    sont pas des tags InfluxDB pour cette mesure — inutile de réécrire).
 
     Volume négligeable pour mesures_capteurs (dizaines de milliers de points au
     total, largement moins par capteur) — SANS commune mesure avec
     mesures_dewesoft (1,5 milliard de points), jamais tenté ici après les
     incidents répétés du 17-18/08/2026 sur cette dernière mesure."""
-    if tags_avant == tags_apres:
+    mac_ecriture = mac_apres or mac
+    if tags_avant == tags_apres and mac_ecriture == mac:
         return 0
 
     flux = f"""
@@ -159,7 +216,9 @@ from(bucket: "{config.INFLUX_BUCKET}")
 
     horodatages = sorted(points_par_time)
     marge = timedelta(seconds=1)
-    tags_ligne = ",".join(f"{cle}={echap_tag(valeur)}" for cle, valeur in tags_apres.items())
+    tags_ligne = ",".join(
+        f"{cle}={echap_tag(valeur)}" for cle, valeur in tags_apres.items()
+    )
 
     lignes = []
     for t, champs in points_par_time.items():
@@ -175,7 +234,7 @@ from(bucket: "{config.INFLUX_BUCKET}")
                 parts_champs.append(f'{nom_champ}="{echap_field_str(str(valeur))}"')
         ts_ns = int(t.timestamp() * 1_000_000_000)
         lignes.append(
-            f"{MESURE_CAPTEURS},adresse_mac={echap_tag(mac)},{tags_ligne} "
+            f"{MESURE_CAPTEURS},adresse_mac={echap_tag(mac_ecriture)},{tags_ligne} "
             f"{','.join(parts_champs)} {ts_ns}"
         )
 
@@ -198,7 +257,9 @@ from(bucket: "{config.INFLUX_BUCKET}")
 
 @router.put("/hr_t/{mac}")
 def modifier_capteur_hr_t(
-    mac: str, modification: ModificationCapteur, _utilisateur: dict = Depends(utilisateur_courant)
+    mac: str,
+    modification: ModificationCapteur,
+    _utilisateur: dict = Depends(utilisateur_courant),
 ) -> dict:
     """Édite l'étiquetage d'un capteur HR/T existant (réservé aux utilisateurs
     connectés). Réétiquette aussi rétroactivement tout l'historique InfluxDB de
@@ -214,9 +275,90 @@ def modifier_capteur_hr_t(
     return entree
 
 
+class ReconciliationCapteur(BaseModel):
+    """MAC complète à fusionner avec une entrée provisoire de backfill."""
+
+    nouvelle_mac: str
+
+
+@router.post("/hr_t/{mac_provisoire}/reconcilier")
+def reconcilier_capteur_hr_t(
+    mac_provisoire: str,
+    reconciliation: ReconciliationCapteur,
+    _utilisateur: dict = Depends(utilisateur_courant),
+) -> dict:
+    """Fusionne une entrée provisoire de backfill (clé = 4 premiers octets de
+    la MAC, `mac_complete_connue: false`, cf. logique_projet.md section 30)
+    avec l'entrée MAC complète correspondante, une fois cette dernière
+    détectée en direct par le Pi. Étiquetage (mur/couche/position/nom/
+    ingestion) conservé depuis l'entrée provisoire ; télémétrie (dernière
+    détection/RSSI/batterie) conservée depuis l'entrée MAC complète.
+    Réétiquette rétroactivement l'historique InfluxDB de la clé provisoire
+    vers la MAC complète, puis supprime l'entrée provisoire. Réservé à un
+    utilisateur connecté — fusion volontaire, jamais automatique pour une
+    action qui supprime une entrée du registre (cf. enregistrer_capteur_hr_t
+    pour l'équivalent automatique appliqué aux futures détections)."""
+    nouvelle_mac = reconciliation.nouvelle_mac.upper()
+    with _verrou:
+        donnees = _lire_json(config.CAPTEURS_JSON)
+        if mac_provisoire not in donnees:
+            raise HTTPException(
+                status_code=404, detail=f"Entrée provisoire inconnue : {mac_provisoire}"
+            )
+        cles_completes = {
+            k.upper(): k
+            for k in donnees
+            if k != mac_provisoire and not k.startswith("_")
+        }
+        if nouvelle_mac not in cles_completes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Entrée MAC complète inconnue : {reconciliation.nouvelle_mac}",
+            )
+        if nouvelle_mac.replace(":", "")[:8] != mac_provisoire.upper():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "La MAC complète ne correspond pas à cette clé provisoire "
+                    "(4 premiers octets différents) — fusion refusée."
+                ),
+            )
+        cle_nouvelle = cles_completes[nouvelle_mac]
+        entree_provisoire = donnees[mac_provisoire]
+        entree_complete = donnees[cle_nouvelle]
+
+        tags_avant = _tags_capteur(entree_provisoire)
+        fusion = dict(entree_provisoire)
+        # famille_capteur pris depuis la détection live, pas le backfill —
+        # même raisonnement que enregistrer_capteur_hr_t (décodée en direct
+        # depuis le paquet BLE, plus fiable ; souvent absente des entrées de
+        # backfill d'origine, cf. section 30, antérieures à ce champ).
+        for champ in (
+            "derniere_detection",
+            "dernier_rssi",
+            "derniere_batterie",
+            "famille_capteur",
+        ):
+            if champ in entree_complete:
+                fusion[champ] = entree_complete[champ]
+        fusion["mac"] = cle_nouvelle
+        fusion["mac_complete_connue"] = True
+
+        del donnees[mac_provisoire]
+        donnees[cle_nouvelle] = fusion
+        _ecrire_json(config.CAPTEURS_JSON, donnees)
+
+    nb_points = _reetiqueter_mesures_capteurs(
+        mac_provisoire, tags_avant, _tags_capteur(fusion), mac_apres=cle_nouvelle
+    )
+    return {"entree": fusion, "points_reetiquetes": nb_points}
+
+
 @router.put("/retrait/{canal}")
 def modifier_capteur_retrait(
-    canal: str, modification: ModificationCapteur, _utilisateur: dict = Depends(utilisateur_courant)
+    canal: str,
+    modification: ModificationCapteur,
+    _utilisateur: dict = Depends(utilisateur_courant),
 ) -> dict:
     """Édite l'étiquetage d'un canal retrait existant (réservé aux utilisateurs connectés)."""
     return _modifier_entree(config.CAPTEURS_RETRAIT_JSON, canal, modification)
@@ -254,28 +396,65 @@ class EnregistrementRetrait(BaseModel):
 
 @router.post("/hr_t/enregistrer", dependencies=[Depends(_verifier_cle_ingestion)])
 def enregistrer_capteur_hr_t(enregistrement: EnregistrementHrT) -> dict:
-    """Crée l'entrée d'un capteur BLE inconnu (ingestion=false) — idempotent."""
+    """Crée l'entrée d'un capteur BLE inconnu (ingestion=false) — idempotent.
+
+    Si une entrée provisoire de backfill (clé = 4 premiers octets de la MAC,
+    cf. section 30) correspond à cette MAC, fusionne directement avec elle
+    (même règles que reconcilier_capteur_hr_t : étiquetage de l'entrée
+    provisoire conservé, `famille_capteur` pris depuis la détection live —
+    plus fiable qu'une valeur de backfill puisque décodée en direct depuis le
+    paquet BLE) plutôt que de créer un doublon non étiqueté — referme
+    structurellement l'écart entre backfill et détection live pour toute
+    future détection (cf. logique_projet.md, chantier MAC provisoires du
+    26/08/2026 ; reconcilier_capteur_hr_t reste nécessaire pour les
+    correspondances déjà détectées avant ce correctif)."""
+    a_reetiqueter: tuple[str, dict, dict, str] | None = None
     with _verrou:
         donnees = _lire_json(config.CAPTEURS_JSON)
         mac = enregistrement.mac.upper()
         macs_existantes = {k.upper(): k for k in donnees if not k.startswith("_")}
         if mac in macs_existantes:
             return donnees[macs_existantes[mac]]
-        entree = {
-            "mac": enregistrement.mac,
-            "famille_capteur": enregistrement.famille_capteur,
-            "nom": "",
-            "emplacement": "",
-            "nom_mur": "",
-            "nom_couche": "",
-            "position": "",
-            "prestation": "",
-            "categorie R&D": "",
-            "ingestion": False,
-        }
-        donnees[enregistrement.mac] = entree
-        _ecrire_json(config.CAPTEURS_JSON, donnees)
-        return entree
+
+        prefixe = mac.replace(":", "")[:8]
+        if prefixe in donnees:
+            entree_provisoire = donnees[prefixe]
+            tags_avant = _tags_capteur(entree_provisoire)
+            entree = dict(entree_provisoire)
+            entree["mac"] = enregistrement.mac
+            entree["famille_capteur"] = enregistrement.famille_capteur
+            entree["mac_complete_connue"] = True
+            del donnees[prefixe]
+            donnees[enregistrement.mac] = entree
+            _ecrire_json(config.CAPTEURS_JSON, donnees)
+            a_reetiqueter = (
+                prefixe,
+                tags_avant,
+                _tags_capteur(entree),
+                enregistrement.mac,
+            )
+        else:
+            entree = {
+                "mac": enregistrement.mac,
+                "famille_capteur": enregistrement.famille_capteur,
+                "nom": "",
+                "emplacement": "",
+                "nom_mur": "",
+                "nom_couche": "",
+                "position": "",
+                "prestation": "",
+                "categorie R&D": "",
+                "ingestion": False,
+            }
+            donnees[enregistrement.mac] = entree
+            _ecrire_json(config.CAPTEURS_JSON, donnees)
+
+    if a_reetiqueter is not None:
+        mac_avant, tags_avant, tags_apres, mac_apres = a_reetiqueter
+        _reetiqueter_mesures_capteurs(
+            mac_avant, tags_avant, tags_apres, mac_apres=mac_apres
+        )
+    return entree
 
 
 class TelemetrieCapteur(BaseModel):
