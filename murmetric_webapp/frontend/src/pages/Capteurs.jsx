@@ -57,7 +57,8 @@ export default function Capteurs() {
           "derniere_mesure",
           "lint_cible_s",
         ]}
-        champsEditables={["nom", "nom_mur", "nom_couche", "ingestion", "lint_cible_s"]}
+        champsEditables={["nom", "nom_mur", "nom_couche", "ingestion", "lint_cible_s", "note_frequence_nfc"]}
+        colonnesFiltrables={["famille_capteur", "nom_mur", "nom_couche", "ingestion"]}
         cleColonne="MAC / clé"
         enregistrer={(cle, champs) => api.modifierCapteurHrT(cle, champs)}
         recharger={charger}
@@ -69,6 +70,7 @@ export default function Capteurs() {
         lignes={lignes(retrait)}
         colonnes={["nom_mur", "nom_couche", "position", "ingestion"]}
         champsEditables={["nom_mur", "nom_couche", "position", "ingestion"]}
+        colonnesFiltrables={["nom_mur", "nom_couche", "position", "ingestion"]}
         cleColonne="Canal"
         enregistrer={(cle, champs) => api.modifierCapteurRetrait(cle, champs)}
         recharger={charger}
@@ -191,11 +193,20 @@ function texteMesure(mesure) {
   return { texte: `${parties.join(" · ")} — ${heure}`, etat };
 }
 
+// Valeur d'un champ telle qu'utilisée pour le filtrage (27/08/2026) —
+// distincte du rendu visuel (Pastille, etc.) : juste une chaîne comparable,
+// notamment pour "ingestion" (booléen) affiché "Oui"/"Non" dans le menu.
+function valeurPourFiltre(champ, c) {
+  if (champ === "ingestion") return c.ingestion ? "Oui" : "Non";
+  return c[champ] ?? "";
+}
+
 function TableauCapteurs({
   titre,
   lignes,
   colonnes,
   champsEditables,
+  colonnesFiltrables = [],
   cleColonne,
   enregistrer,
   recharger,
@@ -205,6 +216,35 @@ function TableauCapteurs({
   const [enEdition, setEnEdition] = useState(null); // { cle, valeurs }
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState(null);
+  const [filtres, setFiltres] = useState({}); // { _cle: "texte", [champ]: "valeur" }
+
+  // Filtres indépendants les uns des autres (pas de filtrage en cascade,
+  // plus simple à comprendre) — menu déroulant pour les colonnes
+  // catégorielles (colonnesFiltrables), recherche texte pour la clé et pour
+  // "nom" quand elle est présente dans les colonnes affichées.
+  const lignesFiltrees = lignes.filter(([cle, c]) => {
+    if (filtres._cle && !cle.toLowerCase().includes(filtres._cle.toLowerCase())) return false;
+    for (const champ of colonnes) {
+      const valeurFiltre = filtres[champ];
+      if (!valeurFiltre) continue;
+      if (champ === "nom") {
+        if (
+          !String(c.nom ?? "")
+            .toLowerCase()
+            .includes(valeurFiltre.toLowerCase())
+        )
+          return false;
+      } else if (colonnesFiltrables.includes(champ)) {
+        if (valeurPourFiltre(champ, c) !== valeurFiltre) return false;
+      }
+    }
+    return true;
+  });
+
+  const optionsPourColonne = (champ) =>
+    [...new Set(lignes.map(([, c]) => valeurPourFiltre(champ, c)))]
+      .filter((v) => v !== "")
+      .sort((a, b) => a.localeCompare(b));
 
   const demarrerEdition = (cle, c) => {
     setErreur(null);
@@ -236,10 +276,11 @@ function TableauCapteurs({
   return (
     <div className="carte">
       <h2>
-        {titre} ({lignes.length})
+        {titre} ({lignesFiltrees.length}
+        {lignesFiltrees.length !== lignes.length ? ` / ${lignes.length}` : ""})
       </h2>
       <BoutonsExportDonnees
-        lignes={lignes.map(([cle, c]) => ({ [cleColonne]: cle, ...c }))}
+        lignes={lignesFiltrees.map(([cle, c]) => ({ [cleColonne]: cle, ...c }))}
         nomFichier={nomFichierExport}
       />
       {erreur && <p className="erreur">{erreur}</p>}
@@ -254,9 +295,42 @@ function TableauCapteurs({
               ))}
               <th></th>
             </tr>
+            <tr>
+              <th>
+                <input
+                  placeholder="Filtrer..."
+                  value={filtres._cle || ""}
+                  onChange={(e) => setFiltres({ ...filtres, _cle: e.target.value })}
+                />
+              </th>
+              {colonnes.map((champ) => (
+                <th key={champ}>
+                  {champ === "nom" ? (
+                    <input
+                      placeholder="Filtrer..."
+                      value={filtres[champ] || ""}
+                      onChange={(e) => setFiltres({ ...filtres, [champ]: e.target.value })}
+                    />
+                  ) : colonnesFiltrables.includes(champ) ? (
+                    <select
+                      value={filtres[champ] || ""}
+                      onChange={(e) => setFiltres({ ...filtres, [champ]: e.target.value })}
+                    >
+                      <option value="">Tous</option>
+                      {optionsPourColonne(champ).map((v) => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                </th>
+              ))}
+              <th></th>
+            </tr>
           </thead>
           <tbody>
-            {lignes.map(([cle, c]) => {
+            {lignesFiltrees.map(([cle, c]) => {
               const edition = enEdition?.cle === cle;
               return (
                 <tr key={cle}>
@@ -292,8 +366,19 @@ function TableauCapteurs({
                                 </option>
                               ))}
                             </select>
+                          ) : c.famille_capteur === "ela" ? (
+                            <input
+                              placeholder="Pense-bête, ex. « 5 min »"
+                              value={enEdition.valeurs.note_frequence_nfc}
+                              onChange={(e) =>
+                                setEnEdition({
+                                  ...enEdition,
+                                  valeurs: { ...enEdition.valeurs, note_frequence_nfc: e.target.value },
+                                })
+                              }
+                            />
                           ) : (
-                            "— (NFC uniquement)"
+                            "—"
                           )
                         ) : (
                           <input
@@ -326,9 +411,7 @@ function TableauCapteurs({
                           "—"
                         )
                       ) : champ === "lint_cible_s" ? (
-                        c.famille_capteur !== "bluemaestro" ? (
-                          "—"
-                        ) : (
+                        c.famille_capteur === "bluemaestro" ? (
                           (() => {
                             const cible = c.lint_cible_s ?? 86400;
                             const applique = c.lint_max_confirme_s;
@@ -343,6 +426,18 @@ function TableauCapteurs({
                               />
                             );
                           })()
+                        ) : c.famille_capteur === "ela" ? (
+                          <div>
+                            <div>NFC : {c.note_frequence_nfc || "—"}</div>
+                            <div style={{ fontSize: "0.85em", opacity: 0.7 }}>
+                              Observé :{" "}
+                              {c.derniere_mesure?.intervalle_observe_s != null
+                                ? formatDuree(Math.round(c.derniere_mesure.intervalle_observe_s))
+                                : "—"}
+                            </div>
+                          </div>
+                        ) : (
+                          "—"
                         )
                       ) : champ === "derniere_mesure" ? (
                         (() => {

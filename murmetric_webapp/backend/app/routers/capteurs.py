@@ -73,7 +73,20 @@ def dernieres_mesures_hr_t() -> dict:
     toute la page Capteurs (cf. Capteurs.jsx, colonne "Dernière mesure",
     26/08/2026) plutôt qu'une requête par ligne. Capteurs `ingestion: false`
     volontairement absents du résultat : jamais aucune mesure écrite pour
-    eux (cf. kafka_consumer_influx.py), pas la peine de les interroger."""
+    eux (cf. kafka_consumer_influx.py), pas la peine de les interroger.
+
+    Ajoute aussi `intervalle_observe_s` pour les capteurs ELA (27/08/2026) :
+    contrairement à Blue Maestro (lint_max_confirme_s, confirmé par GATT),
+    ELA n'a aucun canal de confirmation — sa Measurement Period est figée en
+    NFC et invisible depuis le BLE (cf. note_frequence_nfc). On calcule donc
+    un intervalle *observé*, dérivé du délai réel entre les deux dernières
+    valeurs température écrites en base — fiable car le filtre anti-doublon
+    du Pi (ingestion_capteurs_bluetooth.py) garantit que deux points
+    consécutifs stockés correspondent à deux mesures réellement distinctes,
+    pas juste deux trames advertising répétant la même valeur. Reflète la
+    cadence effective des trames reçues, pas forcément le Measurement Period
+    exact si Advertising Period diverge en configuration NFC — best-effort,
+    n'empêche jamais la réponse principale de partir si cette partie échoue."""
     donnees = _lire_json(config.CAPTEURS_JSON)
     macs_actifs = [
         k for k, v in donnees.items() if not k.startswith("_") and v.get("ingestion")
@@ -112,6 +125,32 @@ from(bucket: "{config.INFLUX_BUCKET}")
     for entree in resultat.values():
         if entree.get("heure") is not None:
             entree["heure"] = entree["heure"].isoformat()
+
+    macs_ela = [m for m in macs_actifs if donnees[m].get("famille_capteur") == "ela"]
+    if macs_ela:
+        filtre_macs_ela = " or ".join(
+            f'r.adresse_mac == "{flux_escape(m)}"' for m in macs_ela
+        )
+        flux_intervalle = f"""
+from(bucket: "{config.INFLUX_BUCKET}")
+  |> range(start: -7d)
+  |> filter(fn: (r) => r._measurement == "{MESURE_CAPTEURS}")
+  |> filter(fn: (r) => r._field == "temperature")
+  |> filter(fn: (r) => {filtre_macs_ela})
+  |> group(columns: ["adresse_mac"])
+  |> sort(columns: ["_time"], desc: true)
+  |> limit(n: 2)
+"""
+        try:
+            for table in query_api().query(flux_intervalle, org=config.INFLUX_ORG):
+                horodatages = [r.get_time() for r in table.records]
+                if len(horodatages) == 2:
+                    mac = table.records[0].values.get("adresse_mac")
+                    delta = abs((horodatages[0] - horodatages[1]).total_seconds())
+                    resultat.setdefault(mac, {})["intervalle_observe_s"] = delta
+        except Exception as exc:  # noqa: BLE001 - best-effort, cf. docstring
+            print(f"Attention : calcul intervalle_observe_s ELA échoué : {exc}")
+
     return resultat
 
 
@@ -133,7 +172,17 @@ class ModificationCapteur(BaseModel):
     (l'intervalle de mesure souhaité) — lint_configure/lint_max_confirme_s
     restent en lecture seule, écrits uniquement par le Pi une fois la
     commande GATT réellement confirmée. Bornes 1-86400s : plage matérielle
-    documentée (configure_capteurs.py, Disc Maxi/Mini)."""
+    documentée (configure_capteurs.py, Disc Maxi/Mini).
+
+    note_frequence_nfc (27/08/2026) : pense-bête texte libre pour les
+    capteurs ELA, qui n'ont pas d'équivalent lint_cible_s — leur Measurement
+    Period est figée en NFC (logiciel "Device Manager" ELA, contact
+    physique), sans aucun canal de configuration ou de confirmation à
+    distance (cf. docs.elainnovation.com, sensors-configurations/
+    general-case : "La configuration doit être écrite dans le tag via NFC
+    pour être appliquée"). Purement déclaratif, jamais vérifié ni appliqué
+    par un script — à ne pas confondre avec lint_cible_s/lint_max_confirme_s
+    qui pilotent réellement le capteur."""
 
     nom: str | None = None
     emplacement: str | None = None
@@ -144,6 +193,7 @@ class ModificationCapteur(BaseModel):
     categorie_rd: str | None = None
     ingestion: bool | None = None
     lint_cible_s: int | None = Field(None, ge=1, le=86400)
+    note_frequence_nfc: str | None = Field(None, max_length=200)
 
 
 _ALIAS_CHAMPS = {"categorie_rd": "categorie R&D"}

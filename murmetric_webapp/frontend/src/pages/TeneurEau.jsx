@@ -10,6 +10,8 @@ export default function TeneurEau() {
   const [enEdition, setEnEdition] = useState(null); // { original, valeurs }
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
+  const [filtreMur, setFiltreMur] = useState("");
+  const [filtreCouche, setFiltreCouche] = useState("");
 
   const charger = async () => {
     try {
@@ -88,6 +90,14 @@ export default function TeneurEau() {
     }, {}),
   );
 
+  // Filtres Mur/Couche (27/08/2026) — indépendants l'un de l'autre, menus
+  // dérivés des valeurs déjà présentes plutôt qu'une saisie libre.
+  const mursDisponibles = [...new Set(groupes.map((g) => g.mur))].sort((a, b) => a.localeCompare(b));
+  const couchesDisponibles = [...new Set(groupes.map((g) => g.couche))].sort((a, b) => a.localeCompare(b));
+  const groupesFiltres = groupes.filter(
+    (g) => (!filtreMur || g.mur === filtreMur) && (!filtreCouche || g.couche === filtreCouche),
+  );
+
   return (
     <div>
       <div className="carte">
@@ -141,8 +151,11 @@ export default function TeneurEau() {
       </div>
 
       <div className="carte">
-        <h2>Saisies existantes</h2>
-        <BoutonsExportDonnees lignes={groupes} nomFichier="teneur_eau" />
+        <h2>
+          Saisies existantes ({groupesFiltres.length}
+          {groupesFiltres.length !== groupes.length ? ` / ${groupes.length}` : ""})
+        </h2>
+        <BoutonsExportDonnees lignes={groupesFiltres} nomFichier="teneur_eau" />
         <div className="tableau-scroll">
           <table>
             <thead>
@@ -154,9 +167,35 @@ export default function TeneurEau() {
                 <th>Commentaire</th>
                 <th></th>
               </tr>
+              <tr>
+                <th>
+                  <select value={filtreMur} onChange={(e) => setFiltreMur(e.target.value)}>
+                    <option value="">Tous</option>
+                    {mursDisponibles.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </th>
+                <th>
+                  <select value={filtreCouche} onChange={(e) => setFiltreCouche(e.target.value)}>
+                    <option value="">Toutes</option>
+                    {couchesDisponibles.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </th>
+                <th></th>
+                <th></th>
+                <th></th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
-              {groupes.map((g) => (
+              {groupesFiltres.map((g) => (
                 <tr key={`${g.mur}|${g.couche}|${g.time}`}>
                   {enEdition?.original.mur === g.mur &&
                   enEdition.original.couche === g.couche &&
