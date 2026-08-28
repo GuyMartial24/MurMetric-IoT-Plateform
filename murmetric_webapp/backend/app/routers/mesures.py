@@ -10,7 +10,13 @@ from fastapi import APIRouter, HTTPException, Query
 
 from .. import config
 from ..hampel import appliquer_bornes_physiques, filtrer_hampel
-from ..influx import MESURE_CAPTEURS, MESURE_DEWESOFT, MESURE_TENEUR_EAU, flux_escape, query_api
+from ..influx import (
+    MESURE_CAPTEURS,
+    MESURE_DEWESOFT,
+    MESURE_TENEUR_EAU,
+    flux_escape,
+    query_api,
+)
 
 router = APIRouter(prefix="/api/mesures", tags=["mesures"])
 
@@ -51,7 +57,9 @@ def _valider_bornes(
     champs Début/Fin). Toute date/heure naïve est donc explicitement
     fixée en UTC avant sérialisation."""
     fin_dt = (
-        datetime.fromisoformat(fin.replace("Z", "+00:00")) if fin else datetime.now(timezone.utc)
+        datetime.fromisoformat(fin.replace("Z", "+00:00"))
+        if fin
+        else datetime.now(timezone.utc)
     )
     if fin_dt.tzinfo is None:
         fin_dt = fin_dt.replace(tzinfo=timezone.utc)
@@ -99,9 +107,13 @@ def construire_requete_flux(
     if canal_nom and type_mesure == "retrait":
         filtres.append(f'r.canal_nom == "{flux_escape(canal_nom)}"')
 
-    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    clause_filtre = (
+        "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    )
     agregation = (
-        f"\n  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)" if fenetre else ""
+        f"\n  |> aggregateWindow(every: {fenetre}, fn: mean, createEmpty: false)"
+        if fenetre
+        else ""
     )
 
     # group(columns: ["_field"]) : sans position/canal_nom précisé, une
@@ -137,7 +149,9 @@ def executer_requete(flux: str) -> list[dict]:
     try:
         tables = query_api().query(flux, org=config.INFLUX_ORG)
     except Exception as exc:  # connexion InfluxDB indisponible, requête invalide...
-        raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Requête InfluxDB échouée : {exc}"
+        ) from exc
 
     resultats = []
     for table in tables:
@@ -197,15 +211,26 @@ def _construire_filtres_communs(
 
 
 def _valeur_agregat(
-    mesure: str, champ: str, filtres_communs: list[str], debut: str, fin: str, nom_fonction: str
+    mesure: str,
+    champ: str,
+    filtres_communs: list[str],
+    debut: str,
+    fin: str,
+    nom_fonction: str,
 ):
     """Un agrégat natif InfluxDB (min/max/mean/median/count) — nettement
     plus rapide qu'un reduce() générique passé par la VM Flux point par
     point, testé en conditions réelles le 12/08/2026 sur mesures_dewesoft/
     retrait (~1,5 milliard de points) : le reduce() dépassait encore le
     timeout là où ces agrégats natifs passent."""
-    filtres = [f'r._measurement == "{mesure}"', f'r._field == "{champ}"', *filtres_communs]
-    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    filtres = [
+        f'r._measurement == "{mesure}"',
+        f'r._field == "{champ}"',
+        *filtres_communs,
+    ]
+    clause_filtre = (
+        "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    )
     # group() sans argument : fusionne toutes les tables restantes en une
     # seule avant l'agrégat. Bug trouvé le 13/08/2026 en déboguant
     # amplitude_jour_nuit : sans lui, une sélection mur+couche qui recoupe
@@ -246,7 +271,11 @@ def _tendance(
     seconde = _valeur_agregat(mesure, champ, filtres_communs, milieu, fin, "mean")
     if premiere is None or seconde is None:
         return None
-    return {"premiere_moitie": premiere, "deuxieme_moitie": seconde, "delta": seconde - premiere}
+    return {
+        "premiere_moitie": premiere,
+        "deuxieme_moitie": seconde,
+        "delta": seconde - premiere,
+    }
 
 
 def _amplitude_jour_nuit(
@@ -265,7 +294,11 @@ def _amplitude_jour_nuit(
     clause_filtre = (
         "\n  |> filter(fn: (r) => "
         + ")\n  |> filter(fn: (r) => ".join(
-            [f'r._measurement == "{mesure}"', f'r._field == "{champ}"', *filtres_communs]
+            [
+                f'r._measurement == "{mesure}"',
+                f'r._field == "{champ}"',
+                *filtres_communs,
+            ]
         )
         + ")"
     )
@@ -342,7 +375,9 @@ def calculer_statistiques(
     """
     champs = _CHAMPS_PAR_TYPE[type_mesure]
     mesure = _MESURE_PAR_TYPE[type_mesure]
-    filtres_communs = _construire_filtres_communs(type_mesure, mur, couche, position, canal_nom)
+    filtres_communs = _construire_filtres_communs(
+        type_mesure, mur, couche, position, canal_nom
+    )
 
     stats_par_champ: dict = {champ: {} for champ in champs}
     try:
@@ -355,7 +390,9 @@ def calculer_statistiques(
                 for nom, fn in _AGREGATS_NATIFS
             }
             futurs_tendance = {
-                champ: executor.submit(_tendance, mesure, champ, filtres_communs, debut, fin)
+                champ: executor.submit(
+                    _tendance, mesure, champ, filtres_communs, debut, fin
+                )
                 for champ in champs
             }
             futurs_amplitude = (
@@ -376,9 +413,17 @@ def calculer_statistiques(
             for champ, futur in futurs_amplitude.items():
                 stats_par_champ[champ]["amplitude_jour_nuit"] = futur.result()
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Requête statistique échouée : {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Requête statistique échouée : {exc}"
+        ) from exc
 
-    return {"champs": stats_par_champ, "mur": mur, "couche": couche, "debut": debut, "fin": fin}
+    return {
+        "champs": stats_par_champ,
+        "mur": mur,
+        "couche": couche,
+        "debut": debut,
+        "fin": fin,
+    }
 
 
 def comparer_periodes(
@@ -397,13 +442,19 @@ def comparer_periodes(
     systématiquement dans calculer_statistiques() (deux fenêtres complètes
     = deux fois plus de requêtes, pas justifié tant que la question posée
     ne porte pas sur une comparaison)."""
-    periode1 = calculer_statistiques(type_mesure, mur, couche, position, canal_nom, debut1, fin1)
-    periode2 = calculer_statistiques(type_mesure, mur, couche, position, canal_nom, debut2, fin2)
+    periode1 = calculer_statistiques(
+        type_mesure, mur, couche, position, canal_nom, debut1, fin1
+    )
+    periode2 = calculer_statistiques(
+        type_mesure, mur, couche, position, canal_nom, debut2, fin2
+    )
     deltas_moyenne = {}
     for champ in _CHAMPS_PAR_TYPE[type_mesure]:
         m1 = periode1["champs"][champ].get("moyenne")
         m2 = periode2["champs"][champ].get("moyenne")
-        deltas_moyenne[champ] = (m2 - m1) if (m1 is not None and m2 is not None) else None
+        deltas_moyenne[champ] = (
+            (m2 - m1) if (m1 is not None and m2 is not None) else None
+        )
     return {
         "periode_1": periode1,
         "periode_2": periode2,
@@ -421,7 +472,9 @@ def ecart_brut_filtre(canal_nom: str | None, debut: str, fin: str) -> dict:
     côté InfluxDB (pivot + map + mean) : aucun point brut ne traverse le
     réseau vers le process Python."""
     if not canal_nom:
-        return {"erreur": "canal_nom requis (retrait uniquement, un seul canal à la fois)."}
+        return {
+            "erreur": "canal_nom requis (retrait uniquement, un seul canal à la fois)."
+        }
     flux = f"""
 import "math"
 
@@ -448,7 +501,12 @@ from(bucket: "{config.INFLUX_BUCKET}")
                 "debut": debut,
                 "fin": fin,
             }
-    return {"canal_nom": canal_nom, "ecart_moyen_absolu": None, "debut": debut, "fin": fin}
+    return {
+        "canal_nom": canal_nom,
+        "ecart_moyen_absolu": None,
+        "debut": debut,
+        "fin": fin,
+    }
 
 
 _TAGS_PAR_TYPE = {
@@ -465,7 +523,9 @@ def _valeurs_tags_retrait() -> list[dict]:
     est déjà la source de vérité pour le mapping canal→mur/couche/position
     (c'est lui qui pilote le tagging à l'ingestion), donc pas besoin
     d'interroger InfluxDB pour la même information."""
-    from .capteurs import _lire_json  # import différé : évite un cycle au chargement du module
+    from .capteurs import (
+        _lire_json,
+    )  # import différé : évite un cycle au chargement du module
 
     registre = _lire_json(config.CAPTEURS_RETRAIT_JSON)
     return [
@@ -516,7 +576,9 @@ def valeurs_tags(type: TypeMesure = Query(...)) -> dict:
     try:
         tables = query_api().query(flux, org=config.INFLUX_ORG)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Requête InfluxDB échouée : {exc}"
+        ) from exc
 
     combinaisons = []
     for table in tables:
@@ -539,7 +601,9 @@ def statistiques(
 ):
     """Statistiques agrégées (min/max/moyenne/médiane/tendance...) pour une sélection."""
     debut_iso, fin_iso = _valider_bornes(debut, fin, type)
-    return calculer_statistiques(type, mur, couche, position, canal_nom, debut_iso, fin_iso)
+    return calculer_statistiques(
+        type, mur, couche, position, canal_nom, debut_iso, fin_iso
+    )
 
 
 @router.get("")
@@ -554,7 +618,8 @@ def lister_mesures(
     ),
     fin: str | None = Query(None, description="ISO 8601, défaut : maintenant"),
     fenetre: str | None = Query(
-        None, description="Fenêtre d'agrégation Flux, ex. '1h', '1d' — absent = points bruts"
+        None,
+        description="Fenêtre d'agrégation Flux, ex. '1h', '1d' — absent = points bruts",
     ),
 ):
     """Points de courbe (bruts ou agrégés) pour une sélection mur/couche/position/canal."""
@@ -602,7 +667,9 @@ def croisement(
     teneur en eau, mesure distincte et éparse nécessitant une jointure "au
     plus proche dans le temps" cf. section 16, n'est pas dans ce périmètre)."""
     champs_demandes = [champ_x, champ_y] + ([champ_z] if champ_z else [])
-    if type == "teneur_eau" or any(c not in _CHAMPS_PAR_TYPE[type] for c in champs_demandes):
+    if type == "teneur_eau" or any(
+        c not in _CHAMPS_PAR_TYPE[type] for c in champs_demandes
+    ):
         raise HTTPException(
             status_code=400,
             detail="champ_x/champ_y/champ_z doivent appartenir à la même mesure (hr_t ou retrait).",
@@ -618,7 +685,9 @@ def croisement(
         filtres.append(f'r.nom_couche == "{flux_escape(couche)}"')
     if position:
         filtres.append(f'r.position == "{flux_escape(position)}"')
-    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    clause_filtre = (
+        "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    )
     clause_exists = " and ".join(f"exists r.{c}" for c in champs_demandes)
 
     flux = (
@@ -641,7 +710,9 @@ def croisement(
     try:
         tables = query_api().query(flux, org=config.INFLUX_ORG)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Requête InfluxDB échouée : {exc}"
+        ) from exc
 
     points = []
     for table in tables:
@@ -655,19 +726,37 @@ def croisement(
             if champ_z:
                 point["z"] = valeurs.get(champ_z)
             points.append(point)
-    return {"champ_x": champ_x, "champ_y": champ_y, "champ_z": champ_z, "points": points}
+    return {
+        "champ_x": champ_x,
+        "champ_y": champ_y,
+        "champ_z": champ_z,
+        "points": points,
+    }
 
 
-_MESURES_LIBRES = {"hr_t": MESURE_CAPTEURS, "retrait": MESURE_DEWESOFT}
+_MESURES_LIBRES = {
+    "hr_t": MESURE_CAPTEURS,
+    "retrait": MESURE_DEWESOFT,
+    "teneur_eau": MESURE_TENEUR_EAU,
+}
 
 
 def _parser_axe(spec: str) -> tuple[str, str, str | None]:
-    """ "hr_t:temperature" ou "retrait:valeur_filtree:HA1" -> (mesure, champ, canal)."""
+    """ "hr_t:temperature" ou "retrait:valeur_filtree:HA1" -> (mesure, champ, canal).
+
+    Canal retrait vide ou absent = "tous les canaux" (28/08/2026) — la
+    restriction précédente ("Axe retrait sans canal" toujours refusé)
+    n'existait que dans CET endpoint : _construire_filtres_communs/
+    construire_requete_flux (statistiques, Vue d'ensemble) autorisent déjà
+    un canal_nom vide depuis le début, avec le même group()+aggregateWindow
+    (mean) que _requeter_axe ci-dessous — donc la même moyenne inter-canaux,
+    déjà jugée acceptable ailleurs dans l'appli. Incohérence corrigée plutôt
+    que reproduite."""
     morceaux = spec.split(":")
     if len(morceaux) == 2:
         mesure, champ, canal = morceaux[0], morceaux[1], None
     elif len(morceaux) == 3:
-        mesure, champ, canal = morceaux
+        mesure, champ, canal = morceaux[0], morceaux[1], morceaux[2] or None
     else:
         raise HTTPException(
             status_code=400,
@@ -675,8 +764,6 @@ def _parser_axe(spec: str) -> tuple[str, str, str | None]:
         )
     if mesure not in _MESURES_LIBRES or champ not in _CHAMPS_PAR_TYPE[mesure]:
         raise HTTPException(status_code=400, detail=f"Axe invalide : {spec!r}")
-    if mesure == "retrait" and not canal:
-        raise HTTPException(status_code=400, detail=f"Axe retrait sans canal : {spec!r}")
     return mesure, champ, canal
 
 
@@ -690,14 +777,36 @@ def _requeter_axe(
     fin: str,
     fenetre: str,
 ) -> dict[str, float]:
-    filtres = [f'r._measurement == "{_MESURES_LIBRES[mesure]}"', f'r._field == "{champ}"']
+    filtres = [
+        f'r._measurement == "{_MESURES_LIBRES[mesure]}"',
+        f'r._field == "{champ}"',
+    ]
+    # teneur_eau porte ses tags mur/couche SANS le préfixe nom_ (cf.
+    # teneur_eau.py, _construire_ligne) — distinct de hr_t/retrait
+    # (nom_mur/nom_couche), à mapper explicitement plutôt que de supposer un
+    # nom de tag commun (27/08/2026, ajout teneur_eau à /croisement-libre).
+    tag_mur = "mur" if mesure == "teneur_eau" else "nom_mur"
+    tag_couche = "couche" if mesure == "teneur_eau" else "nom_couche"
     if mur:
-        filtres.append(f'r.nom_mur == "{flux_escape(mur)}"')
-    if mesure == "hr_t" and couche:
-        filtres.append(f'r.nom_couche == "{flux_escape(couche)}"')
+        filtres.append(f'r.{tag_mur} == "{flux_escape(mur)}"')
+    if mesure in ("hr_t", "teneur_eau") and couche:
+        filtres.append(f'r.{tag_couche} == "{flux_escape(couche)}"')
     if mesure == "retrait" and canal:
-        filtres.append(f'r.canal_nom == "{flux_escape(canal)}"')
-    clause_filtre = "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+        # "HA1+HA2" (28/08/2026, demande explicite) : moyenne de plusieurs
+        # canaux plutôt qu'un seul — même mécanisme que "Tous" (aucun canal,
+        # tous mélangés), juste restreint à la liste jointe par "+". Le
+        # frontend ne propose que des combinaisons même mur/même orientation
+        # (cf. canauxRetrait.js), mais rien ici ne l'impose côté serveur :
+        # cette fonction reste générique, agnostique du sens physique.
+        canaux = canal.split("+")
+        if len(canaux) == 1:
+            filtres.append(f'r.canal_nom == "{flux_escape(canaux[0])}"')
+        else:
+            clause = " or ".join(f'r.canal_nom == "{flux_escape(c)}"' for c in canaux)
+            filtres.append(f"({clause})")
+    clause_filtre = (
+        "\n  |> filter(fn: (r) => " + ")\n  |> filter(fn: (r) => ".join(filtres) + ")"
+    )
     # group() : un seul champ déjà filtré ici (contrairement à croisement()
     # qui en pivote plusieurs), donc pas besoin de préciser columns=["_field"]
     # — fusionne simplement les tables de plusieurs capteurs éventuels
@@ -721,58 +830,114 @@ def _requeter_axe(
     return resultat
 
 
+def _fenetre_auto(debut_iso: str, fin_iso: str) -> str:
+    """Fenêtre d'agrégation adaptée à l'étendue [debut_iso, fin_iso] — utilisée
+    par croisement_libre quand l'appelant n'impose pas de fenêtre explicite.
+
+    Sans ça, une plage large filtrée sur un axe retrait (mesures_dewesoft,
+    échantillonnage 100 Hz) restait figée sur la fenêtre par défaut "1h" quelle
+    que soit l'étendue demandée — inoffensif tant que le plafond implicite de
+    30 jours de _valider_bornes limitait la casse, mais l'ajout de Début/Fin
+    au nomogramme (28/08/2026) permet de le contourner explicitement : un
+    croisement teneur_eau x retrait sur ~80 jours a mis 7 à 11s à répondre
+    (charge serveur variable), déjà proche de l'ancien timeout client de 30s
+    (relevé le 28/08/2026, cf. get_client() dans influx.py). Grossir la
+    fenêtre pour les plages larges réduit le nombre de points agrégés
+    renvoyés (donc le rendu du nomogramme reste lisible) et allège un peu la
+    charge de calcul, sans prétendre éliminer le coût de lecture des points
+    bruts sous-jacent — d'où aussi le timeout client relevé à 60s en
+    complément, pas un correctif de vitesse à lui seul."""
+    jours = (datetime.fromisoformat(fin_iso) - datetime.fromisoformat(debut_iso)).days
+    if jours <= 2:
+        return "15m"
+    if jours <= 10:
+        return "1h"
+    if jours <= 60:
+        return "6h"
+    if jours <= 200:
+        return "1d"
+    return "3d"
+
+
 @router.get("/croisement-libre")
 def croisement_libre(
     mur: str = Query(...),
     couche: str | None = None,
     axe_x: str = Query(..., description="'hr_t:champ' ou 'retrait:champ:canal'"),
     axe_y: str | None = Query(
-        None, description="Optionnel — un axe peut être 'temps', calculé côté frontend, pas ici"
+        None,
+        description="Optionnel — un axe peut être 'temps', calculé côté frontend, pas ici",
     ),
     axe_z: str | None = Query(None),
     debut: str | None = None,
     fin: str | None = None,
-    fenetre: str = Query(
-        "1h",
+    fenetre: str | None = Query(
+        None,
         description=(
             "Fenêtre d'agrégation commune — aligne les points des deux mesures "
-            "sur la même grille temporelle"
+            "sur la même grille temporelle. Non fournie : déduite automatiquement "
+            "de l'étendue debut/fin (cf. _fenetre_auto)."
         ),
     ),
 ) -> dict:
-    """Croisement libre entre grandeurs de mesures DIFFÉRENTES (HR/T et
-    retrait), demandé explicitement le 13/08/2026 — contrairement à
-    /croisement (une seule mesure, pivot direct). Les deux mesures ont des
-    fréquences très différentes (HR/T ~toutes les quelques heures, retrait
-    100 Hz) : chaque axe est interrogé séparément, agrégé sur LA MÊME
-    fenêtre, puis aligné en Python sur les horodatages communs — un join
+    """Croisement libre entre grandeurs de mesures DIFFÉRENTES (HR/T, retrait,
+    teneur_eau), demandé explicitement le 13/08/2026 — contrairement à
+    /croisement (une seule mesure, pivot direct). teneur_eau ajoutée le
+    27/08/2026 malgré des données éparses/manuelles (demande explicite
+    utilisateur) : `aggregateWindow(createEmpty: false)` ne produit un point
+    QUE pour les fenêtres qui contiennent une vraie mesure, donc son
+    éparsité ne casse rien mécaniquement — elle limite juste le nombre de
+    points communs au nombre de relevés terrain, ce qui est attendu (à
+    utiliser en "Nuage de points" plutôt qu'un tracé interpolé). Les
+    mesures ont des fréquences très différentes (HR/T ~toutes les quelques
+    heures, retrait 100 Hz, teneur_eau ponctuelle) : chaque axe est
+    interrogé séparément, agrégé sur LA MÊME fenêtre, puis aligné en Python
+    sur les horodatages communs — un join
     Flux ferait la même chose côté serveur, mais des requêtes séparées
     restent plus sûres (cf. section 32 : combiner plusieurs canaux/mesures
     dans un seul filtre Flux coûte disproportionnellement plus cher que les
     séparer)."""
-    axes = [("x", axe_x)] + ([("y", axe_y)] if axe_y else []) + ([("z", axe_z)] if axe_z else [])
+    axes = (
+        [("x", axe_x)]
+        + ([("y", axe_y)] if axe_y else [])
+        + ([("z", axe_z)] if axe_z else [])
+    )
     parses = {nom: _parser_axe(spec) for nom, spec in axes}
 
     # Sécurité mémoire : dès qu'un axe retrait est impliqué, la fenêtre est
-    # plafonnée à 90 jours (cf. section 32) — appliquée à TOUS les axes pour
-    # qu'ils restent alignés sur la même période (comparer deux grandeurs
-    # sur des fenêtres différentes n'aurait de toute façon aucun sens).
+    # plafonnée à 30 jours (cf. _FENETRE_DEFAUT_JOURS) — mais UNIQUEMENT
+    # quand ni debut ni fin ne sont fournis (cf. _valider_bornes). Depuis
+    # l'ajout de Début/Fin au nomogramme (28/08/2026), ce plafond implicite
+    # est facilement contourné par une plage explicite plus large — d'où
+    # _fenetre_auto ci-dessous, qui protège la requête elle-même plutôt que
+    # de compter sur une borne de durée.
     type_borne: TypeMesure = (
         "retrait" if any(p[0] == "retrait" for p in parses.values()) else "hr_t"
     )
     debut_iso, fin_iso = _valider_bornes(debut, fin, type_borne)
+    fenetre_effective = fenetre or _fenetre_auto(debut_iso, fin_iso)
 
     try:
         with ThreadPoolExecutor(max_workers=3) as executor:
             futurs = {
                 nom: executor.submit(
-                    _requeter_axe, mesure, champ, canal, mur, couche, debut_iso, fin_iso, fenetre
+                    _requeter_axe,
+                    mesure,
+                    champ,
+                    canal,
+                    mur,
+                    couche,
+                    debut_iso,
+                    fin_iso,
+                    fenetre_effective,
                 )
                 for nom, (mesure, champ, canal) in parses.items()
             }
             series = {nom: futur.result() for nom, futur in futurs.items()}
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Requête InfluxDB échouée : {exc}"
+        ) from exc
 
     cles = list(series.keys())
     horodatages_communs = set(series[cles[0]])
@@ -801,10 +966,15 @@ def hampel(
     debut: str = Query(...),
     fin: str = Query(...),
     fenetre: int = Query(
-        10, ge=1, le=200, description="Demi-largeur de la fenêtre glissante, en échantillons"
+        10,
+        ge=1,
+        le=200,
+        description="Demi-largeur de la fenêtre glissante, en échantillons",
     ),
     seuil_k: float = Query(
-        8.0, gt=0, description="Multiplicateur du MAD au-delà duquel un point est aberrant"
+        8.0,
+        gt=0,
+        description="Multiplicateur du MAD au-delà duquel un point est aberrant",
     ),
     borne_min: float | None = Query(
         None,
@@ -813,7 +983,9 @@ def hampel(
             "longues pour le Hampel seul"
         ),
     ),
-    borne_max: float | None = Query(None, description="Borne physique haute optionnelle"),
+    borne_max: float | None = Query(
+        None, description="Borne physique haute optionnelle"
+    ),
 ) -> dict:
     """Filtre de Hampel recalculé à la volée sur les valeurs BRUTES (jamais
     celles déjà stockées dans `valeur_filtree`, fixées à l'ingestion et pas
@@ -852,7 +1024,9 @@ def hampel(
     try:
         tables = query_api().query(flux, org=config.INFLUX_ORG)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Requête InfluxDB échouée : {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Requête InfluxDB échouée : {exc}"
+        ) from exc
 
     temps, valeurs = [], []
     for table in tables:
@@ -871,7 +1045,9 @@ def hampel(
 
     filtrees, aberrants = filtrer_hampel(valeurs, fenetre, seuil_k)
     if borne_min is not None and borne_max is not None:
-        filtrees, aberrants = appliquer_bornes_physiques(filtrees, aberrants, borne_min, borne_max)
+        filtrees, aberrants = appliquer_bornes_physiques(
+            filtrees, aberrants, borne_min, borne_max
+        )
     points = [
         {"time": t, "brut": b, "filtre_ajuste": f, "aberrant": a}
         for t, b, f, a in zip(temps, valeurs, filtrees, aberrants)

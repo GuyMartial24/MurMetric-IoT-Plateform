@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import BoutonsExportDonnees from "../components/BoutonsExportDonnees.jsx";
+import ChampSelectOuAutre from "../components/ChampSelectOuAutre.jsx";
+import { useMursCouchesConnus } from "../mursCouches.js";
 
 const VIDE = { mur: "", couche: "", valeur_pourcent: "", commentaire: "", date_mesure: "" };
 
@@ -12,6 +14,7 @@ export default function TeneurEau() {
   const [enCours, setEnCours] = useState(false);
   const [filtreMur, setFiltreMur] = useState("");
   const [filtreCouche, setFiltreCouche] = useState("");
+  const { murs: mursConnus, couches: couchesConnues } = useMursCouchesConnus();
 
   const charger = async () => {
     try {
@@ -105,20 +108,22 @@ export default function TeneurEau() {
         <form onSubmit={soumettre} className="selection-form">
           <div className="champ">
             <label>Mur</label>
-            <input
+            <ChampSelectOuAutre
               required
-              value={saisie.mur}
-              onChange={(e) => setSaisie({ ...saisie, mur: e.target.value })}
+              valeur={saisie.mur}
+              options={mursConnus}
+              onChange={(v) => setSaisie({ ...saisie, mur: v })}
               placeholder="SOCMA 1"
             />
           </div>
           <div className="champ">
             <label>Couche</label>
-            <input
+            <ChampSelectOuAutre
               required
-              value={saisie.couche}
-              onChange={(e) => setSaisie({ ...saisie, couche: e.target.value })}
-              placeholder="carreau_ext"
+              valeur={saisie.couche}
+              options={couchesConnues}
+              onChange={(v) => setSaisie({ ...saisie, couche: v })}
+              placeholder="interface carreau et exterieur"
             />
           </div>
           <div className="champ">
@@ -202,19 +207,17 @@ export default function TeneurEau() {
                   enEdition.original.date_mesure === g.time ? (
                     <>
                       <td>
-                        <input
-                          value={enEdition.valeurs.mur}
-                          onChange={(e) =>
-                            setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, mur: e.target.value } })
-                          }
+                        <ChampSelectOuAutre
+                          valeur={enEdition.valeurs.mur}
+                          options={mursConnus}
+                          onChange={(v) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, mur: v } })}
                         />
                       </td>
                       <td>
-                        <input
-                          value={enEdition.valeurs.couche}
-                          onChange={(e) =>
-                            setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: e.target.value } })
-                          }
+                        <ChampSelectOuAutre
+                          valeur={enEdition.valeurs.couche}
+                          options={couchesConnues}
+                          onChange={(v) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: v } })}
                         />
                       </td>
                       <td>

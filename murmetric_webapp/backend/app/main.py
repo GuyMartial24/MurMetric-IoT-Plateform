@@ -12,7 +12,16 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config, monitoring_mqtt
 from .auth import initialiser_bootstrap
-from .routers import assistant, auth, capteurs, export, mesures, monitoring, parametres, teneur_eau
+from .routers import (
+    assistant,
+    auth,
+    capteurs,
+    export,
+    mesures,
+    monitoring,
+    parametres,
+    teneur_eau,
+)
 
 
 def _amorcer_capteurs() -> None:
@@ -86,6 +95,20 @@ if _DIST_DIR.is_dir():
         # resolve() + vérification du parent : évite qu'un chemin_complet
         # contenant ".." serve un fichier hors de dist/.
         chemin_fichier = (_DIST_DIR / chemin_complet).resolve()
-        if chemin_complet and chemin_fichier.is_file() and chemin_fichier.is_relative_to(_DIST_DIR):
+        if (
+            chemin_complet
+            and chemin_fichier.is_file()
+            and chemin_fichier.is_relative_to(_DIST_DIR)
+        ):
             return FileResponse(chemin_fichier)
-        return FileResponse(_DIST_DIR / "index.html")
+        # no-cache explicite (28/08/2026) : index.html référence le bundle JS
+        # par son nom haché (immuable, /assets/ peut rester en cache aussi
+        # longtemps que voulu) — mais index.html LUI-MÊME n'avait aucun
+        # en-tête anti-cache, laissé au comportement heuristique du
+        # navigateur. Confusion réelle observée : après un déploiement
+        # corrigeant un bug, un simple rechargement resservait l'ancienne
+        # page (donc l'ancien bundle), donnant l'impression que le correctif
+        # ne fonctionnait pas alors qu'il était bien déployé côté serveur.
+        return FileResponse(
+            _DIST_DIR / "index.html", headers={"Cache-Control": "no-cache"}
+        )

@@ -51,7 +51,8 @@ INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "Test_Capteurs")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TENEUR_EAU_SOURCE = os.getenv(
-    "TENEUR_EAU_SOURCE", os.path.join(SCRIPT_DIR, "data_teneur", "Teneur en eau Paroi.xlsx")
+    "TENEUR_EAU_SOURCE",
+    os.path.join(SCRIPT_DIR, "data_teneur", "Teneur en eau Paroi.xlsx"),
 )
 
 CONFIRMER = "--confirmer" in sys.argv
@@ -60,15 +61,26 @@ MESURE_TENEUR_EAU = "mesures_teneur_eau"
 
 UTILISATEUR_ID = "backfill_historique"
 UTILISATEUR_NOM = "Import historique (data_teneur, 12/08/2026)"
-COMMENTAIRE = "Relevé terrain historique (Teneur en eau Paroi.xlsx), importé rétroactivement"
+COMMENTAIRE = (
+    "Relevé terrain historique (Teneur en eau Paroi.xlsx), importé rétroactivement"
+)
 
 # Mapping mur/couche — identique à extraire_teneur_eau_reel.py, mais le mur
 # pointe directement vers le nom de production (SOCMA 1/SOCMA 2) plutôt que
 # la numérotation interne 1/2 du POC.
+#
+# Couches alignées sur la convention déjà utilisée côté HR/T (28/08/2026) —
+# à l'origine "carreau_ext"/"carreau_isolant"/"milieu_isolant", divergentes
+# de "interface carreau et exterieur"/"interface carreau isolant"/
+# "milieu isolant" côté capteurs HR/T (même paroi, deux libellés), ce qui
+# empêchait tout croisement teneur_eau x HR/T par couche dans le nomogramme.
+# Unifié après confirmation utilisateur des correspondances (mur/couche
+# étant tous deux des champs texte libre, sans liste partagée avant ce
+# correctif — cf. SelecteurMurCouche.jsx).
 COUCHE_PAR_PREFIXE = {
-    "carreau ext": "carreau_ext",
-    "carreau int": "carreau_isolant",
-    "isolant": "milieu_isolant",
+    "carreau ext": "interface carreau et exterieur",
+    "carreau int": "interface carreau isolant",
+    "isolant": "milieu isolant",
 }
 MUR_PAR_SUFFIXE = {
     "normal": "SOCMA 1",
@@ -77,7 +89,12 @@ MUR_PAR_SUFFIXE = {
 
 
 def _echap_tag(valeur: str) -> str:
-    return valeur.replace("\\", "\\\\").replace(",", "\\,").replace("=", "\\=").replace(" ", "\\ ")
+    return (
+        valeur.replace("\\", "\\\\")
+        .replace(",", "\\,")
+        .replace("=", "\\=")
+        .replace(" ", "\\ ")
+    )
 
 
 def _echap_field_str(valeur: str) -> str:
@@ -117,7 +134,8 @@ def lire_mesures():
         raise RuntimeError("Ligne d'en-tête des dates introuvable dans Feuil1.")
 
     dates = {
-        c: ws.cell(row=ligne_dates, column=c).value.replace(tzinfo=timezone.utc) for c in colonnes
+        c: ws.cell(row=ligne_dates, column=c).value.replace(tzinfo=timezone.utc)
+        for c in colonnes
     }
 
     non_reconnues = []
@@ -158,7 +176,10 @@ def construire_ligne(d: datetime, mur: str, couche: str, valeur: float) -> str:
         f"couche={_echap_tag(couche)},"
         f"prestation={_echap_tag('Non défini')}"
     )
-    fields = f"teneur_eau_pourcent={valeur}," f'commentaire="{_echap_field_str(COMMENTAIRE)}"'
+    fields = (
+        f"teneur_eau_pourcent={valeur},"
+        f'commentaire="{_echap_field_str(COMMENTAIRE)}"'
+    )
     ts_ns = int(d.timestamp() * 1_000_000_000)
     return f"{MESURE_TENEUR_EAU},{tags} {fields} {ts_ns}"
 
@@ -169,13 +190,19 @@ def main() -> None:
     print(f"Source : {TENEUR_EAU_SOURCE}")
     mesures = list(lire_mesures())
 
-    lignes = [construire_ligne(d, mur, couche, valeur) for d, mur, couche, valeur in mesures]
+    lignes = [
+        construire_ligne(d, mur, couche, valeur) for d, mur, couche, valeur in mesures
+    ]
 
     par_mur_couche = {}
     for d, mur, couche, valeur in mesures:
-        par_mur_couche.setdefault((mur, couche), []).append((d.date().isoformat(), valeur))
+        par_mur_couche.setdefault((mur, couche), []).append(
+            (d.date().isoformat(), valeur)
+        )
 
-    print(f"\n{len(lignes)} mesures trouvées, {len(par_mur_couche)} série(s) mur/couche :\n")
+    print(
+        f"\n{len(lignes)} mesures trouvées, {len(par_mur_couche)} série(s) mur/couche :\n"
+    )
     for (mur, couche), points in sorted(par_mur_couche.items()):
         dates_str = ", ".join(f"{dt}={v}%" for dt, v in points)
         print(f"  {mur} / {couche} ({len(points)} points) : {dates_str}")

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import BoutonsExportDonnees from "../components/BoutonsExportDonnees.jsx";
+import ChampSelectOuAutre from "../components/ChampSelectOuAutre.jsx";
 import Pastille from "../components/Pastille.jsx";
+import { useMursCouchesConnus } from "../mursCouches.js";
 
 // Édition en place (chantier "source unique", section 32, 13/08/2026) :
 // capteurs.json/capteurs_retrait.json vivent désormais sur le volume
@@ -217,6 +219,7 @@ function TableauCapteurs({
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState(null);
   const [filtres, setFiltres] = useState({}); // { _cle: "texte", [champ]: "valeur" }
+  const { murs: mursConnus, couches: couchesConnues } = useMursCouchesConnus();
 
   // Filtres indépendants les uns des autres (pas de filtrage en cascade,
   // plus simple à comprendre) — menu déroulant pour les colonnes
@@ -380,6 +383,14 @@ function TableauCapteurs({
                           ) : (
                             "—"
                           )
+                        ) : champ === "nom_mur" || champ === "nom_couche" ? (
+                          <ChampSelectOuAutre
+                            valeur={enEdition.valeurs[champ]}
+                            options={champ === "nom_mur" ? mursConnus : couchesConnues}
+                            onChange={(v) =>
+                              setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, [champ]: v } })
+                            }
+                          />
                         ) : (
                           <input
                             value={enEdition.valeurs[champ]}

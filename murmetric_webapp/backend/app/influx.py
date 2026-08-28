@@ -21,10 +21,17 @@ def get_client() -> InfluxDBClient:
     # mesures_dewesoft (retrait, ~1,5 milliard de points, échantillonnage
     # 100 Hz) — vérifié en conditions réelles le 12/08/2026 (read timeout à
     # 10s sur une requête aggregateWindow(1d) filtrée par canal seul, sur un
-    # an). 30s laisse la marge nécessaire ; un filtre mur/couche/canal
-    # réduit généralement bien plus vite en pratique.
+    # an). 30s->60s le 28/08/2026 : re-testé après l'ajout de Début/Fin au
+    # nomogramme (croisement-libre), qui permet désormais une plage
+    # explicite dépassant le plafond implicite de 30 jours utilisé jusque-là
+    # pour retrait — un croisement teneur_eau x retrait sur ~80 jours filtré
+    # sur un seul canal a mis 7 à 11s selon la fenêtre d'agrégation choisie
+    # (charge variable du serveur), déjà proche de l'ancienne marge de 30s.
     return InfluxDBClient(
-        url=config.INFLUX_URL, token=config.INFLUX_TOKEN, org=config.INFLUX_ORG, timeout=30_000
+        url=config.INFLUX_URL,
+        token=config.INFLUX_TOKEN,
+        org=config.INFLUX_ORG,
+        timeout=60_000,
     )
 
 

@@ -1,15 +1,13 @@
 import { useState } from "react";
-import {
-  canvasVersDataUrl,
-  copierDataUrlDansPressePapiers,
-  svgVersDataUrl,
-  telechargerDataUrl,
-} from "../exportGraphique.js";
+import { canvasVersDataUrl, copierDataUrlDansPressePapiers, svgVersDataUrl } from "../exportGraphique.js";
 
-// Boutons d'export réutilisables (téléchargement PNG + copie presse-papiers)
-// — un seul composant pour les deux types de rendu graphique de l'appli
-// (<canvas> pour les nomogrammes, <svg> pour les courbes valeur/temps).
-export default function BoutonsExport({ obtenirElement, type, nomFichier = "graphique", imbrique = false }) {
+// Bouton d'export réutilisable (copie presse-papiers) — un seul composant
+// pour les deux types de rendu graphique de l'appli (<canvas> pour les
+// nomogrammes, <svg> pour les courbes valeur/temps). Le téléchargement PNG
+// a été retiré le 28/08/2026 (demande explicite) — la copie presse-papiers
+// couvre le même besoin (coller dans un document/message) sans passer par
+// le système de fichiers.
+export default function BoutonsExport({ obtenirElement, type, imbrique = false }) {
   const [message, setMessage] = useState(null);
   const [enCours, setEnCours] = useState(false);
 
@@ -17,11 +15,6 @@ export default function BoutonsExport({ obtenirElement, type, nomFichier = "grap
     const el = obtenirElement();
     if (!el) return null;
     return type === "svg" ? await svgVersDataUrl(el) : canvasVersDataUrl(el);
-  };
-
-  const telecharger = async () => {
-    const url = await obtenirDataUrl();
-    if (url) telechargerDataUrl(url, `${nomFichier}.png`);
   };
 
   const copier = async () => {
@@ -34,7 +27,7 @@ export default function BoutonsExport({ obtenirElement, type, nomFichier = "grap
         setMessage("Copié dans le presse-papiers ✓");
       }
     } catch {
-      setMessage("Copie impossible sur ce navigateur — utilise le téléchargement.");
+      setMessage("Copie impossible sur ce navigateur.");
     } finally {
       setEnCours(false);
       setTimeout(() => setMessage(null), 3000);
@@ -43,9 +36,6 @@ export default function BoutonsExport({ obtenirElement, type, nomFichier = "grap
 
   const boutons = (
     <>
-      <button type="button" onClick={telecharger}>
-        Télécharger PNG
-      </button>
       <button type="button" onClick={copier} disabled={enCours}>
         Copier l'image
       </button>

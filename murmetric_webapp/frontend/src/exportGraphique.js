@@ -1,9 +1,10 @@
-// Export des graphiques en PNG (téléchargement + copie presse-papiers) —
-// demande explicite du 13/08/2026 : permettre à l'utilisateur de coller
-// facilement une courbe dans un rapport. Gère les deux types de rendu
-// utilisés dans l'appli : <canvas> (Nomogramme 2D/3D) directement, <svg>
-// (GraphiqueSVG, FiltreHampel) via une conversion (sérialisation ->
-// <img> -> canvas hors-écran).
+// Export des graphiques en PNG via le presse-papiers — demande explicite du
+// 13/08/2026 : permettre à l'utilisateur de coller facilement une courbe
+// dans un rapport (le téléchargement PNG a été retiré le 28/08/2026,
+// demande explicite — la copie presse-papiers couvre le même besoin). Gère
+// les deux types de rendu utilisés dans l'appli : <canvas> (Nomogramme
+// 2D/3D) directement, <svg> (GraphiqueSVG, FiltreHampel) via une conversion
+// (sérialisation -> <img> -> canvas hors-écran).
 const FOND = "#0f1117"; // même couleur que --body-bg (index.css) : sans ça,
 // un SVG exporté a un fond transparent, illisible une fois collé sur du blanc.
 
@@ -42,13 +43,6 @@ export function svgVersDataUrl(svgElement, echelle = 2) {
     img.onerror = () => reject(new Error("Conversion SVG -> image échouée"));
     img.src = svgDataUrl;
   });
-}
-
-export function telechargerDataUrl(dataUrl, nomFichier) {
-  const a = document.createElement("a");
-  a.href = dataUrl;
-  a.download = nomFichier;
-  a.click();
 }
 
 export async function copierDataUrlDansPressePapiers(dataUrl) {
