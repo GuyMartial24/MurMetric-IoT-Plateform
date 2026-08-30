@@ -5,6 +5,7 @@ import {
   AXES_DISPONIBLES,
   AXES_GRANDEURS,
   COULEURS_CANAUX_RETRAIT,
+  FENETRE_PAR_RESOLUTION,
   TYPES_TRACE,
   UNITES_TEMPS,
   construireParamAxe,
@@ -140,7 +141,14 @@ export default function Nomogramme3D({ mur, couche }) {
     const canauxAInterroger = roleEstRetrait ? (multiCanal ? canauxDisponibles : [canal]) : [null];
     const resultats = await Promise.all(
       canauxAInterroger.map(async (c) => {
-        const params = { mur, couche, debut, fin, axe_x: construireParamAxe(grandeur, c) };
+        const params = {
+          mur,
+          couche,
+          debut,
+          fin,
+          axe_x: construireParamAxe(grandeur, c),
+          fenetre: FENETRE_PAR_RESOLUTION[resolutionTemps],
+        };
         Object.keys(params).forEach((k) => (params[k] == null || params[k] === "") && delete params[k]);
         const resultat = await api.croisementLibre(params);
         return { canal: c, bruts: resultat?.points ?? [] };
@@ -173,7 +181,7 @@ export default function Nomogramme3D({ mur, couche }) {
       const [resultats, nouvelleSerieX, nouvelleSerieY, nouvelleSerieZ] = await Promise.all([
         Promise.all(
           canaux.map(async (c) => {
-            const params = { mur, couche, debut, fin };
+            const params = { mur, couche, debut, fin, fenetre: FENETRE_PAR_RESOLUTION[resolutionTemps] };
             rolesReels.forEach((role, i) => {
               params[CLES_BACKEND[i]] = construireParamAxe(choixParRole[role], c);
             });
@@ -225,7 +233,7 @@ export default function Nomogramme3D({ mur, couche }) {
 
   useEffect(() => {
     charger();
-  }, [mur, couche, axeX, axeY, axeZ, canal, uniteTemps, debut, fin, canauxDisponibles]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mur, couche, axeX, axeY, axeZ, canal, uniteTemps, debut, fin, canauxDisponibles, resolutionTemps]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Rotation automatique — façon POC (autorotate), désactivée dès que
   // l'utilisateur prend la main à la souris (cf. surSourisBas).
@@ -861,7 +869,6 @@ export default function Nomogramme3D({ mur, couche }) {
             <option value="jour">Jour</option>
             <option value="semaine">Semaine</option>
             <option value="mois">Mois</option>
-            <option value="annee">Année</option>
           </select>
         </div>
         <div className="champ">

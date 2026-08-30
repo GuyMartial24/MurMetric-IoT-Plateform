@@ -117,6 +117,25 @@ export const TYPES_TRACE = [
   { valeur: "nuage_trait", label: "Nuage + trait" },
 ];
 
+// Fenêtre d'agrégation InfluxDB correspondant à chaque résolution de l'axe
+// temps (30/08/2026, demande explicite) — la "Résolution axe temps" ne
+// pilotait jusqu'ici que le regroupement des étiquettes de graduation
+// (graduationsTemps), sans jamais influencer la donnée réellement
+// interrogée (fenêtre auto-calculée côté backend, cf. _fenetre_auto,
+// mesures.py, uniquement fonction de la plage Début/Fin). Envoyée
+// explicitement en paramètre `fenetre` de croisement-libre, elle
+// remplace ce calcul automatique — sans risque de revenir au coût de
+// lecture des points bruts : la mesure InfluxDB interrogée (brute/5min/
+// horaire) reste choisie uniquement selon la plage (_mesure_retrait,
+// mesures.py), jamais selon cette fenêtre. Pas d'entrée "année" — retirée
+// du sélecteur (30/08/2026, demande explicite), une agrégation annuelle
+// n'ayant guère de sens tant que le projet ne couvre pas plusieurs années.
+export const FENETRE_PAR_RESOLUTION = {
+  jour: "1d",
+  semaine: "1w",
+  mois: "1mo",
+};
+
 export const UNITES_TEMPS = {
   heure: { diviseur: 3_600_000, label: "heures" },
   jour: { diviseur: 86_400_000, label: "jours" },

@@ -10,6 +10,18 @@ from . import config
 
 MESURE_CAPTEURS = "mesures_capteurs"
 MESURE_DEWESOFT = "mesures_dewesoft"
+# Pré-agrégations de mesures_dewesoft (100 Hz), calculées en continu par les
+# Tasks InfluxDB "downsample_retrait_5m"/"downsample_retrait_1h" (créées les
+# 30/08/2026 et 28/08/2026, backfill depuis le 21/11/2025 = début des
+# données) — utilisées par croisement_libre() pour éviter de scanner les
+# points bruts à chaque requête sur une plage large. 5 minutes pour les
+# plages moyennes (2 à 90 jours, résolution nettement plus fine que l'heure
+# tout en restant sans risque quel que soit le nombre de canaux interrogés
+# en parallèle) ; l'heure au-delà (plages très larges, seule la moyenne
+# horaire garde un coût de lecture négligeable). Cf. _requeter_axe/
+# _mesure_retrait dans mesures.py.
+MESURE_DEWESOFT_5M = "mesures_dewesoft_5m"
+MESURE_DEWESOFT_1H = "mesures_dewesoft_1h"
 MESURE_TENEUR_EAU = "mesures_teneur_eau"
 MESURE_HEARTBEAT = "pipeline_heartbeat"
 
@@ -27,11 +39,17 @@ def get_client() -> InfluxDBClient:
     # pour retrait — un croisement teneur_eau x retrait sur ~80 jours filtré
     # sur un seul canal a mis 7 à 11s selon la fenêtre d'agrégation choisie
     # (charge variable du serveur), déjà proche de l'ancienne marge de 30s.
+    # 60s->300s le 30/08/2026 (demande explicite, accepte d'attendre plus
+    # longtemps pour un accès aux données brutes sur une plage plus large,
+    # cf. _mesure_retrait dans mesures.py) — marge large par rapport aux
+    # temps réellement mesurés (voir cette fonction), le budget de 5 min ne
+    # sert qu'à absorber un cas dégradé (charge serveur, futur groupe de
+    # canaux à 3+ membres), pas un temps de réponse attendu en pratique.
     return InfluxDBClient(
         url=config.INFLUX_URL,
         token=config.INFLUX_TOKEN,
         org=config.INFLUX_ORG,
-        timeout=60_000,
+        timeout=300_000,
     )
 
 

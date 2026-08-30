@@ -13,6 +13,8 @@ from ..hampel import appliquer_bornes_physiques, filtrer_hampel
 from ..influx import (
     MESURE_CAPTEURS,
     MESURE_DEWESOFT,
+    MESURE_DEWESOFT_1H,
+    MESURE_DEWESOFT_5M,
     MESURE_TENEUR_EAU,
     flux_escape,
     query_api,
@@ -777,8 +779,11 @@ def _requeter_axe(
     fin: str,
     fenetre: str,
 ) -> dict[str, float]:
+    mesure_influx = (
+        _mesure_retrait(debut, fin) if mesure == "retrait" else _MESURES_LIBRES[mesure]
+    )
     filtres = [
-        f'r._measurement == "{_MESURES_LIBRES[mesure]}"',
+        f'r._measurement == "{mesure_influx}"',
         f'r._field == "{champ}"',
     ]
     # teneur_eau porte ses tags mur/couche SANS le préfixe nom_ (cf.
@@ -790,7 +795,20 @@ def _requeter_axe(
     if mur:
         filtres.append(f'r.{tag_mur} == "{flux_escape(mur)}"')
     if mesure in ("hr_t", "teneur_eau") and couche:
-        filtres.append(f'r.{tag_couche} == "{flux_escape(couche)}"')
+        # "interface carreau isolant+milieu isolant" (30/08/2026, demande
+        # explicite) : moyenne de plusieurs couches de teneur en eau au choix
+        # de l'utilisateur — même mécanisme que la moyenne de canaux retrait
+        # ci-dessous, aucune convention de nommage n'étant exploitable pour
+        # regrouper automatiquement les couches (contrairement aux canaux
+        # retrait, cf. canauxRetrait.js).
+        couches = couche.split("+")
+        if len(couches) == 1:
+            filtres.append(f'r.{tag_couche} == "{flux_escape(couches[0])}"')
+        else:
+            clause = " or ".join(
+                f'r.{tag_couche} == "{flux_escape(c)}"' for c in couches
+            )
+            filtres.append(f"({clause})")
     if mesure == "retrait" and canal:
         # "HA1+HA2" (28/08/2026, demande explicite) : moyenne de plusieurs
         # canaux plutôt qu'un seul — même mécanisme que "Tous" (aucun canal,
@@ -834,29 +852,70 @@ def _fenetre_auto(debut_iso: str, fin_iso: str) -> str:
     """Fenêtre d'agrégation adaptée à l'étendue [debut_iso, fin_iso] — utilisée
     par croisement_libre quand l'appelant n'impose pas de fenêtre explicite.
 
-    Sans ça, une plage large filtrée sur un axe retrait (mesures_dewesoft,
-    échantillonnage 100 Hz) restait figée sur la fenêtre par défaut "1h" quelle
-    que soit l'étendue demandée — inoffensif tant que le plafond implicite de
-    30 jours de _valider_bornes limitait la casse, mais l'ajout de Début/Fin
-    au nomogramme (28/08/2026) permet de le contourner explicitement : un
-    croisement teneur_eau x retrait sur ~80 jours a mis 7 à 11s à répondre
-    (charge serveur variable), déjà proche de l'ancien timeout client de 30s
-    (relevé le 28/08/2026, cf. get_client() dans influx.py). Grossir la
-    fenêtre pour les plages larges réduit le nombre de points agrégés
-    renvoyés (donc le rendu du nomogramme reste lisible) et allège un peu la
-    charge de calcul, sans prétendre éliminer le coût de lecture des points
-    bruts sous-jacent — d'où aussi le timeout client relevé à 60s en
-    complément, pas un correctif de vitesse à lui seul."""
+    Paliers alignés sur _mesure_retrait (30/08/2026, seuil brut relevé de 2 à
+    14 jours, cf. cette fonction pour la justification et les mesures) :
+    jusqu'à 14 jours la source est brute (100 Hz), fenêtre "1m" — nettement
+    plus fin que l'ancien "15m" à 2 jours ; 14 à 90 jours : moyenne 5 minutes
+    pré-calculée (mesures_dewesoft_5m), fenêtre "1h" ; au-delà de 90 jours,
+    moyenne horaire (mesures_dewesoft_1h), paliers larges (1d/3d) inchangés
+    depuis le 28/08/2026 — c'est cette zone qui a initialement motivé tout
+    le mécanisme (timeout sur ~9 mois).
+
+    ⚠ La finesse de LA FENÊTRE elle-même a un coût, pas seulement la source
+    lue — leçon apprise le 30/08/2026 : le premier chiffrage de _mesure_retrait
+    (4,2s pour Moy(2 canaux)/14j) avait été mesuré avec une fenêtre "15m" par
+    erreur, alors que le code déployé demande "1m" ; en conditions réelles
+    (requête HTTP complète, pas juste la lecture InfluxDB), ce même cas met
+    en fait ~20s (cf. _mesure_retrait) — un facteur ~5x lié à la finesse de
+    la fenêtre elle-même (plus de fenêtres à calculer), au-delà du seul coût
+    de lecture des points bruts. Reste large sous le budget de 300s, mais à
+    re-vérifier avec la fenêtre RÉELLEMENT utilisée avant de resserrer
+    encore un seuil, pas avec une fenêtre de confort différente."""
     jours = (datetime.fromisoformat(fin_iso) - datetime.fromisoformat(debut_iso)).days
-    if jours <= 2:
-        return "15m"
-    if jours <= 10:
+    if jours <= 14:
+        return "1m"
+    if jours <= 90:
         return "1h"
-    if jours <= 60:
-        return "6h"
     if jours <= 200:
         return "1d"
     return "3d"
+
+
+def _mesure_retrait(debut_iso: str, fin_iso: str) -> str:
+    """Mesure InfluxDB à interroger pour un axe retrait dans croisement_libre,
+    à 3 niveaux (30/08/2026, seuil brut relevé de 2 à 14 jours) :
+
+    - ≤ 14 jours : mesures_dewesoft (brute, 100 Hz) — fenêtre "1m" (cf.
+      _fenetre_auto). Seuil relevé de 2 à 14 jours (demande explicite,
+      30/08/2026) après avoir mesuré en conditions réelles le motif le plus
+      coûteux, la moyenne de plusieurs canaux (une seule requête
+      séquentielle avec clause OR, contrairement à "Tous les canaux" qui
+      reste rapide même à 90 jours grâce au parallélisme, ~7,7s à 14 jours
+      en fenêtre "1m", 8 canaux en parallèle) : Moy(HB1,HB2) en brut, testé
+      via une fenêtre "15m" (par erreur, pas celle réellement déployée), a
+      mis 4,2s à 14 jours, 12,2s à 30 jours, 33,9s à 60 jours, et 67,5s à 90
+      jours — DÉJÀ au-delà de l'ancien timeout de 60s. **Re-testé avec la
+      vraie fenêtre "1m" via l'API réelle (pas juste InfluxDB en direct)** :
+      ~20s à 14 jours, pas 4,2s — la finesse de la fenêtre coûte cher en
+      elle-même (plus de fenêtres à calculer), en plus du coût de lecture
+      du brut. Reste ~14x sous le budget de 300s (timeout client,
+      influx.py), marge confortable mais nettement moindre que le ~70x
+      initialement estimé à tort.
+    - 14 à 90 jours : mesures_dewesoft_5m (Task InfluxDB
+      "downsample_retrait_5m", 30/08/2026) — sans risque quel que soit le
+      nombre de canaux (jamais de lecture du brut), résolution déjà très
+      fine (5 min) pour cette plage.
+    - > 90 jours : mesures_dewesoft_1h (Task "downsample_retrait_1h",
+      28/08/2026) — inchangé, c'est le palier qui a réglé le timeout
+      d'origine (croisement teneur_eau x retrait sur 2 canaux moyennés,
+      ~9 mois, 51,5s avant correctif) ; laissé tel quel plutôt que
+      d'élargir sans nouvelle vérification à cette échelle."""
+    jours = (datetime.fromisoformat(fin_iso) - datetime.fromisoformat(debut_iso)).days
+    if jours <= 14:
+        return MESURE_DEWESOFT
+    if jours <= 90:
+        return MESURE_DEWESOFT_5M
+    return MESURE_DEWESOFT_1H
 
 
 @router.get("/croisement-libre")

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useCanauxRetrait } from "../canauxRetrait.js";
+import { useCouchesTeneurEau } from "../couchesTeneurEau.js";
 import {
   AXES_DISPONIBLES,
   COULEURS_CANAUX_RETRAIT,
+  FENETRE_PAR_RESOLUTION,
   TYPES_TRACE,
   UNITES_TEMPS,
   construireParamAxe,
@@ -59,7 +61,15 @@ export default function Nomogramme({ mur, couche }) {
   // usage différent (convertir "Temps" en grandeur d'axe du croisement).
   const [resolutionTemps, setResolutionTemps] = useState("jour");
   const [survolTemps, setSurvolTemps] = useState(null);
-  const [survolDouble, setSurvolDouble] = useState(null);
+  const [survolRetraitTeneur, setSurvolRetraitTeneur] = useState(null);
+  // Panneau "retrait en fonction du temps, axe teneur en eau" (30/08/2026,
+  // demande explicite) — remplace l'ancien panneau à double échelle.
+  // Couches à moyenner pour l'axe teneur en eau, choisies librement par
+  // l'utilisateur (pas de convention "intérieur/extérieur" exploitable,
+  // cf. couchesTeneurEau.js) — indépendant du champ "Couche" partagé plus
+  // haut, qui filtre hr_t/retrait pour un usage différent.
+  const [couchesTeneurEauSelectionnees, setCouchesTeneurEauSelectionnees] = useState([]);
+  const [serieTeneurEauAxe, setSerieTeneurEauAxe] = useState([]);
   // Couleurs personnalisables (28/08/2026, demande explicite) — couleurX/Y
   // pilotent les 2 courbes des panneaux 2/3 (le croisement du panneau 1 ne
   // s'y prête pas de la même façon : il colore par ancienneté temporelle
@@ -71,7 +81,7 @@ export default function Nomogramme({ mur, couche }) {
   const [couleurFond, setCouleurFond] = useState("#12141c");
   const canvasRef = useRef(null);
   const canvasDroiteRef = useRef(null);
-  const canvasDoubleEchelleRef = useRef(null);
+  const canvasRetraitTeneurRef = useRef(null);
   // Garde anti-concurrence (28/08/2026) : chaque changement de Début/Fin
   // déclenche un nouveau chargement sans annuler le précédent — une
   // réponse plus ancienne mais plus rapide (ou une erreur plus ancienne)
@@ -93,6 +103,18 @@ export default function Nomogramme({ mur, couche }) {
   // Canaux + moyennes filtrés sur le "Mur" déjà sélectionné plus haut dans
   // la page (28/08/2026, demande explicite) — cf. canauxRetrait.js.
   const { canaux: canauxDisponibles, moyennes: moyennesCanaux } = useCanauxRetrait(mur);
+  // Panneau "retrait en fonction du temps, axe teneur en eau" : actif
+  // seulement quand Axe X/Axe Y = retrait + teneur en eau (peu importe
+  // l'ordre) — demande explicite du 30/08/2026, même condition que
+  // l'ancien panneau à double échelle qu'il remplace.
+  const roleRetrait = axeX.startsWith("retrait") ? "x" : axeY.startsWith("retrait") ? "y" : null;
+  const roleTeneurEau =
+    axeX === "teneur_eau:teneur_eau_pourcent" ? "x" : axeY === "teneur_eau:teneur_eau_pourcent" ? "y" : null;
+  const panelRetraitTeneurActif = roleRetrait != null && roleTeneurEau != null;
+  const couchesTeneurEauDisponibles = useCouchesTeneurEau(mur);
+  useEffect(() => {
+    setCouchesTeneurEauSelectionnees(couchesTeneurEauDisponibles);
+  }, [couchesTeneurEauDisponibles]);
 
   function libelleAxe(role) {
     if (choixParRole[role] === "temps") return `Temps (${UNITES_TEMPS[uniteTemps].label})`;
@@ -111,7 +133,14 @@ export default function Nomogramme({ mur, couche }) {
     const canauxAInterroger = roleEstRetrait ? (multiCanal ? canauxDisponibles : [canal]) : [null];
     const resultats = await Promise.all(
       canauxAInterroger.map(async (c) => {
-        const params = { mur, couche, debut, fin, axe_x: construireParamAxe(grandeur, c) };
+        const params = {
+          mur,
+          couche,
+          debut,
+          fin,
+          axe_x: construireParamAxe(grandeur, c),
+          fenetre: FENETRE_PAR_RESOLUTION[resolutionTemps],
+        };
         Object.keys(params).forEach((k) => (params[k] == null || params[k] === "") && delete params[k]);
         const resultat = await api.croisementLibre(params);
         return { canal: c, bruts: resultat?.points ?? [] };
@@ -143,7 +172,7 @@ export default function Nomogramme({ mur, couche }) {
       const [resultats, nouvelleSerieX, nouvelleSerieY] = await Promise.all([
         Promise.all(
           canaux.map(async (c) => {
-            const params = { mur, couche, debut, fin };
+            const params = { mur, couche, debut, fin, fenetre: FENETRE_PAR_RESOLUTION[resolutionTemps] };
             rolesReels.forEach((role, i) => {
               params[CLES_BACKEND[i]] = construireParamAxe(choixParRole[role], c);
             });
@@ -195,7 +224,41 @@ export default function Nomogramme({ mur, couche }) {
 
   useEffect(() => {
     charger();
-  }, [mur, couche, axeX, axeY, canal, uniteTemps, debut, fin, canauxDisponibles]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mur, couche, axeX, axeY, canal, uniteTemps, debut, fin, canauxDisponibles, resolutionTemps]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Série teneur en eau dédiée au panneau retrait/temps (30/08/2026) —
+  // indépendante de serieX/serieY : celles-ci suivent le champ "Couche"
+  // partagé plus haut, alors que ce panneau a son propre sélecteur de
+  // couches à moyenner. Un seul axe interrogé (comme chargerSerieIndependante),
+  // avec le "+"-join déjà géré côté backend (_requeter_axe, mesures.py).
+  useEffect(() => {
+    if (!panelRetraitTeneurActif || couchesTeneurEauSelectionnees.length === 0) {
+      setSerieTeneurEauAxe([]);
+      return;
+    }
+    let annule = false;
+    const params = {
+      mur,
+      debut,
+      fin,
+      axe_x: "teneur_eau:teneur_eau_pourcent",
+      couche: couchesTeneurEauSelectionnees.join("+"),
+      fenetre: FENETRE_PAR_RESOLUTION[resolutionTemps],
+    };
+    Object.keys(params).forEach((k) => (params[k] == null || params[k] === "") && delete params[k]);
+    api
+      .croisementLibre(params)
+      .then((resultat) => {
+        if (annule) return;
+        setSerieTeneurEauAxe((resultat?.points ?? []).map((p) => ({ time: p.time, valeur: p.x })));
+      })
+      .catch(() => {
+        if (!annule) setSerieTeneurEauAxe([]);
+      });
+    return () => {
+      annule = true;
+    };
+  }, [panelRetraitTeneurActif, mur, debut, fin, couchesTeneurEauSelectionnees, resolutionTemps]);
 
   const bornes = useMemo(() => {
     if (points.length === 0) return null;
@@ -678,16 +741,22 @@ export default function Nomogramme({ mur, couche }) {
     setSurvolTemps(plusProche && distanceMin < (tMax - tMin || 1) * 0.02 ? plusProche : null);
   };
 
-  // 3e panneau, à double échelle (28/08/2026, demande explicite) — même
-  // évolution X(t)/Y(t) que le panneau du milieu, mais avec un axe Y par
-  // grandeur (échelle propre à chacune) plutôt qu'un axe partagé, pour
-  // comparer lequel des deux se lit mieux en pratique. Grille dessinée
-  // seulement pour l'axe gauche (X) : deux grilles superposées auraient
-  // surchargé visuellement le graphique ; l'axe droit (Y) garde ses
-  // repères chiffrés, teintés dans sa couleur pour rester rattachable à sa
-  // courbe.
+  // 3e panneau, retrait en fonction du temps avec axe teneur en eau
+  // (30/08/2026, demande explicite) — remplace l'ancien panneau à double
+  // échelle. Une seule courbe (retrait, le rôle X ou Y déjà réglé sur cette
+  // grandeur) tracée contre le temps ; sous l'axe temps habituel, une
+  // SECONDE rangée de graduation — une par relevé réel de teneur en eau
+  // (donc irrégulièrement espacée, héritée du rythme réel des relevés),
+  // positionnée à la date de ce relevé mais étiquetée avec sa valeur, pas
+  // la date. Pas de ligne de projection automatique par relevé : seuls les
+  // croisements demandés explicitement (champs "Trouver ... pour ... =",
+  // déjà utilisés par le panneau de croisement) sont mis en évidence ici,
+  // avec la valeur trouvée affichée sur LES DEUX axes (retrait sur la
+  // courbe, teneur en eau sur sa rangée de graduation) — répond
+  // directement à "quel retrait pour quelle teneur en eau" sans obliger à
+  // aligner soi-même au pixel près.
   useEffect(() => {
-    const canvas = canvasDoubleEchelleRef.current;
+    const canvas = canvasRetraitTeneurRef.current;
     if (!canvas) return;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
@@ -698,50 +767,39 @@ export default function Nomogramme({ mur, couche }) {
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = couleurFond;
     ctx.fillRect(0, 0, w, h);
-    if (serieX.length === 0 && serieY.length === 0) return;
+    if (!panelRetraitTeneurActif) return;
+    const serieRetraitPanel = roleRetrait === "x" ? serieX : serieY;
+    if (serieRetraitPanel.length === 0) return;
+    const couleurRetraitPanel = roleRetrait === "x" ? couleurX : couleurY;
 
-    const temps = [...serieX, ...serieY].map((p) => new Date(p.time).getTime());
+    const temps = [...serieRetraitPanel, ...serieTeneurEauAxe].map((p) => new Date(p.time).getTime());
     const tMin = Math.min(...temps);
     const tMax = Math.max(...temps);
-    const xs = serieX.map((p) => p.valeur).filter((v) => v != null);
-    const ys = serieY.map((p) => p.valeur).filter((v) => v != null);
-    const xMin = Math.min(...xs);
-    const xMax = Math.max(...xs);
-    const yMin = Math.min(...ys);
-    const yMax = Math.max(...ys);
-    const padX = (xMax - xMin) * 0.08 || 1;
-    const padY = (yMax - yMin) * 0.08 || 1;
+    const valeurs = serieRetraitPanel.map((p) => p.valeur).filter((v) => v != null);
+    const vMin = Math.min(...valeurs);
+    const vMax = Math.max(...valeurs);
+    const padV = (vMax - vMin) * 0.08 || 1;
 
-    const margeG = 50;
-    const margeD = 50;
-    const margeBas = 50;
-    const tx = (t) => margeG + ((t - tMin) / (tMax - tMin || 1)) * (w - margeG - margeD);
-    const tyX = (v) => h - margeBas - ((v - (xMin - padX)) / (xMax + padX - (xMin - padX) || 1)) * (h - margeBas - 20);
-    const tyY = (v) => h - margeBas - ((v - (yMin - padY)) / (yMax + padY - (yMin - padY) || 1)) * (h - margeBas - 20);
+    // margeBas agrandie (50 sur les autres panneaux) : la 2e rangée de
+    // graduation (teneur en eau) a besoin de sa propre place sous l'axe
+    // temps habituel.
+    const marge = 50;
+    const margeBas = 110;
+    const tx = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (w - marge - 20);
+    const ty = (v) => h - margeBas - ((v - (vMin - padV)) / (vMax + padV - (vMin - padV) || 1)) * (h - margeBas - 20);
 
-    const COULEUR_X = couleurX;
-    const COULEUR_Y = couleurY;
-
-    ctx.font = "11px system-ui";
     ctx.strokeStyle = "#2a2e3a";
-    ctx.lineWidth = 1;
-    if (serieX.length > 0) {
-      for (const gv of graduations(xMin - padX, xMax + padX)) {
-        ctx.beginPath();
-        ctx.moveTo(margeG, tyX(gv));
-        ctx.lineTo(w - margeD, tyX(gv));
-        ctx.stroke();
-        ctx.fillStyle = COULEUR_X;
-        ctx.fillText(gv.toString(), 8, tyX(gv) + 4);
-      }
-    }
-    if (serieY.length > 0) {
-      for (const gv of graduations(yMin - padY, yMax + padY)) {
-        ctx.fillStyle = COULEUR_Y;
-        ctx.fillText(gv.toString(), w - margeD + 8, tyY(gv) + 4);
-      }
-    }
     ctx.fillStyle = "#a0a6b5";
+    ctx.font = "11px system-ui";
+    ctx.lineWidth = 1;
+    for (const gv of graduations(vMin - padV, vMax + padV)) {
+      ctx.beginPath();
+      ctx.moveTo(marge, ty(gv));
+      ctx.lineTo(w - 20, ty(gv));
+      ctx.stroke();
+      ctx.fillText(gv.toString(), 8, ty(gv) + 4);
+    }
+    // Axe du bas, 1re rangée : temps (comme les autres panneaux).
     for (const tick of graduationsTemps(tMin, tMax, resolutionTemps)) {
       const px = tx(tick.t);
       ctx.strokeStyle = "#2a2e3a";
@@ -752,27 +810,31 @@ export default function Nomogramme({ mur, couche }) {
       ctx.fillStyle = "#a0a6b5";
       ctx.fillText(tick.label, px - 15, h - margeBas + 16);
     }
-    ctx.fillText("Temps", w / 2 - 20, h - margeBas + 34);
-    if (serieX.length > 0) {
-      ctx.save();
-      ctx.translate(14, h / 2 + 20);
-      ctx.rotate(-Math.PI / 2);
-      ctx.fillStyle = COULEUR_X;
-      ctx.fillText(libelleAxe("x"), 0, 0);
-      ctx.restore();
-    }
-    if (serieY.length > 0) {
-      ctx.save();
-      ctx.translate(w - 14, h / 2 - 20);
-      ctx.rotate(Math.PI / 2);
-      ctx.fillStyle = COULEUR_Y;
-      ctx.fillText(libelleAxe("y"), 0, 0);
-      ctx.restore();
-    }
+    ctx.fillText("Temps", w - 40, h - margeBas + 32);
+    ctx.save();
+    ctx.translate(14, marge - 4);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = couleurRetraitPanel;
+    ctx.fillText(libelleAxe(roleRetrait), 0, 0);
+    ctx.restore();
 
-    // Regroupement par canal pour la continuité des courbes — cf. panneau
-    // du milieu. `canal` vaut null hors mode "Tous les canaux" : un seul
-    // groupe naturel dans ce cas.
+    // Axe du bas, 2e rangée (demande explicite) : une graduation par relevé
+    // réel de teneur en eau, étiquetée avec sa valeur.
+    const yLigneTeneur = h - margeBas + 55;
+    ctx.strokeStyle = "#4a4f5e";
+    ctx.fillStyle = "#a0a6b5";
+    serieTeneurEauAxe.forEach((p) => {
+      const px = tx(new Date(p.time).getTime());
+      ctx.beginPath();
+      ctx.moveTo(px, yLigneTeneur - 4);
+      ctx.lineTo(px, yLigneTeneur + 4);
+      ctx.stroke();
+      ctx.fillText(p.valeur.toFixed(1), px - 10, yLigneTeneur + 18);
+    });
+    ctx.fillText("Teneur en eau (%)", w - 100, h - margeBas + 90);
+
+    // Courbe de retrait — regroupement par canal pour la continuité (mode
+    // "Tous les canaux") — cf. panneau du milieu.
     const grouperParCanal = (serie) => {
       const groupes = {};
       serie.forEach((p) => {
@@ -780,8 +842,7 @@ export default function Nomogramme({ mur, couche }) {
       });
       return Object.values(groupes);
     };
-    // Type de tracé (28/08/2026, correctif) — cf. panneau du milieu.
-    const tracerCourbe = (groupes, echelle, couleur) => {
+    const tracerCourbe = (groupes, couleur) => {
       ctx.strokeStyle = couleur;
       ctx.fillStyle = couleur;
       ctx.lineWidth = 1.5;
@@ -791,7 +852,7 @@ export default function Nomogramme({ mur, couche }) {
           ctx.beginPath();
           tries.forEach((p, i) => {
             const px = tx(new Date(p.time).getTime());
-            const py = echelle(p.valeur);
+            const py = ty(p.valeur);
             if (i === 0) ctx.moveTo(px, py);
             else ctx.lineTo(px, py);
           });
@@ -800,70 +861,90 @@ export default function Nomogramme({ mur, couche }) {
         if (typeTrace !== "trait") {
           tries.forEach((p) => {
             ctx.beginPath();
-            ctx.arc(tx(new Date(p.time).getTime()), echelle(p.valeur), 2.5, 0, 2 * Math.PI);
+            ctx.arc(tx(new Date(p.time).getTime()), ty(p.valeur), 2.5, 0, 2 * Math.PI);
             ctx.fill();
           });
         }
       });
     };
-    if (serieX.length > 0) tracerCourbe(grouperParCanal(serieX), tyX, COULEUR_X);
-    if (serieY.length > 0) tracerCourbe(grouperParCanal(serieY), tyY, COULEUR_Y);
+    tracerCourbe(grouperParCanal(serieRetraitPanel), couleurRetraitPanel);
 
-    // Croisements demandés explicitement — cf. panneau du milieu, chaque
-    // valeur positionnée sur SON propre axe (tyX/tyY).
-    const dessinerCroisementTemps = (c, couleur) => {
+    // Croisements demandés explicitement — valeur trouvée affichée sur les
+    // 2 axes de ce panneau (courbe de retrait + rangée teneur en eau).
+    const dessinerCroisement = (c, couleur) => {
       if (c.time == null) return;
       const px = tx(new Date(c.time).getTime());
+      const valeurRetrait = c[roleRetrait];
+      const valeurTeneur = c[roleTeneurEau];
       ctx.strokeStyle = couleur;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(px, 10);
-      ctx.lineTo(px, h - margeBas);
+      if (valeurRetrait != null) {
+        // Trait vertical arrêté À LA COURBE (30/08/2026, signalé par
+        // l'utilisateur) — ne doit pas continuer au-delà (rien à projeter
+        // plus haut) : seule la portion utile, de la rangée teneur en eau
+        // JUSQU'À la courbe, est tracée, puis la projection horizontale
+        // vers l'axe Y (retrait) prend le relais à cet endroit précis.
+        ctx.moveTo(px, yLigneTeneur);
+        ctx.lineTo(px, ty(valeurRetrait));
+        ctx.moveTo(px, ty(valeurRetrait));
+        ctx.lineTo(marge, ty(valeurRetrait));
+      } else {
+        ctx.moveTo(px, 10);
+        ctx.lineTo(px, yLigneTeneur);
+      }
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = couleur;
-      [tyX(c.x), tyY(c.y)].forEach((py) => {
+      if (valeurRetrait != null) {
         ctx.beginPath();
-        ctx.arc(px, py, 5, 0, 2 * Math.PI);
+        ctx.arc(px, ty(valeurRetrait), 5, 0, 2 * Math.PI);
         ctx.fill();
-      });
+      }
+      if (valeurTeneur != null) {
+        ctx.beginPath();
+        ctx.arc(px, yLigneTeneur, 5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillText(valeurTeneur.toFixed(2), px - 12, yLigneTeneur + 18);
+      }
     };
-    croisementsX.forEach((c) => dessinerCroisementTemps(c, "#7fff9e"));
-    croisementsY.forEach((c) => dessinerCroisementTemps(c, "#ffb37f"));
+    croisementsX.forEach((c) => dessinerCroisement(c, "#7fff9e"));
+    croisementsY.forEach((c) => dessinerCroisement(c, "#ffb37f"));
 
-    // Infobulle au survol — cf. panneau du milieu, adaptée aux 2 échelles
-    // indépendantes (chaque valeur reste positionnée sur SON propre axe) et
-    // au fait que le point survolé peut ne porter que x OU y (série seule).
-    if (survolDouble) {
-      const px = tx(new Date(survolDouble.time).getTime());
+    // Infobulle au survol — point de la courbe de retrait, graduation
+    // teneur en eau, ou croisement, chaque champ conditionnel selon le cas.
+    if (survolRetraitTeneur) {
+      const px = tx(new Date(survolRetraitTeneur.time).getTime());
       ctx.strokeStyle = "#7fd4ff";
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(px, 10);
-      ctx.lineTo(px, h - margeBas);
+      ctx.lineTo(px, yLigneTeneur);
       ctx.stroke();
       ctx.setLineDash([]);
       const positionsY = [];
-      if (survolDouble.x != null) {
-        ctx.fillStyle = COULEUR_X;
+      if (survolRetraitTeneur.retrait != null) {
+        ctx.fillStyle = couleurRetraitPanel;
         ctx.beginPath();
-        ctx.arc(px, tyX(survolDouble.x), 4, 0, 2 * Math.PI);
+        ctx.arc(px, ty(survolRetraitTeneur.retrait), 4, 0, 2 * Math.PI);
         ctx.fill();
-        positionsY.push(tyX(survolDouble.x));
+        positionsY.push(ty(survolRetraitTeneur.retrait));
       }
-      if (survolDouble.y != null) {
-        ctx.fillStyle = COULEUR_Y;
+      if (survolRetraitTeneur.teneur != null) {
+        ctx.fillStyle = "#a0a6b5";
         ctx.beginPath();
-        ctx.arc(px, tyY(survolDouble.y), 4, 0, 2 * Math.PI);
+        ctx.arc(px, yLigneTeneur, 4, 0, 2 * Math.PI);
         ctx.fill();
-        positionsY.push(tyY(survolDouble.y));
+        positionsY.push(yLigneTeneur);
       }
 
       const lignesInfobulle = [];
-      if (survolDouble.canal) lignesInfobulle.push(`Canal ${survolDouble.canal}`);
-      lignesInfobulle.push(new Date(survolDouble.time).toLocaleString("fr-FR"));
-      if (survolDouble.x != null) lignesInfobulle.push(`${libelleAxe("x")} = ${survolDouble.x.toFixed(2)}`);
-      if (survolDouble.y != null) lignesInfobulle.push(`${libelleAxe("y")} = ${survolDouble.y.toFixed(2)}`);
+      if (survolRetraitTeneur.canal) lignesInfobulle.push(`Canal ${survolRetraitTeneur.canal}`);
+      lignesInfobulle.push(new Date(survolRetraitTeneur.time).toLocaleString("fr-FR"));
+      if (survolRetraitTeneur.retrait != null)
+        lignesInfobulle.push(`${libelleAxe(roleRetrait)} = ${survolRetraitTeneur.retrait.toFixed(2)}`);
+      if (survolRetraitTeneur.teneur != null)
+        lignesInfobulle.push(`${libelleAxe(roleTeneurEau)} = ${survolRetraitTeneur.teneur.toFixed(2)}`);
       ctx.font = "11px system-ui";
       const largeurBoite = Math.max(...lignesInfobulle.map((l) => ctx.measureText(l).width)) + 20;
       const hauteurBoite = 10 + lignesInfobulle.length * 12;
@@ -879,13 +960,15 @@ export default function Nomogramme({ mur, couche }) {
       });
     }
   }, [
+    panelRetraitTeneurActif,
+    roleRetrait,
+    roleTeneurEau,
     serieX,
     serieY,
-    axeX,
-    axeY,
+    serieTeneurEauAxe,
     typeTrace,
     resolutionTemps,
-    survolDouble,
+    survolRetraitTeneur,
     couleurX,
     couleurY,
     couleurFond,
@@ -893,24 +976,31 @@ export default function Nomogramme({ mur, couche }) {
     croisementsY,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const survolerCanvasDouble = (e) => {
-    if (serieX.length === 0 && serieY.length === 0) return;
-    const canvas = canvasDoubleEchelleRef.current;
+  const survolerCanvasRetraitTeneur = (e) => {
+    if (!panelRetraitTeneurActif) return;
+    const serieRetraitPanel = roleRetrait === "x" ? serieX : serieY;
+    if (serieRetraitPanel.length === 0 && serieTeneurEauAxe.length === 0) return;
+    const canvas = canvasRetraitTeneurRef.current;
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const w = canvas.clientWidth;
-    const margeG = 50;
-    const margeD = 50;
-    const temps = [...serieX, ...serieY].map((p) => new Date(p.time).getTime());
+    const marge = 50;
+    const temps = [...serieRetraitPanel, ...serieTeneurEauAxe].map((p) => new Date(p.time).getTime());
     const tMin = Math.min(...temps);
     const tMax = Math.max(...temps);
-    const tCible = tMin + ((mx - margeG) / (w - margeG - margeD)) * (tMax - tMin || 1);
-    // Croisements inclus dans la recherche — cf. survolerCanvasTemps.
+    const tCible = tMin + ((mx - marge) / (w - marge - 20)) * (tMax - tMin || 1);
+    // Croisements normalisés en { time, retrait?, teneur? } à partir de
+    // leurs champs x/y bruts (dépend de l'ordre choisi dans Axe X/Axe Y),
+    // pour un rendu d'infobulle uniforme avec les 2 séries indépendantes.
     const candidats = [
-      ...serieX.map((p) => ({ time: p.time, x: p.valeur, canal: p.canal })),
-      ...serieY.map((p) => ({ time: p.time, y: p.valeur, canal: p.canal })),
-      ...croisementsX.filter((c) => c.time != null),
-      ...croisementsY.filter((c) => c.time != null),
+      ...serieRetraitPanel.map((p) => ({ time: p.time, retrait: p.valeur, canal: p.canal })),
+      ...serieTeneurEauAxe.map((p) => ({ time: p.time, teneur: p.valeur })),
+      ...croisementsX
+        .filter((c) => c.time != null)
+        .map((c) => ({ time: c.time, retrait: c[roleRetrait], teneur: c[roleTeneurEau] })),
+      ...croisementsY
+        .filter((c) => c.time != null)
+        .map((c) => ({ time: c.time, retrait: c[roleRetrait], teneur: c[roleTeneurEau] })),
     ];
     let plusProche = null;
     let distanceMin = Infinity;
@@ -921,7 +1011,7 @@ export default function Nomogramme({ mur, couche }) {
         plusProche = p;
       }
     }
-    setSurvolDouble(plusProche && distanceMin < (tMax - tMin || 1) * 0.02 ? plusProche : null);
+    setSurvolRetraitTeneur(plusProche && distanceMin < (tMax - tMin || 1) * 0.02 ? plusProche : null);
   };
 
   const survolerCanvas = (e) => {
@@ -1028,7 +1118,6 @@ export default function Nomogramme({ mur, couche }) {
             <option value="jour">Jour</option>
             <option value="semaine">Semaine</option>
             <option value="mois">Mois</option>
-            <option value="annee">Année</option>
           </select>
         </div>
         <div className="champ">
@@ -1051,6 +1140,27 @@ export default function Nomogramme({ mur, couche }) {
           <label>Fond des graphiques</label>
           <input type="color" value={couleurFond} onChange={(e) => setCouleurFond(e.target.value)} />
         </div>
+        {panelRetraitTeneurActif && (
+          <div className="champ">
+            <label>Couches teneur en eau (axe temps, moyenne)</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+              {couchesTeneurEauDisponibles.map((c) => (
+                <label key={c} style={{ fontWeight: "normal", fontSize: "0.85rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={couchesTeneurEauSelectionnees.includes(c)}
+                    onChange={(e) =>
+                      setCouchesTeneurEauSelectionnees((prev) =>
+                        e.target.checked ? [...prev, c] : prev.filter((x) => x !== c),
+                      )
+                    }
+                  />{" "}
+                  {c}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       <div className="selection-form" style={{ marginBottom: "0.75rem" }}>
         <div className="champ">
@@ -1131,24 +1241,26 @@ export default function Nomogramme({ mur, couche }) {
           )}
         </div>
       </div>
-      <div style={{ marginTop: "1rem" }}>
-        <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
-          Évolution dans le temps — double échelle (comparaison, {libelleAxe("x")} à gauche, {libelleAxe("y")} à droite)
-        </p>
-        <canvas
-          ref={canvasDoubleEchelleRef}
-          style={{ width: "100%", height: "420px" }}
-          onMouseMove={survolerCanvasDouble}
-          onMouseLeave={() => setSurvolDouble(null)}
-        />
-        {points.length > 0 && (
-          <BoutonsExport
-            obtenirElement={() => canvasDoubleEchelleRef.current}
-            type="canvas"
-            nomFichier="nomogramme-2d-temps-double-echelle"
+      {panelRetraitTeneurActif && (
+        <div style={{ marginTop: "1rem" }}>
+          <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
+            {libelleAxe(roleRetrait)} en fonction du temps — axe teneur en eau
+          </p>
+          <canvas
+            ref={canvasRetraitTeneurRef}
+            style={{ width: "100%", height: "460px" }}
+            onMouseMove={survolerCanvasRetraitTeneur}
+            onMouseLeave={() => setSurvolRetraitTeneur(null)}
           />
-        )}
-      </div>
+          {(roleRetrait === "x" ? serieX : serieY).length > 0 && (
+            <BoutonsExport
+              obtenirElement={() => canvasRetraitTeneurRef.current}
+              type="canvas"
+              nomFichier="nomogramme-2d-retrait-teneur-eau"
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
