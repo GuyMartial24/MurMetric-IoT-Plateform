@@ -10,7 +10,7 @@ import BoutonsExportDonnees from "./BoutonsExportDonnees.jsx";
 // forwardRef expose l'élément <svg> au parent (cf. Assistant.jsx, capture
 // de l'image pour l'analyse vision) — indépendant de BoutonsExport, qui
 // garde son propre accès interne au même svgRef.
-const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ }, ref) {
+const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ, typeTrace = "trait" }, ref) {
   const svgRef = useRef(null);
   useImperativeHandle(ref, () => svgRef.current);
   const valeurs = points.filter((p) => p.field === champ);
@@ -37,7 +37,11 @@ const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ }, ref) {
   return (
     <div>
       <svg ref={svgRef} viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
-        <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
+        {typeTrace !== "nuage" && <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />}
+        {typeTrace !== "trait" &&
+          valeurs.map((p, i) => (
+            <circle key={i} cx={x(new Date(p.time).getTime())} cy={y(p.value)} r="2" fill="#7fd4ff" />
+          ))}
         <text x={marge} y={16} fill="#a0a6b5" fontSize="12">
           {champ} — max {vMax.toFixed(2)}
         </text>

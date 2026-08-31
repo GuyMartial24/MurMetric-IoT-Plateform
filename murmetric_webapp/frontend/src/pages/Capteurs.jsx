@@ -3,7 +3,7 @@ import { api } from "../api.js";
 import BoutonsExportDonnees from "../components/BoutonsExportDonnees.jsx";
 import ChampSelectOuAutre from "../components/ChampSelectOuAutre.jsx";
 import Pastille from "../components/Pastille.jsx";
-import { useMursCouchesConnus } from "../mursCouches.js";
+import { useCouchesParMur, useMursCouchesConnus } from "../mursCouches.js";
 
 // Édition en place (chantier "source unique", section 32, 13/08/2026) :
 // capteurs.json/capteurs_retrait.json vivent désormais sur le volume
@@ -46,6 +46,7 @@ export default function Capteurs() {
 
       <TableauCapteurs
         titre="Capteurs HR/T"
+        typeMesure="hr_t"
         lignes={lignes(hrT)}
         colonnes={[
           "nom",
@@ -69,6 +70,7 @@ export default function Capteurs() {
 
       <TableauCapteurs
         titre="Canaux retrait"
+        typeMesure="retrait"
         lignes={lignes(retrait)}
         colonnes={["nom_mur", "nom_couche", "position", "ingestion"]}
         champsEditables={["nom_mur", "nom_couche", "position", "ingestion"]}
@@ -205,6 +207,7 @@ function valeurPourFiltre(champ, c) {
 
 function TableauCapteurs({
   titre,
+  typeMesure,
   lignes,
   colonnes,
   champsEditables,
@@ -219,7 +222,14 @@ function TableauCapteurs({
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState(null);
   const [filtres, setFiltres] = useState({}); // { _cle: "texte", [champ]: "valeur" }
-  const { murs: mursConnus, couches: couchesConnues } = useMursCouchesConnus();
+  const { murs: mursConnus } = useMursCouchesConnus();
+  // Couches filtrées par mur + type (31/08/2026, demande explicite) — sans
+  // ça, éditer une couche ici proposait un mélange de couches HR/T, retrait
+  // ET teneur en eau, la plupart sans rapport avec la ligne en cours
+  // d'édition. `enEdition?.valeurs?.nom_mur` reste undefined hors édition,
+  // le hook renvoie alors simplement [] (inoffensif, le champ n'est rendu
+  // qu'en édition).
+  const couchesConnues = useCouchesParMur(typeMesure, enEdition?.valeurs?.nom_mur);
 
   // Filtres indépendants les uns des autres (pas de filtrage en cascade,
   // plus simple à comprendre) — menu déroulant pour les colonnes

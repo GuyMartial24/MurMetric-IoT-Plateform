@@ -6,12 +6,14 @@ import Nomogramme from "../components/Nomogramme.jsx";
 import Nomogramme3D from "../components/Nomogramme3D.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
 import { useEtatVueEnsemble } from "../EtatPagesContext.jsx";
-import { libelleGrandeur } from "../nomogrammeAxes.js";
+import { TYPES_TRACE, libelleGrandeur } from "../nomogrammeAxes.js";
 
 export default function VueEnsemble() {
-  // Sélection/courbe/mode 3D préservés en changeant d'onglet (EtatPagesContext) —
-  // erreur/chargement restent locaux, purement transitoires.
-  const { selection, setSelection, points, setPoints, mode3D, setMode3D } = useEtatVueEnsemble();
+  // Sélection/courbe/mode 3D/type de tracé préservés en changeant d'onglet
+  // (EtatPagesContext) — erreur/chargement restent locaux, purement
+  // transitoires.
+  const { selection, setSelection, points, setPoints, mode3D, setMode3D, typeTrace, setTypeTrace } =
+    useEtatVueEnsemble();
   const [erreur, setErreur] = useState(null);
   const [enCours, setEnCours] = useState(false);
 
@@ -34,6 +36,18 @@ export default function VueEnsemble() {
       <div className="carte">
         <h2>Vue d'ensemble</h2>
         <SelecteurMesure valeur={selection} onChange={setSelection} />
+        <div className="selection-form" style={{ marginTop: "0.75rem" }}>
+          <div className="champ">
+            <label>Type de tracé</label>
+            <select value={typeTrace} onChange={(e) => setTypeTrace(e.target.value)}>
+              {TYPES_TRACE.map((t) => (
+                <option key={t.valeur} value={t.valeur}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         <button onClick={charger} disabled={enCours} style={{ marginTop: "0.75rem" }}>
           {enCours ? "Chargement..." : "Charger la courbe temporelle"}
         </button>
@@ -42,7 +56,7 @@ export default function VueEnsemble() {
       {points && points.length > 0 && (
         <div className="carte">
           <h3 style={{ marginTop: 0 }}>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</h3>
-          <GraphiqueSVG points={points} champ={selection.champ} />
+          <GraphiqueSVG points={points} champ={selection.champ} typeTrace={typeTrace} />
         </div>
       )}
       {points && points.length === 0 && (
@@ -72,9 +86,19 @@ export default function VueEnsemble() {
               : "Compose librement 2 grandeurs (HR/T, retrait, temps) — survole un point pour lire sa valeur par projection sur les axes."}
           </p>
           {mode3D ? (
-            <Nomogramme3D mur={selection.mur} couche={selection.couche} />
+            <Nomogramme3D
+              mur={selection.mur}
+              couche={selection.couche}
+              debutInitial={selection.debut}
+              finInitial={selection.fin}
+            />
           ) : (
-            <Nomogramme mur={selection.mur} couche={selection.couche} />
+            <Nomogramme
+              mur={selection.mur}
+              couche={selection.couche}
+              debutInitial={selection.debut}
+              finInitial={selection.fin}
+            />
           )}
         </div>
       )}

@@ -67,7 +67,7 @@ const ARETES_CUBE = [
 const ROLES = ["x", "y", "z"];
 const CLES_BACKEND = ["axe_x", "axe_y", "axe_z"];
 
-export default function Nomogramme3D({ mur, couche }) {
+export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) {
   const [axeX, setAxeX] = useState("temps");
   const [axeY, setAxeY] = useState("hr_t:temperature");
   const [axeZ, setAxeZ] = useState("hr_t:humidite");
@@ -91,8 +91,9 @@ export default function Nomogramme3D({ mur, couche }) {
   // Début/Fin (28/08/2026) — même correctif que Nomogramme.jsx : sans eux,
   // la fenêtre par défaut (30 jours dès qu'un axe retrait est impliqué) ne
   // recouvre jamais des données anciennes comme la teneur en eau.
-  const [debut, setDebut] = useState("");
-  const [fin, setFin] = useState("");
+  // Préremplis depuis Vue d'ensemble au premier montage — cf. Nomogramme.jsx.
+  const [debut, setDebut] = useState(debutInitial || "");
+  const [fin, setFin] = useState(finInitial || "");
   // Panneau "évolution dans le temps" + personnalisation (28/08/2026,
   // extension des mêmes fonctionnalités que Nomogramme.jsx) — un seul
   // panneau à axe partagé ici (pas de variante double/triple échelle : 3
@@ -125,6 +126,11 @@ export default function Nomogramme3D({ mur, couche }) {
   // Canaux + moyennes filtrés sur le "Mur" déjà sélectionné plus haut dans
   // la page (28/08/2026, demande explicite) — cf. canauxRetrait.js.
   const { canaux: canauxDisponibles, moyennes: moyennesCanaux } = useCanauxRetrait(mur);
+  // Réinitialise le canal choisi dès que le mur change — cf. Nomogramme.jsx
+  // (bug trouvé le 31/08/2026, même correctif dans les 2 composants).
+  useEffect(() => {
+    setCanal("");
+  }, [mur]);
 
   function libelleAxe(role) {
     if (choixParRole[role] === "temps") return `Temps (${UNITES_TEMPS[uniteTemps].label})`;
@@ -392,15 +398,18 @@ export default function Nomogramme3D({ mur, couche }) {
       }
 
       // Légende — un carré de couleur + le nom du canal, en haut à droite.
+      // Position calée sur la largeur réelle du texte (30/08/2026, signalé
+      // par l'utilisateur) — cf. Nomogramme.jsx.
       ctx.font = "11px system-ui";
       Object.keys(pointsParCanal)
         .sort()
         .forEach((c, i) => {
           const ly = 14 + i * 16;
+          const xTexte = w - 8 - ctx.measureText(c).width;
           ctx.fillStyle = COULEURS_CANAUX_RETRAIT[c] || "#a0a6b5";
-          ctx.fillRect(w - 66, ly, 10, 10);
+          ctx.fillRect(xTexte - 14, ly, 10, 10);
           ctx.fillStyle = "#e6e6e6";
-          ctx.fillText(c, w - 52, ly + 9);
+          ctx.fillText(c, xTexte, ly + 9);
         });
     } else {
       // Trait fin : relie les points dans l'ordre chronologique (ordre
@@ -611,13 +620,17 @@ export default function Nomogramme3D({ mur, couche }) {
 
     // Légende — seulement pour les grandeurs réellement chargées (une
     // grandeur "Temps" n'a pas de série, cf. chargerSerieIndependante).
+    // Position calée sur la largeur réelle du texte (30/08/2026, signalé
+    // par l'utilisateur) — cf. Nomogramme.jsx.
     ctx.font = "11px system-ui";
     rolesPresents.forEach((role, i) => {
       const ly = 14 + i * 16;
+      const libelle = libelleAxe(role);
+      const xTexte = w - 8 - ctx.measureText(libelle).width;
       ctx.fillStyle = COULEURS_ROLE[role];
-      ctx.fillRect(w - 90, ly, 10, 10);
+      ctx.fillRect(xTexte - 14, ly, 10, 10);
       ctx.fillStyle = "#e6e6e6";
-      ctx.fillText(libelleAxe(role), w - 76, ly + 9);
+      ctx.fillText(libelle, xTexte, ly + 9);
     });
 
     // Croisement demandé explicitement, replacé dans le temps — cf.
@@ -643,39 +656,45 @@ export default function Nomogramme3D({ mur, couche }) {
       });
     });
 
-    // Infobulle au survol — le point survolé peut ne porter qu'UNE seule
-    // valeur (série X, Y ou Z seule) ou plusieurs (croisement), donc chaque
-    // ligne/marqueur devient conditionnel.
+    // Infobulle au survol (30/08/2026, demande explicite) — chaque rôle
+    // (X/Y/Z) affiché à SON propre instant le plus proche (survolTemps[role]
+    // + survolTemps.temps_<role>), donc un trait vertical par courbe
+    // présente, dans sa couleur — cf. Nomogramme.jsx.
     if (survolTemps) {
-      const px = tx(new Date(survolTemps.time).getTime());
-      ctx.strokeStyle = "#7fd4ff";
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(px, 10);
-      ctx.lineTo(px, h - marge);
-      ctx.stroke();
-      ctx.setLineDash([]);
       const positionsY = [];
+      let pxBoite = null;
+      ctx.setLineDash([4, 4]);
       rolesPresents.forEach((role) => {
         if (survolTemps[role] == null) return;
+        const px = tx(new Date(survolTemps[`temps_${role}`]).getTime());
+        ctx.strokeStyle = COULEURS_ROLE[role];
+        ctx.beginPath();
+        ctx.moveTo(px, 10);
+        ctx.lineTo(px, h - marge);
+        ctx.stroke();
         ctx.fillStyle = COULEURS_ROLE[role];
         ctx.beginPath();
         ctx.arc(px, ty(survolTemps[role]), 4, 0, 2 * Math.PI);
         ctx.fill();
         positionsY.push(ty(survolTemps[role]));
+        pxBoite = pxBoite != null ? (pxBoite + px) / 2 : px;
       });
+      ctx.setLineDash([]);
+      if (pxBoite == null) return;
 
       const lignesInfobulle = [];
-      if (survolTemps.canal) lignesInfobulle.push(`Canal ${survolTemps.canal}`);
-      lignesInfobulle.push(new Date(survolTemps.time).toLocaleString("fr-FR"));
       rolesPresents.forEach((role) => {
-        if (survolTemps[role] != null) lignesInfobulle.push(`${libelleAxe(role)} = ${survolTemps[role].toFixed(2)}`);
+        if (survolTemps[role] == null) return;
+        if (survolTemps[`canal_${role}`])
+          lignesInfobulle.push(`${libelleAxe(role)} — canal ${survolTemps[`canal_${role}`]}`);
+        const dateTexte = new Date(survolTemps[`temps_${role}`]).toLocaleString("fr-FR");
+        lignesInfobulle.push(`${libelleAxe(role)} = ${survolTemps[role].toFixed(2)} (${dateTexte})`);
       });
       ctx.font = "11px system-ui";
       const largeurBoite = Math.max(...lignesInfobulle.map((l) => ctx.measureText(l).width)) + 20;
       const hauteurBoite = 10 + lignesInfobulle.length * 12;
       const pyAncrage = positionsY.reduce((a, b) => a + b, 0) / positionsY.length;
-      const boiteX = px + largeurBoite + 16 > w ? px - largeurBoite - 8 : px + 8;
+      const boiteX = pxBoite + largeurBoite + 16 > w ? pxBoite - largeurBoite - 8 : pxBoite + 8;
       ctx.fillStyle = "#0f1117";
       ctx.fillRect(boiteX, pyAncrage - hauteurBoite / 2, largeurBoite, hauteurBoite);
       ctx.strokeStyle = "#7fd4ff";
@@ -702,6 +721,24 @@ export default function Nomogramme3D({ mur, couche }) {
     croisements,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Point le plus proche de tCible dans `candidats`, uniquement parmi ceux
+  // qui portent le rôle demandé — recherche indépendante par courbe
+  // (30/08/2026, demande explicite, cf. Nomogramme.jsx) plutôt qu'un seul
+  // point choisi toutes courbes confondues.
+  function plusProcheParRole(candidats, role, tCible, etendue) {
+    let plusProche = null;
+    let distanceMin = Infinity;
+    for (const p of candidats) {
+      if (p[role] == null) continue;
+      const d = Math.abs(new Date(p.time).getTime() - tCible);
+      if (d < distanceMin) {
+        distanceMin = d;
+        plusProche = p;
+      }
+    }
+    return plusProche && distanceMin < etendue * 0.02 ? plusProche : null;
+  }
+
   const survolerCanvasTemps = (e) => {
     if (serieX.length === 0 && serieY.length === 0 && serieZ.length === 0) return;
     const canvas = canvasTempsRef.current;
@@ -714,25 +751,38 @@ export default function Nomogramme3D({ mur, couche }) {
     const tMin = Math.min(...temps);
     const tMax = Math.max(...temps);
     const tCible = tMin + ((mx - marge) / (w - marge - 20)) * (tMax - tMin || 1);
-    // Croisements inclus dans la recherche — cf. Nomogramme.jsx. Chaque
-    // candidat normalisé en { time, x?, y?, z?, canal } pour un rendu
-    // d'infobulle uniforme, qu'il vienne d'une série seule ou d'un croisement.
-    const candidats = [
-      ...serieX.map((p) => ({ time: p.time, x: p.valeur, canal: p.canal })),
-      ...serieY.map((p) => ({ time: p.time, y: p.valeur, canal: p.canal })),
-      ...serieZ.map((p) => ({ time: p.time, z: p.valeur, canal: p.canal })),
-      ...croisements.filter((c) => c.time != null),
-    ];
-    let plusProche = null;
-    let distanceMin = Infinity;
-    for (const p of candidats) {
-      const d = Math.abs(new Date(p.time).getTime() - tCible);
-      if (d < distanceMin) {
-        distanceMin = d;
-        plusProche = p;
-      }
+    const etendue = tMax - tMin || 1;
+    // Croisements inclus dans les 3 recherches — cf. Nomogramme.jsx.
+    const candidatsParRole = {
+      x: [
+        ...serieX.map((p) => ({ time: p.time, x: p.valeur, canal: p.canal })),
+        ...croisements.filter((c) => c.time != null),
+      ],
+      y: [
+        ...serieY.map((p) => ({ time: p.time, y: p.valeur, canal: p.canal })),
+        ...croisements.filter((c) => c.time != null),
+      ],
+      z: [
+        ...serieZ.map((p) => ({ time: p.time, z: p.valeur, canal: p.canal })),
+        ...croisements.filter((c) => c.time != null),
+      ],
+    };
+    const prochesParRole = {};
+    ROLES.forEach((role) => {
+      prochesParRole[role] = plusProcheParRole(candidatsParRole[role], role, tCible, etendue);
+    });
+    if (ROLES.every((role) => !prochesParRole[role])) {
+      setSurvolTemps(null);
+      return;
     }
-    setSurvolTemps(plusProche && distanceMin < (tMax - tMin || 1) * 0.02 ? plusProche : null);
+    const resultat = {};
+    ROLES.forEach((role) => {
+      const proche = prochesParRole[role];
+      resultat[role] = proche?.[role];
+      resultat[`temps_${role}`] = proche?.time;
+      resultat[`canal_${role}`] = proche?.canal;
+    });
+    setSurvolTemps(resultat);
   };
 
   const surSourisBas = (e) => {

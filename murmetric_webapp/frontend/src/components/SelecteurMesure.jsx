@@ -43,6 +43,19 @@ export default function SelecteurMesure({ valeur, onChange }) {
 
   const definir = (champ, val) => onChange({ ...valeur, [champ]: val });
 
+  // "Couche" grisée pour retrait (30/08/2026, demande explicite) : les
+  // capteurs retrait sont positionnés en surface (tag "position" bas/haut/
+  // gauche/droite + canal_nom), pas noyés à différentes profondeurs comme
+  // les capteurs HR/T — la notion de couche n'a donc aucun sens physique
+  // ici, seules "non"/"Pas de couche" existent en base (vérifié en direct).
+  // Réinitialise aussi la valeur au passage vers retrait, pour ne pas
+  // laisser affichée une couche HR/T périmée (ex. "milieu isolant") sur un
+  // champ désormais grisé.
+  const coucheDesactivee = valeur.type === "retrait";
+  useEffect(() => {
+    if (coucheDesactivee && valeur.couche) definir("couche", "");
+  }, [coucheDesactivee]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const definirGrandeur = (grandeurValeur) => {
     const [type, champ] = grandeurValeur.split(":");
     onChange({ ...valeur, type, champ });
@@ -85,7 +98,16 @@ export default function SelecteurMesure({ valeur, onChange }) {
       </div>
       <div className="champ">
         <label>Couche</label>
-        <select value={valeur.couche || ""} onChange={(e) => definir("couche", e.target.value)}>
+        <select
+          value={valeur.couche || ""}
+          onChange={(e) => definir("couche", e.target.value)}
+          disabled={coucheDesactivee}
+          title={
+            coucheDesactivee
+              ? "Sans objet pour le retrait (capteurs positionnés en surface, pas par couche)"
+              : undefined
+          }
+        >
           <option value="">— toutes —</option>
           {couches.map((c) => (
             <option key={c} value={c}>

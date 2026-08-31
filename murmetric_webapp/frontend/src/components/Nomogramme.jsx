@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useCanauxRetrait } from "../canauxRetrait.js";
-import { useCouchesTeneurEau } from "../couchesTeneurEau.js";
+import { useCouchesParMur } from "../mursCouches.js";
 import {
   AXES_DISPONIBLES,
   COULEURS_CANAUX_RETRAIT,
@@ -28,7 +28,7 @@ import BoutonsExport from "./BoutonsExport.jsx";
 const ROLES = ["x", "y"];
 const CLES_BACKEND = ["axe_x", "axe_y"];
 
-export default function Nomogramme({ mur, couche }) {
+export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
   const [axeX, setAxeX] = useState("hr_t:temperature");
   const [axeY, setAxeY] = useState("hr_t:humidite");
   const [canal, setCanal] = useState("HA1");
@@ -54,8 +54,13 @@ export default function Nomogramme({ mur, couche }) {
   // recouvre jamais les données anciennes (ex. teneur en eau, backfill
   // jusqu'à mars 2026) : croisement structurellement impossible malgré un
   // mur/couche valides, symptôme signalé par l'utilisateur le 28/08/2026.
-  const [debut, setDebut] = useState("");
-  const [fin, setFin] = useState("");
+  // Préremplis depuis Vue d'ensemble au premier montage (30/08/2026, demande
+  // explicite — évite de saisir deux fois la même période) — useState
+  // n'utilise sa valeur initiale qu'une fois : un changement ultérieur du
+  // Début/Fin de Vue d'ensemble ne resynchronise pas ce champ, qui reste
+  // ensuite modifiable indépendamment, comme convenu.
+  const [debut, setDebut] = useState(debutInitial || "");
+  const [fin, setFin] = useState(finInitial || "");
   // Résolution de l'axe temps des panneaux 2/3 (28/08/2026, demande
   // explicite) — distincte de "Unité de temps" ci-dessus, qui sert à un
   // usage différent (convertir "Temps" en grandeur d'axe du croisement).
@@ -66,7 +71,7 @@ export default function Nomogramme({ mur, couche }) {
   // demande explicite) — remplace l'ancien panneau à double échelle.
   // Couches à moyenner pour l'axe teneur en eau, choisies librement par
   // l'utilisateur (pas de convention "intérieur/extérieur" exploitable,
-  // cf. couchesTeneurEau.js) — indépendant du champ "Couche" partagé plus
+  // cf. mursCouches.js, useCouchesParMur) — indépendant du champ "Couche" partagé plus
   // haut, qui filtre hr_t/retrait pour un usage différent.
   const [couchesTeneurEauSelectionnees, setCouchesTeneurEauSelectionnees] = useState([]);
   const [serieTeneurEauAxe, setSerieTeneurEauAxe] = useState([]);
@@ -103,6 +108,18 @@ export default function Nomogramme({ mur, couche }) {
   // Canaux + moyennes filtrés sur le "Mur" déjà sélectionné plus haut dans
   // la page (28/08/2026, demande explicite) — cf. canauxRetrait.js.
   const { canaux: canauxDisponibles, moyennes: moyennesCanaux } = useCanauxRetrait(mur);
+  // Réinitialise le canal choisi dès que le mur change (bug trouvé le
+  // 31/08/2026) — sinon un canal valide pour l'ancien mur (ex. HA1, SOCMA 1)
+  // reste sélectionné après un changement vers SOCMA 2, où il n'existe pas :
+  // la liste déroulante affiche "Tous" (repli du navigateur puisque la
+  // valeur ne correspond plus à aucune option affichée) mais l'état réel
+  // garde l'ancien canal, envoyant une combinaison mur/canal incompatible
+  // qui renvoie 0 point silencieusement (même défaut de fond que celui déjà
+  // corrigé pour la LISTE déroulante, suite 15 — corrigeait les options
+  // affichées, pas l'état sélectionné qui pouvait rester périmé).
+  useEffect(() => {
+    setCanal("");
+  }, [mur]);
   // Panneau "retrait en fonction du temps, axe teneur en eau" : actif
   // seulement quand Axe X/Axe Y = retrait + teneur en eau (peu importe
   // l'ordre) — demande explicite du 30/08/2026, même condition que
@@ -111,7 +128,7 @@ export default function Nomogramme({ mur, couche }) {
   const roleTeneurEau =
     axeX === "teneur_eau:teneur_eau_pourcent" ? "x" : axeY === "teneur_eau:teneur_eau_pourcent" ? "y" : null;
   const panelRetraitTeneurActif = roleRetrait != null && roleTeneurEau != null;
-  const couchesTeneurEauDisponibles = useCouchesTeneurEau(mur);
+  const couchesTeneurEauDisponibles = useCouchesParMur("teneur_eau", mur);
   useEffect(() => {
     setCouchesTeneurEauSelectionnees(couchesTeneurEauDisponibles);
   }, [couchesTeneurEauDisponibles]);
@@ -387,15 +404,19 @@ export default function Nomogramme({ mur, couche }) {
       });
 
       // Légende — un carré de couleur + le nom du canal, en haut à droite.
+      // Position calée sur la largeur réelle du texte (30/08/2026,
+      // signalé par l'utilisateur) — un décalage fixe depuis la gauche
+      // pouvait faire déborder un libellé long hors du canevas.
       ctx.font = "11px system-ui";
       Object.keys(pointsParCanal)
         .sort()
         .forEach((c, i) => {
           const ly = 14 + i * 16;
+          const xTexte = w - 8 - ctx.measureText(c).width;
           ctx.fillStyle = COULEURS_CANAUX_RETRAIT[c] || "#a0a6b5";
-          ctx.fillRect(w - 66, ly, 10, 10);
+          ctx.fillRect(xTexte - 14, ly, 10, 10);
           ctx.fillStyle = "#e6e6e6";
-          ctx.fillText(c, w - 52, ly + 9);
+          ctx.fillText(c, xTexte, ly + 9);
         });
     } else {
       // Couleur = position temporelle (bleu = ancien, rouge = récent), pour
@@ -604,20 +625,27 @@ export default function Nomogramme({ mur, couche }) {
 
     // Légende — seulement pour les grandeurs réellement chargées (une
     // grandeur "Temps" n'a pas de série, cf. chargerSerieIndependante).
+    // Position calée sur la largeur réelle du texte (30/08/2026, signalé
+    // par l'utilisateur) — un décalage fixe depuis la gauche coupait les
+    // libellés longs (ex. "Température (°C)") hors du canevas.
     ctx.font = "11px system-ui";
     let ligneLegende = 14;
     if (serieX.length > 0) {
+      const libelle = libelleAxe("x");
+      const xTexte = w - 8 - ctx.measureText(libelle).width;
       ctx.fillStyle = COULEUR_X;
-      ctx.fillRect(w - 90, ligneLegende, 10, 10);
+      ctx.fillRect(xTexte - 14, ligneLegende, 10, 10);
       ctx.fillStyle = "#e6e6e6";
-      ctx.fillText(libelleAxe("x"), w - 76, ligneLegende + 9);
+      ctx.fillText(libelle, xTexte, ligneLegende + 9);
       ligneLegende += 16;
     }
     if (serieY.length > 0) {
+      const libelle = libelleAxe("y");
+      const xTexte = w - 8 - ctx.measureText(libelle).width;
       ctx.fillStyle = COULEUR_Y;
-      ctx.fillRect(w - 90, ligneLegende, 10, 10);
+      ctx.fillRect(xTexte - 14, ligneLegende, 10, 10);
       ctx.fillStyle = "#e6e6e6";
-      ctx.fillText(libelleAxe("y"), w - 76, ligneLegende + 9);
+      ctx.fillText(libelle, xTexte, ligneLegende + 9);
     }
 
     // Croisements demandés explicitement (28/08/2026, demande explicite) —
@@ -644,44 +672,63 @@ export default function Nomogramme({ mur, couche }) {
     croisementsX.forEach((c) => dessinerCroisementTemps(c, "#7fff9e"));
     croisementsY.forEach((c) => dessinerCroisementTemps(c, "#ffb37f"));
 
-    // Infobulle au survol (28/08/2026) — le point survolé peut venir de la
-    // série X seule, Y seule, ou d'un croisement (les deux) : `.x`/`.y`
-    // absents selon le cas, chaque ligne/marqueur devient donc conditionnel.
+    // Infobulle au survol (30/08/2026, demande explicite) — au lieu d'un
+    // seul point (le plus proche toutes courbes confondues), affiche
+    // désormais X ET Y chacun à SON propre instant le plus proche : deux
+    // recherches indépendantes (survolTemps.x/.timeX et .y/.timeY), donc
+    // deux traits verticaux (un par courbe, dans sa couleur) si leurs
+    // instants réels diffèrent légèrement — plus honnête que de forcer un
+    // seul repère commun sur des séries chargées indépendamment.
     if (survolTemps) {
-      const px = tx(new Date(survolTemps.time).getTime());
-      ctx.strokeStyle = "#7fd4ff";
+      const pxX = survolTemps.x != null ? tx(new Date(survolTemps.timeX).getTime()) : null;
+      const pxY = survolTemps.y != null ? tx(new Date(survolTemps.timeY).getTime()) : null;
       ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(px, 10);
-      ctx.lineTo(px, h - marge);
-      ctx.stroke();
-      ctx.setLineDash([]);
       const positionsY = [];
-      if (survolTemps.x != null) {
+      let pxBoite = null;
+      if (pxX != null) {
+        ctx.strokeStyle = COULEUR_X;
+        ctx.beginPath();
+        ctx.moveTo(pxX, 10);
+        ctx.lineTo(pxX, h - marge);
+        ctx.stroke();
         ctx.fillStyle = COULEUR_X;
         ctx.beginPath();
-        ctx.arc(px, ty(survolTemps.x), 4, 0, 2 * Math.PI);
+        ctx.arc(pxX, ty(survolTemps.x), 4, 0, 2 * Math.PI);
         ctx.fill();
         positionsY.push(ty(survolTemps.x));
+        pxBoite = pxX;
       }
-      if (survolTemps.y != null) {
+      if (pxY != null) {
+        ctx.strokeStyle = COULEUR_Y;
+        ctx.beginPath();
+        ctx.moveTo(pxY, 10);
+        ctx.lineTo(pxY, h - marge);
+        ctx.stroke();
         ctx.fillStyle = COULEUR_Y;
         ctx.beginPath();
-        ctx.arc(px, ty(survolTemps.y), 4, 0, 2 * Math.PI);
+        ctx.arc(pxY, ty(survolTemps.y), 4, 0, 2 * Math.PI);
         ctx.fill();
         positionsY.push(ty(survolTemps.y));
+        pxBoite = pxBoite != null ? (pxBoite + pxY) / 2 : pxY;
       }
+      ctx.setLineDash([]);
 
       const lignesInfobulle = [];
-      if (survolTemps.canal) lignesInfobulle.push(`Canal ${survolTemps.canal}`);
-      lignesInfobulle.push(new Date(survolTemps.time).toLocaleString("fr-FR"));
-      if (survolTemps.x != null) lignesInfobulle.push(`${libelleAxe("x")} = ${survolTemps.x.toFixed(2)}`);
-      if (survolTemps.y != null) lignesInfobulle.push(`${libelleAxe("y")} = ${survolTemps.y.toFixed(2)}`);
+      if (survolTemps.canalX) lignesInfobulle.push(`${libelleAxe("x")} — canal ${survolTemps.canalX}`);
+      if (survolTemps.canalY) lignesInfobulle.push(`${libelleAxe("y")} — canal ${survolTemps.canalY}`);
+      if (survolTemps.x != null)
+        lignesInfobulle.push(
+          `${libelleAxe("x")} = ${survolTemps.x.toFixed(2)} (${new Date(survolTemps.timeX).toLocaleString("fr-FR")})`,
+        );
+      if (survolTemps.y != null)
+        lignesInfobulle.push(
+          `${libelleAxe("y")} = ${survolTemps.y.toFixed(2)} (${new Date(survolTemps.timeY).toLocaleString("fr-FR")})`,
+        );
       ctx.font = "11px system-ui";
       const largeurBoite = Math.max(...lignesInfobulle.map((l) => ctx.measureText(l).width)) + 20;
       const hauteurBoite = 10 + lignesInfobulle.length * 12;
       const pyMoyen = positionsY.reduce((a, b) => a + b, 0) / positionsY.length;
-      const boiteX = px + largeurBoite + 16 > w ? px - largeurBoite - 8 : px + 8;
+      const boiteX = pxBoite + largeurBoite + 16 > w ? pxBoite - largeurBoite - 8 : pxBoite + 8;
       ctx.fillStyle = "#0f1117";
       ctx.fillRect(boiteX, pyMoyen - hauteurBoite / 2, largeurBoite, hauteurBoite);
       ctx.strokeStyle = "#7fd4ff";
@@ -706,6 +753,27 @@ export default function Nomogramme({ mur, couche }) {
     croisementsY,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Point le plus proche de tCible dans `candidats`, uniquement parmi ceux
+  // qui portent la clé demandée (`x` ou `y`) — recherche indépendante par
+  // courbe (30/08/2026, demande explicite : "l'infobulle doit s'afficher
+  // sur toutes les autres courbes aux instants correspondants"), plutôt
+  // qu'un seul point choisi toutes courbes confondues comme avant.
+  function plusProcheParCle(candidats, cle, tCible, etendue) {
+    let plusProche = null;
+    let distanceMin = Infinity;
+    for (const p of candidats) {
+      if (p[cle] == null) continue;
+      const d = Math.abs(new Date(p.time).getTime() - tCible);
+      if (d < distanceMin) {
+        distanceMin = d;
+        plusProche = p;
+      }
+    }
+    // Seuil relatif à l'étendue totale plutôt qu'en pixels — évite un
+    // survol qui "colle" partout sur une plage très resserrée.
+    return plusProche && distanceMin < etendue * 0.02 ? plusProche : null;
+  }
+
   const survolerCanvasTemps = (e) => {
     if (serieX.length === 0 && serieY.length === 0) return;
     const canvas = canvasDroiteRef.current;
@@ -717,28 +785,34 @@ export default function Nomogramme({ mur, couche }) {
     const tMin = Math.min(...temps);
     const tMax = Math.max(...temps);
     const tCible = tMin + ((mx - marge) / (w - marge - 20)) * (tMax - tMin || 1);
-    // Croisements inclus dans la recherche — sans ça, l'infobulle ne se
-    // déclenchait que sur un vrai point mesuré, jamais sur le point
-    // interpolé trouvé par "Trouver X/Y pour...". Chaque candidat normalisé
-    // en { time, x?, y?, canal } pour un rendu d'infobulle uniforme.
-    const candidats = [
+    const etendue = tMax - tMin || 1;
+    // Croisements inclus dans les deux recherches — sans ça, l'infobulle ne
+    // se déclenchait que sur un vrai point mesuré, jamais sur le point
+    // interpolé trouvé par "Trouver X/Y pour...".
+    const candidatsX = [
       ...serieX.map((p) => ({ time: p.time, x: p.valeur, canal: p.canal })),
+      ...croisementsX.filter((c) => c.time != null),
+      ...croisementsY.filter((c) => c.time != null),
+    ];
+    const candidatsY = [
       ...serieY.map((p) => ({ time: p.time, y: p.valeur, canal: p.canal })),
       ...croisementsX.filter((c) => c.time != null),
       ...croisementsY.filter((c) => c.time != null),
     ];
-    let plusProche = null;
-    let distanceMin = Infinity;
-    for (const p of candidats) {
-      const d = Math.abs(new Date(p.time).getTime() - tCible);
-      if (d < distanceMin) {
-        distanceMin = d;
-        plusProche = p;
-      }
+    const procheX = plusProcheParCle(candidatsX, "x", tCible, etendue);
+    const procheY = plusProcheParCle(candidatsY, "y", tCible, etendue);
+    if (!procheX && !procheY) {
+      setSurvolTemps(null);
+      return;
     }
-    // Seuil relatif à l'étendue totale plutôt qu'en pixels — évite un
-    // survol qui "colle" partout sur une plage très resserrée.
-    setSurvolTemps(plusProche && distanceMin < (tMax - tMin || 1) * 0.02 ? plusProche : null);
+    setSurvolTemps({
+      x: procheX?.x,
+      timeX: procheX?.time,
+      canalX: procheX?.canal,
+      y: procheY?.y,
+      timeY: procheY?.time,
+      canalY: procheY?.canal,
+    });
   };
 
   // 3e panneau, retrait en fonction du temps avec axe teneur en eau
@@ -914,42 +988,56 @@ export default function Nomogramme({ mur, couche }) {
     // Infobulle au survol — point de la courbe de retrait, graduation
     // teneur en eau, ou croisement, chaque champ conditionnel selon le cas.
     if (survolRetraitTeneur) {
-      const px = tx(new Date(survolRetraitTeneur.time).getTime());
-      ctx.strokeStyle = "#7fd4ff";
+      const pxRetrait =
+        survolRetraitTeneur.retrait != null ? tx(new Date(survolRetraitTeneur.timeRetrait).getTime()) : null;
+      const pxTeneur =
+        survolRetraitTeneur.teneur != null ? tx(new Date(survolRetraitTeneur.timeTeneur).getTime()) : null;
       ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(px, 10);
-      ctx.lineTo(px, yLigneTeneur);
-      ctx.stroke();
-      ctx.setLineDash([]);
       const positionsY = [];
-      if (survolRetraitTeneur.retrait != null) {
+      let pxBoite = null;
+      if (pxRetrait != null) {
+        ctx.strokeStyle = couleurRetraitPanel;
+        ctx.beginPath();
+        ctx.moveTo(pxRetrait, 10);
+        ctx.lineTo(pxRetrait, yLigneTeneur);
+        ctx.stroke();
         ctx.fillStyle = couleurRetraitPanel;
         ctx.beginPath();
-        ctx.arc(px, ty(survolRetraitTeneur.retrait), 4, 0, 2 * Math.PI);
+        ctx.arc(pxRetrait, ty(survolRetraitTeneur.retrait), 4, 0, 2 * Math.PI);
         ctx.fill();
         positionsY.push(ty(survolRetraitTeneur.retrait));
+        pxBoite = pxRetrait;
       }
-      if (survolRetraitTeneur.teneur != null) {
+      if (pxTeneur != null) {
+        ctx.strokeStyle = "#a0a6b5";
+        ctx.beginPath();
+        ctx.moveTo(pxTeneur, 10);
+        ctx.lineTo(pxTeneur, yLigneTeneur);
+        ctx.stroke();
         ctx.fillStyle = "#a0a6b5";
         ctx.beginPath();
-        ctx.arc(px, yLigneTeneur, 4, 0, 2 * Math.PI);
+        ctx.arc(pxTeneur, yLigneTeneur, 4, 0, 2 * Math.PI);
         ctx.fill();
         positionsY.push(yLigneTeneur);
+        pxBoite = pxBoite != null ? (pxBoite + pxTeneur) / 2 : pxTeneur;
       }
+      ctx.setLineDash([]);
 
       const lignesInfobulle = [];
       if (survolRetraitTeneur.canal) lignesInfobulle.push(`Canal ${survolRetraitTeneur.canal}`);
-      lignesInfobulle.push(new Date(survolRetraitTeneur.time).toLocaleString("fr-FR"));
       if (survolRetraitTeneur.retrait != null)
-        lignesInfobulle.push(`${libelleAxe(roleRetrait)} = ${survolRetraitTeneur.retrait.toFixed(2)}`);
+        lignesInfobulle.push(
+          `${libelleAxe(roleRetrait)} = ${survolRetraitTeneur.retrait.toFixed(2)} (${new Date(survolRetraitTeneur.timeRetrait).toLocaleString("fr-FR")})`,
+        );
       if (survolRetraitTeneur.teneur != null)
-        lignesInfobulle.push(`${libelleAxe(roleTeneurEau)} = ${survolRetraitTeneur.teneur.toFixed(2)}`);
+        lignesInfobulle.push(
+          `${libelleAxe(roleTeneurEau)} = ${survolRetraitTeneur.teneur.toFixed(2)} (${new Date(survolRetraitTeneur.timeTeneur).toLocaleString("fr-FR")})`,
+        );
       ctx.font = "11px system-ui";
       const largeurBoite = Math.max(...lignesInfobulle.map((l) => ctx.measureText(l).width)) + 20;
       const hauteurBoite = 10 + lignesInfobulle.length * 12;
       const pyMoyen = positionsY.reduce((a, b) => a + b, 0) / positionsY.length;
-      const boiteX = px + largeurBoite + 16 > w ? px - largeurBoite - 8 : px + 8;
+      const boiteX = pxBoite + largeurBoite + 16 > w ? pxBoite - largeurBoite - 8 : pxBoite + 8;
       ctx.fillStyle = "#0f1117";
       ctx.fillRect(boiteX, pyMoyen - hauteurBoite / 2, largeurBoite, hauteurBoite);
       ctx.strokeStyle = "#7fd4ff";
@@ -992,9 +1080,11 @@ export default function Nomogramme({ mur, couche }) {
     // Croisements normalisés en { time, retrait?, teneur? } à partir de
     // leurs champs x/y bruts (dépend de l'ordre choisi dans Axe X/Axe Y),
     // pour un rendu d'infobulle uniforme avec les 2 séries indépendantes.
-    const candidats = [
-      ...serieRetraitPanel.map((p) => ({ time: p.time, retrait: p.valeur, canal: p.canal })),
-      ...serieTeneurEauAxe.map((p) => ({ time: p.time, teneur: p.valeur })),
+    // Recherches indépendantes par champ (30/08/2026, demande explicite) —
+    // sinon la courbe de retrait (dense) l'emportait presque toujours sur
+    // la rangée teneur en eau (éparse), qui n'apparaissait quasiment
+    // jamais dans l'infobulle malgré le survol proche d'un vrai relevé.
+    const candidatsCroisements = [
       ...croisementsX
         .filter((c) => c.time != null)
         .map((c) => ({ time: c.time, retrait: c[roleRetrait], teneur: c[roleTeneurEau] })),
@@ -1002,16 +1092,28 @@ export default function Nomogramme({ mur, couche }) {
         .filter((c) => c.time != null)
         .map((c) => ({ time: c.time, retrait: c[roleRetrait], teneur: c[roleTeneurEau] })),
     ];
-    let plusProche = null;
-    let distanceMin = Infinity;
-    for (const p of candidats) {
-      const d = Math.abs(new Date(p.time).getTime() - tCible);
-      if (d < distanceMin) {
-        distanceMin = d;
-        plusProche = p;
-      }
+    const candidatsRetrait = [
+      ...serieRetraitPanel.map((p) => ({ time: p.time, retrait: p.valeur, canal: p.canal })),
+      ...candidatsCroisements,
+    ];
+    const candidatsTeneur = [
+      ...serieTeneurEauAxe.map((p) => ({ time: p.time, teneur: p.valeur })),
+      ...candidatsCroisements,
+    ];
+    const etendue = tMax - tMin || 1;
+    const procheRetrait = plusProcheParCle(candidatsRetrait, "retrait", tCible, etendue);
+    const procheTeneur = plusProcheParCle(candidatsTeneur, "teneur", tCible, etendue);
+    if (!procheRetrait && !procheTeneur) {
+      setSurvolRetraitTeneur(null);
+      return;
     }
-    setSurvolRetraitTeneur(plusProche && distanceMin < (tMax - tMin || 1) * 0.02 ? plusProche : null);
+    setSurvolRetraitTeneur({
+      retrait: procheRetrait?.retrait,
+      timeRetrait: procheRetrait?.time,
+      canal: procheRetrait?.canal,
+      teneur: procheTeneur?.teneur,
+      timeTeneur: procheTeneur?.time,
+    });
   };
 
   const survolerCanvas = (e) => {
@@ -1204,22 +1306,45 @@ export default function Nomogramme({ mur, couche }) {
       )}
       {erreur && <p className="erreur">{erreur}</p>}
       {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
-      {!enCours && points.length === 0 && !erreur && (
+      {!panelRetraitTeneurActif && !enCours && points.length === 0 && !erreur && (
         <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>
       )}
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 400px", minWidth: 0 }}>
-          <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
-            Croisement {libelleAxe("y")} = f({libelleAxe("x")})
-          </p>
-          <canvas
-            ref={canvasRef}
-            style={{ width: "100%", height: "420px" }}
-            onMouseMove={survolerCanvas}
-            onMouseLeave={() => setSurvol(null)}
-          />
-          {points.length > 0 && (
-            <BoutonsExport obtenirElement={() => canvasRef.current} type="canvas" nomFichier="nomogramme-2d" />
+          {panelRetraitTeneurActif ? (
+            <>
+              <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
+                {libelleAxe(roleRetrait)} en fonction du temps — axe teneur en eau
+              </p>
+              <canvas
+                ref={canvasRetraitTeneurRef}
+                style={{ width: "100%", height: "460px" }}
+                onMouseMove={survolerCanvasRetraitTeneur}
+                onMouseLeave={() => setSurvolRetraitTeneur(null)}
+              />
+              {(roleRetrait === "x" ? serieX : serieY).length > 0 && (
+                <BoutonsExport
+                  obtenirElement={() => canvasRetraitTeneurRef.current}
+                  type="canvas"
+                  nomFichier="nomogramme-2d-retrait-teneur-eau"
+                />
+              )}
+            </>
+          ) : (
+            <>
+              <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
+                Croisement {libelleAxe("y")} = f({libelleAxe("x")})
+              </p>
+              <canvas
+                ref={canvasRef}
+                style={{ width: "100%", height: "420px" }}
+                onMouseMove={survolerCanvas}
+                onMouseLeave={() => setSurvol(null)}
+              />
+              {points.length > 0 && (
+                <BoutonsExport obtenirElement={() => canvasRef.current} type="canvas" nomFichier="nomogramme-2d" />
+              )}
+            </>
           )}
         </div>
         <div style={{ flex: "1 1 400px", minWidth: 0 }}>
@@ -1241,26 +1366,6 @@ export default function Nomogramme({ mur, couche }) {
           )}
         </div>
       </div>
-      {panelRetraitTeneurActif && (
-        <div style={{ marginTop: "1rem" }}>
-          <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
-            {libelleAxe(roleRetrait)} en fonction du temps — axe teneur en eau
-          </p>
-          <canvas
-            ref={canvasRetraitTeneurRef}
-            style={{ width: "100%", height: "460px" }}
-            onMouseMove={survolerCanvasRetraitTeneur}
-            onMouseLeave={() => setSurvolRetraitTeneur(null)}
-          />
-          {(roleRetrait === "x" ? serieX : serieY).length > 0 && (
-            <BoutonsExport
-              obtenirElement={() => canvasRetraitTeneurRef.current}
-              type="canvas"
-              nomFichier="nomogramme-2d-retrait-teneur-eau"
-            />
-          )}
-        </div>
-      )}
     </div>
   );
 }

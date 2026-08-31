@@ -27,6 +27,11 @@ export function FournisseurEtatPages({ children }) {
   const [vueSelection, setVueSelection] = useState({ type: "hr_t", champ: "temperature", mur: "SOCMA 1" });
   const [vuePoints, setVuePoints] = useState(null);
   const [vueMode3D, setVueMode3D] = useState(false);
+  // Type de tracé de la courbe simple (30/08/2026, demande explicite) —
+  // "trait" par défaut pour ne rien changer visuellement à l'existant
+  // (GraphiqueSVG ne dessinait jusqu'ici qu'un trait continu, jamais de
+  // points seuls).
+  const [vueTypeTrace, setVueTypeTrace] = useState("trait");
 
   const valeur = {
     assistant: {
@@ -52,6 +57,8 @@ export function FournisseurEtatPages({ children }) {
       setPoints: setVuePoints,
       mode3D: vueMode3D,
       setMode3D: setVueMode3D,
+      typeTrace: vueTypeTrace,
+      setTypeTrace: setVueTypeTrace,
     },
   };
 

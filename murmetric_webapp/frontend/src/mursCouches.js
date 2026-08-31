@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 
 // Clé mur/couche selon le type de mesure — teneur_eau utilise mur/couche
@@ -42,4 +42,34 @@ export function useMursCouchesConnus() {
     chargerMursCouchesConnus().then(setOptions);
   }, []);
   return options;
+}
+
+// Couches d'UN SEUL type de mesure, filtrées par mur (31/08/2026, demande
+// explicite) — contrairement à useMursCouchesConnus() ci-dessus (union
+// globale des 3 types, jamais filtrée par mur), utilisé là où mélanger des
+// couches d'un autre type n'a pas de sens (ex. proposer les couches HR/T
+// dans un formulaire teneur en eau) ou induit en erreur (ex. proposer la
+// couche d'un autre mur que celui déjà choisi). `type` accepté tel quel par
+// CLES_PAR_TYPE (hr_t/retrait/teneur_eau).
+export function useCouchesParMur(type, mur) {
+  const [combinaisons, setCombinaisons] = useState(null);
+  useEffect(() => {
+    api
+      .mesuresValeursTags({ type })
+      .then((r) => setCombinaisons(r?.combinaisons ?? []))
+      .catch(() => setCombinaisons([]));
+  }, [type]);
+
+  const { mur: cleMur, couche: cleCouche } = CLES_PAR_TYPE[type];
+  return useMemo(() => {
+    if (!combinaisons) return [];
+    return [
+      ...new Set(
+        combinaisons
+          .filter((c) => !mur || c[cleMur] === mur)
+          .map((c) => c[cleCouche])
+          .filter(Boolean),
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+  }, [combinaisons, mur, cleMur, cleCouche]);
 }

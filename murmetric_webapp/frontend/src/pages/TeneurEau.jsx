@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import BoutonsExportDonnees from "../components/BoutonsExportDonnees.jsx";
 import ChampSelectOuAutre from "../components/ChampSelectOuAutre.jsx";
-import { useMursCouchesConnus } from "../mursCouches.js";
+import { useCouchesParMur, useMursCouchesConnus } from "../mursCouches.js";
 
 const VIDE = { mur: "", couche: "", valeur_pourcent: "", commentaire: "", date_mesure: "" };
 
@@ -14,7 +14,12 @@ export default function TeneurEau() {
   const [enCours, setEnCours] = useState(false);
   const [filtreMur, setFiltreMur] = useState("");
   const [filtreCouche, setFiltreCouche] = useState("");
-  const { murs: mursConnus, couches: couchesConnues } = useMursCouchesConnus();
+  const { murs: mursConnus } = useMursCouchesConnus();
+  // Couches filtrées par mur + type teneur_eau (31/08/2026, demande
+  // explicite) — 2 listes indépendantes, la saisie et l'édition en ligne ne
+  // portant pas forcément sur le même mur au même instant.
+  const couchesPourSaisie = useCouchesParMur("teneur_eau", saisie.mur);
+  const couchesPourEdition = useCouchesParMur("teneur_eau", enEdition?.valeurs?.mur);
 
   const charger = async () => {
     try {
@@ -121,7 +126,7 @@ export default function TeneurEau() {
             <ChampSelectOuAutre
               required
               valeur={saisie.couche}
-              options={couchesConnues}
+              options={couchesPourSaisie}
               onChange={(v) => setSaisie({ ...saisie, couche: v })}
               placeholder="interface carreau et exterieur"
             />
@@ -216,7 +221,7 @@ export default function TeneurEau() {
                       <td>
                         <ChampSelectOuAutre
                           valeur={enEdition.valeurs.couche}
-                          options={couchesConnues}
+                          options={couchesPourEdition}
                           onChange={(v) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: v } })}
                         />
                       </td>
