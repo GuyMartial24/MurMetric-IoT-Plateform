@@ -310,7 +310,7 @@ kubectl scale deployment kafka-consumer-influx --replicas=3 -n murmetric
 
 ## 10. Auteur, organisation et licence
 
-**Martial GADJEUKAMENI** — Data Engineer & IA junior
+**Martial GADJEU** — Data Engineer & IA
 ✉️ guymg33@gmail.com · 🔗 [GitHub](https://github.com/GuyMartial24)
 
 **FRD-CODEM** — Bureau d'études spécialisé dans la construction durable et
