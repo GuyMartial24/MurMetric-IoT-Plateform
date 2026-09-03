@@ -1,114 +1,63 @@
 # MurMetric — Plateforme IoT de monitoring métrologique des parois biosourcées
 
-> Plateforme d'acquisition, de transport et de visualisation en temps réel
-> des données issues de capteurs embarqués dans des parois à base de matériaux
-> biosourcés (chanvre-chaux, paille, etc.) — **FRD-CODEM**
+> Pipeline IoT temps réel (BLE + acquisition filaire haute fréquence) et
+> webapp d'analyse, pour le suivi hygrothermique de parois biosourcées
+> (chanvre-chaux, paille) sur plusieurs chantiers — **FRD-CODEM**
+
+---
+
+## Ce que ce projet démontre
+
+| Domaine | Éléments concrets dans ce repo |
+|---|---|
+| **Pipeline de données** | MQTT → Kafka → InfluxDB, découplage producteur/consommateur, rétention 7 jours, consumer scalable horizontalement |
+| **Bases de données time-series** | Modèle tags/fields InfluxDB, agrégation à 3 paliers selon la plage temporelle, garde-fous anti-surcharge sur les requêtes non agrégées |
+| **Ingénierie de résilience** | Buffer SQLite store-and-forward sur 2 sites terrain, republication automatique après coupure réseau |
+| **Conteneurisation & orchestration** | Images Docker multi-stage, stack `docker-compose` (6 services), manifests Kubernetes (k3s) pour un mode SaaS multi-tenant |
+| **Sécurité applicative** | JWT + bcrypt, anti brute-force par verrouillage temporisé, comparaison en temps constant, CORS restrictif, modèle d'auth à 3 niveaux |
+| **Full-stack** | Webapp React/Tailwind/shadcn + API FastAPI, visualisation de données custom (canvas, croisement 2D/3D) |
+| **IA appliquée** | Assistant avec *tool-use* (LLM Groq/Gemini), ancré sur des statistiques pré-agrégées plutôt que des données brutes, repli vision pour l'analyse de graphiques |
 
 ---
 
 ## Sommaire
 
 1. [Contexte et problématique](#1-contexte-et-problématique)
-2. [Enjeux du projet](#2-enjeux-du-projet)
-3. [Contraintes techniques](#3-contraintes-techniques)
-4. [Architecture générale](#4-architecture-générale)
-5. [Interface web (webapp)](#5-interface-web-webapp)
-6. [Capteurs utilisés](#6-capteurs-utilisés)
-7. [Choix technologiques](#7-choix-technologiques)
-8. [Structure du projet](#8-structure-du-projet)
-9. [Installation et déploiement](#9-installation-et-déploiement)
-10. [Configuration des capteurs](#10-configuration-des-capteurs)
-11. [Déploiement Kubernetes (SaaS)](#11-déploiement-kubernetes-saas)
-12. [Auteur et organisation](#12-auteur-et-organisation)
+2. [Architecture générale](#2-architecture-générale)
+3. [Interface web (webapp)](#3-interface-web-webapp)
+4. [Capteurs et contraintes terrain](#4-capteurs-et-contraintes-terrain)
+5. [Choix technologiques](#5-choix-technologiques)
+6. [Structure du projet](#6-structure-du-projet)
+7. [Installation et déploiement](#7-installation-et-déploiement)
+8. [Configuration des capteurs](#8-configuration-des-capteurs)
+9. [Déploiement Kubernetes (SaaS)](#9-déploiement-kubernetes-saas)
+10. [Auteur, organisation et licence](#10-auteur-organisation-et-licence)
 
 ---
 
 ## 1. Contexte et problématique
 
-### Le défi des matériaux biosourcés
+Les matériaux biosourcés (chanvre-chaux, paille) ont un excellent profil
+thermique et carbone, mais leur comportement hygrothermique dans le temps
+reste peu documenté à grande échelle : cinétiques de séchage, évolution de
+la teneur en eau, phase de retrait. Ces questions conditionnent la
+durabilité et la performance énergétique des bâtiments biosourcés, et ne
+peuvent être répondues que par un monitoring continu **in situ**.
 
-Le secteur du bâtiment est l'un des principaux émetteurs de CO₂ en France.
-Face à l'urgence climatique, les matériaux biosourcés — chanvre-chaux,
-paille, ouate de cellulose — connaissent un essor important comme alternatives
-aux isolants synthétiques. Ils présentent d'excellentes propriétés thermiques,
-hygrométriques et un bilan carbone favorable.
+> **Problématique** : collecter, transporter et exploiter en continu les
+> données métrologiques (température, humidité, retrait) de centaines de
+> capteurs coulés dans des parois de chantiers dispersés géographiquement,
+> avec robustesse, scalabilité et pérennité.
 
-Cependant, leur comportement hygro-thermique dans le temps reste peu documenté
-à grande échelle : comment évolue la teneur en eau d'une paroi en chanvre-chaux
-après sa mise en œuvre ? Quelles sont les cinétiques de séchage selon l'exposition
-(nord/sud/est/ouest) et les conditions climatiques locales ? Comment la paroi
-se comporte-t-elle en phase de retrait ?
-
-Ces questions conditionnent la durabilité, la performance énergétique et la
-qualité sanitaire des bâtiments biosourcés. Elles restent difficiles à répondre
-sans un monitoring continu, à long terme, **in situ**.
-
-### La problématique de MurMetric
-
-> **Comment collecter, transporter et exploiter en continu les données
-> métrologique (température, humidité, retrait) de centaines de capteurs
-> coulés dans des parois de chantiers dispersés géographiquement, tout en
-> garantissant la robustesse, la scalabilité et la pérennité du système ?**
-
-Les défis sont multiples :
-- Les capteurs sont **physiquement intégrés dans la matière** (coulés dans le
-  béton de chanvre) — ils ne peuvent pas être retirés pour maintenance.
-- Le signal BLE doit **traverser la paroi** depuis l'intérieur.
-- Les chantiers sont **dispersés géographiquement** (Troyes, Amiens, etc.) et
-  ne disposent pas toujours d'une infrastructure réseau stable.
-- La flotte peut atteindre **200+ capteurs** sur un même site.
-- Les données doivent être **exploitables sur le long terme** (années) pour
-  observer les cinétiques de vieillissement.
+Contraintes principales : capteurs **physiquement inaccessibles** une fois
+coulés (aucune maintenance possible), signal BLE devant traverser la paroi,
+connectivité terrain instable, deux débits de données très différents (BLE
+24h vs capteurs de retrait à 1 mesure/s), et un besoin de conservation des
+données sur plusieurs années.
 
 ---
 
-## 2. Enjeux du projet
-
-| Dimension | Enjeu |
-|---|---|
-| **Scientifique** | Constituer une base de données métrologique de référence sur le comportement des parois biosourcées dans le temps |
-| **Technique** | Concevoir un pipeline IoT fiable, résilient et scalable pour 200+ capteurs BLE sur plusieurs sites |
-| **Industriel** | Poser les bases d'une offre SaaS déployable chez d'autres maîtres d'ouvrage et bureaux d'études |
-| **Environnemental** | Contribuer à la documentation scientifique et à la démocratisation des matériaux biosourcés |
-| **Pédagogique** | Monter en compétences sur les technologies IoT, streaming de données (Kafka) et orchestration (Kubernetes) |
-
----
-
-## 3. Contraintes techniques
-
-### Capteurs
-
-- **Intégration physique** : les capteurs Blue Maestro Disc Maxi sont coulés dans
-  la paroi — aucune connexion filaire possible, aucun remplacement envisageable
-  sans détruire la paroi.
-- **Autonomie critique** : la pile (CR2477) doit durer **4 à 5 ans**. L'intervalle
-  de log est réglé au maximum (86 400 s / 24 h) pour minimiser la consommation.
-- **Signal BLE à travers la paroi** : le signal doit traverser plusieurs
-  centimètres de béton de chanvre depuis l'intérieur — la portée effective
-  est réduite (< 10 m en conditions réelles).
-- **Protocole passif** : l'ingestion BLE utilise exclusivement la **publicité passive**
-  (advertising) — aucune connexion GATT n'est établie en ingestion pour préserver
-  la batterie. La connexion GATT n'est utilisée qu'à la configuration initiale.
-
-### Réseau
-
-- **Terrain instable** : les chantiers peuvent avoir des connexions internet
-  intermittentes (4G, fibre non déployée). Le système doit survivre aux coupures
-  sans perte de données.
-- **Multi-sites** : chaque site dispose de sa propre passerelle (Raspberry Pi),
-  toutes publient vers un broker MQTT cloud centralisé.
-
-### Données
-
-- **Double fréquence** : les capteurs BLE publient toutes les 24 h (basse
-  fréquence), tandis que les capteurs de retrait DeweSoftX émettent à **1 mesure/s**
-  (haute fréquence) — le pipeline doit absorber les deux débits sans saturation.
-- **Long terme** : les données doivent être conservées plusieurs années pour
-  l'analyse des cinétiques de vieillissement.
-
----
-
-## 4. Architecture générale
+## 2. Architecture générale
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -117,22 +66,21 @@ Les défis sont multiples :
 │  Parois instrumentées                                                   │
 │  ┌──────────────┐   BLE advertising                                     │
 │  │ Disc Maxi ×N │ ──────────────────► Raspberry Pi 5                   │
-│  │ (T°, HR%)    │   passive scan       start.py                        │
-│  └──────────────┘   company ID filter  ingestion_capteurs_bluetooth.py  │
-│                                        configure_capteurs.py            │
+│  │ (T°, HR%)    │   passive scan       ingestion/raspberry_pi/          │
+│  └──────────────┘   company ID filter                                   │
 │                                              │                          │
 │  ┌──────────────┐   Export .dxd               │                          │
 │  │ Capteur      │ ──────────────────► PC labo Windows                  │
-│  │ retrait (×N) │   1 msg/s (dépôt fichier)   start_dewesoft.py         │
-│  └──────────────┘                    ingestion_dewesoft_dxd.py          │
+│  │ retrait (×N) │   1 msg/s (dépôt fichier)   ingestion/pc_amiens/       │
+│  └──────────────┘                                                       │
 │                                              │                          │
 │                           SQLite local  ◄────┤ Si VPS inaccessible      │
-│                           (murmetric_buffer.db) └── republication auto  │
+│                           (buffer local) └── republication auto         │
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │ MQTT (TLS, port 8883)
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  CLOUD VPS — docker-compose / Kubernetes                                │
+│  CLOUD VPS — pipeline/ (docker-compose ou Kubernetes)                    │
 │                                                                         │
 │  ┌─────────────┐    ┌──────────────────────┐    ┌──────────────────┐   │
 │  │  Mosquitto  │───►│ bridge_mqtt_to_kafka  │───►│     Kafka        │   │
@@ -146,9 +94,9 @@ Les défis sont multiples :
 │                     └──────────┬───────────┘                            │
 │                                │                                         │
 │                     ┌──────────▼───────────┐    ┌──────────────────┐   │
-│                     │      InfluxDB 2.7    │───►│     Grafana       │   │
-│                     │  mesures_capteurs    │    │  Dashboards       │   │
-│                     │  registre_capteurs   │    │  alertes          │   │
+│                     │      InfluxDB 2.7    │───►│  Grafana / Webapp │   │
+│                     │  mesures_capteurs    │    │                   │   │
+│                     │  registre_capteurs   │    │                   │   │
 │                     │  mesures_dewesoft    │    └──────────────────┘   │
 │                     └──────────────────────┘                            │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -161,400 +109,219 @@ Les défis sont multiples :
 | Terrain → VPS | SQLite local + republication auto | Coupure réseau, VPS inaccessible |
 | Mosquitto → InfluxDB | Kafka (rétention 7 jours) | Crash InfluxDB, redémarrage consumer |
 
-Cette résilience est directement observable depuis la webapp, sur la page
-**Monitoring des pipelines d'ingestion** : fraîcheur des données réellement
-écrites en InfluxDB, état des connexions MQTT et des buffers locaux — un
-coup d'œil suffit pour repérer un capteur ou une passerelle qui décroche.
+Cette résilience est observable en direct depuis la webapp (page
+**Monitoring**) : fraîcheur des données écrites en InfluxDB, état des
+connexions MQTT et des buffers locaux.
 
 ![Monitoring des pipelines d'ingestion](docs/screenshots/monitoring.png)
 
 ---
 
-## 5. Interface web (webapp)
+## 3. Interface web (webapp)
 
-L'interface web **MurMetric** (React + Tailwind CSS + shadcn/ui, servie par
-FastAPI) donne aux équipes FRD-CODEM un accès direct aux données sans passer
-par les outils techniques du pipeline (Grafana, InfluxDB).
+React + Tailwind CSS + shadcn/ui, servie par FastAPI — donne un accès
+direct aux données sans passer par les outils techniques du pipeline.
 
-### Connexion
+<table>
+<tr>
+<td width="50%">
 
-![Login](docs/screenshots/login.png)
-
-### Vue d'ensemble — nomogramme de croisement 2D/3D
-
-Compose librement deux grandeurs (température, humidité, retrait, temps) et
-affiche leur relation ainsi que leur évolution dans le temps, avec survol
-multi-courbes pour lire précisément chaque valeur.
-
+**Vue d'ensemble** — nomogramme de croisement 2D/3D entre grandeurs
+(température, humidité, retrait, temps), survol multi-courbes.
 ![Vue d'ensemble](docs/screenshots/vue-ensemble.png)
 
-### Saisies de teneur en eau
+</td>
+<td width="50%">
 
-Historique des relevés terrain (teneur en eau par mur/couche, cf. section 1
-— cinétiques de séchage), saisie manuelle et import rétroactif, en
-complément des mesures automatiques des capteurs.
+**Gestion des capteurs** — registre éditable (mur, couche, batterie, RSSI),
+filtres, export CSV/Excel.
+![Capteurs](docs/screenshots/capteurs.png)
 
-![Teneur en eau](docs/screenshots/teneur-eau.png)
+</td>
+</tr>
+<tr>
+<td width="50%">
 
-### Dashboards Grafana intégrés
-
-Vue Grafana en lecture seule, embarquée directement dans la webapp — accès
-rapide sans changer d'outil, avec un lien vers l'instance Grafana complète
-pour composer ses propres panneaux.
-
-![Grafana intégré](docs/screenshots/grafana.png)
-
-### Export de données
-
-Génère des fichiers CSV/Parquet côté serveur sur une période choisie —
-téléchargement direct pour une période raisonnable, ou tâche de fond pour un
-historique complet.
-
-![Export de données](docs/screenshots/export.png)
-
-### Assistant IA
-
-Assistant ancré sur la sélection courante (mur/couche/période), qui ne
-raisonne que sur des statistiques pré-agrégées — jamais sur les points
-bruts — sauf lorsqu'une image de graphique lui est jointe pour analyse
-visuelle directe.
-
+**Assistant IA** — ancré sur des statistiques pré-agrégées (jamais les
+points bruts), analyse visuelle si une image de graphique est jointe.
 ![Assistant IA](docs/screenshots/assistant.png)
 
-### Paramètres du compte
+</td>
+<td width="50%">
 
-Gestion du compte connecté (changement de mot de passe, création de
-nouveaux comptes) et configuration des identifiants API de l'Assistant IA.
+**Dashboards Grafana intégrés** — vue en lecture seule embarquée, lien vers
+l'instance complète pour composer ses propres panneaux.
+![Grafana](docs/screenshots/grafana.png)
 
-![Paramètres](docs/screenshots/parametres.png)
+</td>
+</tr>
+</table>
 
----
-
-## 6. Capteurs utilisés
-
-### Blue Maestro Disc Maxi (température + humidité)
-
-| Caractéristique | Valeur |
-|---|---|
-| Modèle | Disc Maxi v42 (disc-maxi-alerts-003) |
-| Mesures | Température (−40/+120 °C, ±0.3 °C) + Humidité (0−100 %, ±2 %) |
-| Pile | CR2477 (4 à 5 ans d'autonomie) |
-| Protocole | BLE 4.2 — publicité passive (advertising) |
-| Intervalle de log | 60 s à 86 400 s (réglé à 86 400 s / 24 h par MurMetric) |
-| Dimensions | 37.5 × 37.5 × 14.3 mm |
-| Particularité | **Peut être coulé dans des parois en matériaux biosourcés** |
-
-Les capteurs sont configurés via GATT BLE à la commande `setlog~86400` pour
-maximiser l'autonomie. Cette configuration est automatique au démarrage via
-`configure_capteurs.py` et persistée dans `capteurs.json`.
-
-### Capteurs de retrait (DeweSoftX)
-
-- Acquisition par **import de fichiers .dxd** déposés/exportés par DeweSoftX
-  dans un dossier surveillé, lus via la librairie officielle **DWDataReader**
-  (SDK vendored, ctypes)
-- **Fréquence : 1 mesure/seconde par canal** (haute fréquence)
-- Données publiées sur le topic MQTT `frd/dewesoft/bruts`
+D'autres pages : connexion, saisie de teneur en eau, export de données
+(CSV/Parquet, direct ou tâche de fond), paramètres de compte.
 
 ---
 
-## 7. Choix technologiques
+## 4. Capteurs et contraintes terrain
 
-### Python
+| | Blue Maestro Disc Maxi (BLE) | Capteur de retrait (DeweSoftX) |
+|---|---|---|
+| Mesure | Température (±0.3°C) + Humidité (±2%) | Retrait filaire, 1 mesure/s/canal |
+| Autonomie | Pile CR2477, 4-5 ans (log réglé à 24h) | Alimentation filaire |
+| Protocole | BLE 4.2, **publicité passive uniquement** (préserve la batterie, aucun timeout de connexion) | Export `.dxd`, lu via SDK **DWDataReader** (ctypes) |
+| Contrainte clé | Coulé dans la paroi — signal doit la traverser, aucune maintenance possible | Débit élevé — absorbé par le mode batch async du consumer Kafka |
 
-Écosystème riche pour l'IoT, excellent support BLE (`bleak`), asyncio natif
-pour la gestion concurrente des tâches (scan, sync SQLite, reconfiguration
-périodique). Multiplateforme (Linux/RPi + Windows/PC labo).
-
-### BLE passif (advertising)
-
-L'ingestion utilise exclusivement le **mode passif** (scan advertising) —
-aucune connexion GATT pendant la collecte de données. Ce choix :
-- Préserve la batterie des capteurs (pas de wake-up pour connexion)
-- Permet de monitorer des centaines de capteurs simultanément
-- Élimine les timeouts de connexion
-La connexion GATT active n'est établie qu'à la configuration initiale
-(`setlog~86400`) via `configure_capteurs.py`.
-
-### MQTT (paho-mqtt)
-
-Protocole IoT léger, adapté aux connexions instables (QoS 1 = at-least-once).
-Standard de fait pour les architectures IoT multi-sources.
-
-### Apache Kafka (kafka-python)
-
-Introduit pour répondre à deux besoins :
-
-1. **Débit** : les capteurs de retrait émettent à 1 msg/s — le pipeline doit
-   absorber ce débit sans saturer l'écriture InfluxDB. Le mode batch async
-   (500 pts / flush 1 s) du consumer Kafka y répond.
-
-2. **Découplage** : chaque consommateur (InfluxDB, alertes futures, export ML)
-   lit les topics Kafka indépendamment, sans modifier le bridge. Nouveau
-   consommateur = nouveau service, pas de modification du code existant.
-
-3. **Résilience** : rétention 7 jours — si InfluxDB redémarre, le consumer
-   reprend depuis le dernier offset sans perte.
-
-4. **Multi-tenant SaaS** : topics namespaced par tenant
-   (`murmetric.{tenant}.capteurs.bruts`) pour isoler les données de chaque client.
-
-### InfluxDB 2.7
-
-Base de données time-series optimisée pour les données horodatées. Modèle
-tags/fields adapté aux métadonnées capteurs (adresse MAC, emplacement, prestation).
-Trois mesures : `mesures_capteurs`, `registre_capteurs`, `mesures_dewesoft`.
-
-### SQLite
-
-Buffer local store-and-forward sans dépendance externe. Présent sur le RPi
-et le PC Windows, indépendant sur chaque machine. Gère les coupures réseau
-terrain sans perte de données.
-
-### Docker + docker-compose
-
-Conteneurisation de la stack VPS (5 services). Reproductibilité du déploiement,
-isolation des dépendances, `restart: unless-stopped` pour la haute disponibilité.
-
-### Kubernetes (k3s recommandé)
-
-Orchestration pour le passage en mode **SaaS multi-clients** :
-- Déploiement automatisé pour chaque nouveau client
-- Scaling horizontal du consumer Kafka (`--replicas=N`)
-- Rolling updates sans interruption de service
-- Isolation par namespace ou cluster selon le niveau de tenancy requis
+Configuration BLE automatique (`setlog~86400`) via
+`ingestion/raspberry_pi/configure_capteurs.py`, appliquée dès qu'un capteur
+non configuré est détecté.
 
 ---
 
-## 8. Structure du projet
+## 5. Choix technologiques
+
+| Techno | Rôle | Pourquoi |
+|---|---|---|
+| **Python** (asyncio, `bleak`) | Ingestion terrain | Excellent support BLE, gestion concurrente native (scan + sync + reconfig), multiplateforme RPi/Windows |
+| **BLE passif** (advertising) | Protocole de collecte | Pas de connexion GATT en continu → batterie préservée, centaines de capteurs monitorables sans timeout |
+| **MQTT** (`paho-mqtt`, QoS 1) | Transport terrain → cloud | Léger, résilient aux connexions instables, standard IoT |
+| **Apache Kafka** | Découplage + buffer cloud | Absorbe le débit du retrait (1 msg/s), permet d'ajouter un consommateur sans toucher au reste, rétention 7j = résilience au redémarrage InfluxDB, topics namespaced par tenant (SaaS) |
+| **InfluxDB 2.7** | Stockage time-series | Modèle tags/fields adapté aux métadonnées capteurs, requêtes Flux |
+| **SQLite** | Buffer terrain | Store-and-forward sans dépendance externe, indépendant par machine |
+| **Docker / docker-compose** | Conteneurisation VPS | Reproductibilité, isolation, `restart: unless-stopped` |
+| **Kubernetes (k3s)** | Orchestration SaaS | Déploiement par client, scaling horizontal du consumer, rolling updates |
+| **React + FastAPI** | Webapp | SPA + API type-safe, un seul conteneur (frontend buildé, servi statiquement) |
+| **Groq / Gemini (LLM)** | Assistant IA | Tool-use sur données pré-agrégées, repli vision multi-fournisseur |
+
+---
+
+## 6. Structure du projet
 
 ```
 MurMetric-IoT-Plateform/
-│
-├── 📄 start.py                          # Lanceur RPi (BLE uniquement)
-├── 📄 start_dewesoft.py                 # Lanceur PC Windows (DeweSoftX)
-│
-├── 📄 configure_capteurs.py             # Configuration GATT BLE (setlog~86400)
-├── 📄 ingestion_capteurs_bluetooth.py   # Ingestion BLE passive (scan permanent)
-├── 📄 ingestion_dewesoft_dxd.py         # Ingestion DeweSoftX par dépôt de fichiers .dxd
-│
-├── 📄 bridge_mqtt_to_kafka.py           # VPS : MQTT → Kafka (3 topics)
-├── 📄 kafka_consumer_influx.py          # VPS : Kafka → InfluxDB (batch async)
-├── 📄 bridge_mqtt_to_influx.py          # Legacy : MQTT → InfluxDB (tests locaux)
-│
-├── 📄 capteurs.json                     # Registre des capteurs BLE (hot-reload)
-├── 📄 mosquitto.conf                    # Configuration du broker MQTT
-│
-├── 📄 requirements.txt                  # Référence globale toutes dépendances
-├── 📄 requirements-rpi.txt              # RPi : bleak + paho-mqtt
-├── 📄 requirements-windows.txt          # PC Windows : paho-mqtt
-├── 📄 requirements-vps.txt              # VPS : paho-mqtt + kafka-python + influxdb-client
-│
-├── 📄 Dockerfile                        # Image RPi (déploiement Docker optionnel)
-├── 📄 Dockerfile.bridge                 # Image VPS bridge MQTT → Kafka
-├── 📄 Dockerfile.kafka-consumer         # Image VPS consumer Kafka → InfluxDB
-├── 📄 docker-compose.yml                # Stack VPS complète (5 services)
-│
-├── 📁 k8s/                              # Manifests Kubernetes
-│   ├── namespace.yaml
-│   ├── secrets.yaml.template            # ⚠️ Copier → secrets.yaml (non versionné)
-│   ├── mosquitto/  (configmap, deployment, service)
-│   ├── kafka/      (statefulset, service — 10 Gi PVC)
-│   ├── influxdb/   (statefulset, service, pvc — 20 Gi)
-│   ├── bridge-mqtt-kafka/  (deployment, configmap)
-│   └── kafka-consumer-influx/  (deployment — scalable)
-│
-└── 📁 murmetric_webapp/                 # Interface web (React + FastAPI)
+├── ingestion/
+│   ├── raspberry_pi/     # Ingestion BLE (start.py, ingestion_capteurs_bluetooth.py,
+│   │                     #   configure_capteurs.py, capteurs.example.json)
+│   └── pc_amiens/        # Ingestion DeweSoftX (start_dewesoft.py,
+│                         #   ingestion_dewesoft_dxd.py, SDK DWDataReader)
+├── pipeline/             # VPS : bridge MQTT→Kafka, consumer Kafka→InfluxDB, backfills
+├── deploy/docker/        # Dockerfiles, docker-compose, mosquitto, provisioning Grafana
+├── k8s/                  # Manifests Kubernetes (déploiement SaaS)
+├── murmetric_webapp/     # Interface web (frontend React + backend FastAPI)
+├── docs/screenshots/     # Captures d'écran (ce README)
+└── requirements*.txt     # Dépendances par cible (racine = référence globale)
 ```
 
 ---
 
-## 9. Installation et déploiement
+## 7. Installation et déploiement
 
 ### Prérequis
-
-- Python 3.12+
-- Docker + Docker Compose (VPS)
-- Git
+Python 3.12+, Docker + Docker Compose (VPS), Git.
 
 ### Raspberry Pi (terrain — ingestion BLE)
-
 ```bash
 git clone https://github.com/GuyMartial24/MurMetric-IoT-Plateform.git
 cd MurMetric-IoT-Plateform
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-rpi.txt
-
-# Configurer l'adresse du broker MQTT cloud
+python -m venv .venv && source .venv/bin/activate
+pip install -r ingestion/raspberry_pi/requirements-rpi.txt
 export MQTT_BROKER=<ip_vps>
-
-# Lancer la plateforme
-python start.py
+python ingestion/raspberry_pi/start.py
 ```
 
 ### PC labo Windows (terrain — DeweSoftX)
-
 ```powershell
 git clone https://github.com/GuyMartial24/MurMetric-IoT-Plateform.git
 cd MurMetric-IoT-Plateform
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements-windows.txt
-
-# Configurer l'adresse du broker MQTT cloud
+python -m venv .venv; .venv\Scripts\activate
+pip install -r ingestion/pc_amiens/requirements-windows.txt
 $env:MQTT_BROKER = "<ip_vps>"
-
-# Lancer l'ingestion
-python start_dewesoft.py
+python ingestion/pc_amiens/start_dewesoft.py
 ```
+Nécessite le SDK DWDataReader — voir
+[`ingestion/pc_amiens/DWDataReader_v5_0_8/README.md`](ingestion/pc_amiens/DWDataReader_v5_0_8/README.md).
 
 ### VPS Cloud (stack complète)
-
 ```bash
 git clone https://github.com/GuyMartial24/MurMetric-IoT-Plateform.git
-cd MurMetric-IoT-Plateform
-
-# Définir le token InfluxDB
+cd MurMetric-IoT-Plateform/deploy/docker
+cp ../../.env.example .env   # renseigner les valeurs
+./generer_mosquitto_password.sh
 export INFLUX_TOKEN=<mon_token_influxdb>
-
-# Construire et démarrer les 5 services
 docker compose up -d --build
-
-# Vérifier l'état des services
 docker compose ps
-docker compose logs -f kafka-consumer
 ```
 
-### Variables d'environnement
+### Webapp (build manuel, hors docker-compose)
+```bash
+docker build -t murmetric-webapp -f deploy/docker/Dockerfile.webapp .
+```
+
+### Variables d'environnement principales
 
 | Variable | Défaut | Description |
 |---|---|---|
 | `MQTT_BROKER` | `localhost` | Adresse du broker MQTT cloud |
-| `MQTT_PORT` | `1883` | Port MQTT |
 | `INFLUX_TOKEN` | — | Token API InfluxDB (**obligatoire en production**) |
-| `INFLUX_URL` | `http://localhost:8086` | URL InfluxDB |
-| `INFLUX_ORG` | `FRD_CODEM` | Organisation InfluxDB |
-| `INFLUX_BUCKET` | `Test_Capteurs` | Bucket InfluxDB |
+| `INFLUX_URL` / `INFLUX_ORG` / `INFLUX_BUCKET` | localhost / FRD_CODEM / — | Connexion InfluxDB |
 | `KAFKA_BOOTSTRAP` | `localhost:9092` | Serveurs Kafka |
-| `TENANT_ID` | `frd` | Identifiant tenant (namespacing Kafka) |
-| `RECONF_INTERVAL` | `21600` | Intervalle de reconfiguration GATT (s) |
-| `SQLITE_RETENTION` | `7` | Rétention du buffer local (jours) |
-| `POLL_INTERVAL` | `1.0` | Intervalle de lecture DeweSoftX (s) |
+| `TENANT_ID` | `frd` | Namespacing Kafka (multi-tenant SaaS) |
+| `JWT_SECRET_KEY` / `ADMIN_BOOTSTRAP_USERNAME/PASSWORD` | — | Authentification webapp |
+
+Liste complète : [`.env.example`](.env.example).
 
 ---
 
-## 10. Configuration des capteurs
+## 8. Configuration des capteurs
 
-Les capteurs BLE sont gérés via `capteurs.json`, un fichier JSON avec
-**hot-reload** : toute modification est prise en compte sans redémarrage.
+Registre géré via `capteurs.json` (hot-reload, pas de redémarrage requis) —
+voir [`ingestion/raspberry_pi/capteurs.example.json`](ingestion/raspberry_pi/capteurs.example.json)
+pour la structure exacte (données factices ; les vraies coordonnées GPS et
+codes prestation clients ne sont pas versionnés).
 
-### Structure d'une entrée
+**Workflow** : détection auto d'un nouveau capteur BLE (`ingestion: false`)
+→ validation opérateur (renseigner mur/couche, passer `ingestion: true`) →
+prise en compte immédiate (hot-reload) → configuration GATT automatique
+(`setlog~86400`).
 
-```json
-{
-  "D2:0D:27:1C:F3:97": {
-    "mac": "D2:0D:27:1C:F3:97",
-    "nom": "disc-maxi-A03",
-    "emplacement": "Atelier Troyes — Paroi Nord",
-    "latitude": 48.2973,
-    "longitude": 4.0744,
-    "altitude_m": 112.5,
-    "prestation": "C10517",
-    "categorie R&D": "Hygrothermal",
-    "ingestion": true,
-    "lint_configure": true,
-    "lint_max_confirme_s": 86400.0
-  }
-}
-```
-
-### Workflow d'ajout d'un nouveau capteur
-
-1. **Détection automatique** : tout capteur Blue Maestro (company ID `0x0133`)
-   non présent dans `capteurs.json` est auto-enregistré avec `"ingestion": false`.
-2. **Validation opérateur** : éditer `capteurs.json`, renseigner `nom` et
-   `emplacement`, passer `"ingestion": true`.
-3. **Hot-reload** : la modification est active dès le prochain paquet BLE reçu,
-   **sans redémarrage**.
-4. **Configuration automatique** : `configure_capteurs.py` détecte que
-   `lint_configure` est absent et applique `setlog~86400` au prochain cycle.
-
-### Registre InfluxDB (`registre_capteurs`)
-
-À chaque connexion MQTT, l'intégralité du `capteurs.json` est publiée sur le
-topic `frd/capteurs/registre` et stockée dans la mesure `registre_capteurs`
-d'InfluxDB. Les applications clientes peuvent ainsi interroger les métadonnées
-(GPS, prestation, catégorie R&D) en même temps que les mesures.
-
-Ce registre est directement consultable et éditable depuis la webapp (page
-**Capteurs**) : identifiant, mur, couche, dernière détection, batterie, RSSI,
-avec filtres et export CSV/Excel — l'étape "Validation opérateur" du workflow
-ci-dessus se fait typiquement ici plutôt qu'en éditant `capteurs.json` à la
-main.
+Ce registre est aussi consultable et éditable directement depuis la
+webapp (page **Capteurs**), avec filtres et export.
 
 ![Gestion des capteurs](docs/screenshots/capteurs.png)
 
 ---
 
-## 11. Déploiement Kubernetes (SaaS)
+## 9. Déploiement Kubernetes (SaaS)
 
-La cible à long terme de MurMetric est une **offre SaaS** permettant à d'autres
-maîtres d'ouvrage, bureaux d'études et laboratoires de déployer la même
-infrastructure de monitoring pour leurs propres chantiers.
-
-### Déploiement sur un cluster k3s (VPS unique)
+Cible à long terme : une offre SaaS pour d'autres maîtres d'ouvrage/bureaux
+d'études, avec isolation par `TENANT_ID` (topics Kafka namespacés
+`murmetric.{tenant}.*`).
 
 ```bash
-# Installer k3s
 curl -sfL https://get.k3s.io | sh -
-
-# Préparer les secrets
-cp k8s/secrets.yaml.template k8s/secrets.yaml
-# Éditer k8s/secrets.yaml : encoder les valeurs en base64
-#   echo -n "mon_token" | base64
-
-# Déployer la stack
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/secrets.yaml
-kubectl apply -f k8s/mosquitto/
-kubectl apply -f k8s/kafka/
-kubectl apply -f k8s/influxdb/
-kubectl apply -f k8s/bridge-mqtt-kafka/
-kubectl apply -f k8s/kafka-consumer-influx/
-
-# Vérifier les pods
+cp k8s/secrets.yaml.template k8s/secrets.yaml   # éditer, valeurs en base64
+kubectl apply -f k8s/namespace.yaml -f k8s/secrets.yaml
+kubectl apply -f k8s/mosquitto/ -f k8s/kafka/ -f k8s/influxdb/
+kubectl apply -f k8s/bridge-mqtt-kafka/ -f k8s/kafka-consumer-influx/
 kubectl get pods -n murmetric
-
-# Scaler le consumer si le débit augmente
 kubectl scale deployment kafka-consumer-influx --replicas=3 -n murmetric
 ```
 
-### Isolation multi-tenant
-
-Chaque client SaaS dispose d'un `TENANT_ID` unique. Les topics Kafka sont
-automatiquement namespaced (`murmetric.{tenant}.capteurs.bruts`) pour garantir
-l'isolation des données entre clients.
-
 ---
 
-## 12. Auteur et organisation
+## 10. Auteur, organisation et licence
 
-### Auteur
+**Martial GADJEUKAMENI** — Data Engineer & IA junior
+✉️ guymg33@gmail.com · 🔗 [GitHub](https://github.com/GuyMartial24)
 
-**Martial GADJEUKAMENI**
-Ingénieur R&D — FRD-CODEM
-✉️ guymg33@gmail.com
-🔗 [GitHub](https://github.com/GuyMartial24)
+**FRD-CODEM** — Bureau d'études spécialisé dans la construction durable et
+les matériaux biosourcés.
 
-### Organisation
-
-**FRD-CODEM** — Bureau d'études spécialisé dans la construction durable
-et les matériaux biosourcés. Accompagne maîtres d'ouvrage et industriels
-dans la conception, le suivi et l'évaluation de bâtiments à haute performance
-environnementale.
-
-### Technologies
+Projet développé pour FRD-CODEM. Code publié à titre de démonstration
+technique (portfolio) — les données réelles (clients, coordonnées de
+chantiers) et le SDK tiers DWDataReader ont été retirés du repo ; les
+fichiers `*.example.json` et les instructions du dossier
+`ingestion/pc_amiens/DWDataReader_v5_0_8/` permettent de reproduire un
+environnement fonctionnel.
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![MQTT](https://img.shields.io/badge/MQTT-paho--mqtt-orange)
