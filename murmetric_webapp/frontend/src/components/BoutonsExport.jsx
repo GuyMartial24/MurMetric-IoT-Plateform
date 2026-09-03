@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { canvasVersDataUrl, copierDataUrlDansPressePapiers, svgVersDataUrl } from "../exportGraphique.js";
+import { Button } from "./ui/button.jsx";
 
 // Bouton d'export réutilisable (copie presse-papiers) — un seul composant
 // pour les deux types de rendu graphique de l'appli (<canvas> pour les
@@ -36,14 +37,14 @@ export default function BoutonsExport({ obtenirElement, type, imbrique = false }
 
   const boutons = (
     <>
-      <button type="button" onClick={copier} disabled={enCours}>
+      <Button type="button" variant="outline" size="sm" onClick={copier} disabled={enCours}>
         Copier l'image
-      </button>
-      {message && <span style={{ color: "#7fd4ff", fontSize: "0.8rem" }}>{message}</span>}
+      </Button>
+      {message && <span className="text-xs text-ring">{message}</span>}
     </>
   );
 
   if (imbrique) return boutons;
 
-  return <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>{boutons}</div>;
+  return <div className="mt-2 flex items-center gap-2">{boutons}</div>;
 }

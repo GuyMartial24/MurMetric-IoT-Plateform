@@ -6,6 +6,8 @@ import {
   AXES_DISPONIBLES,
   COULEURS_CANAUX_RETRAIT,
   FENETRE_PAR_RESOLUTION,
+  LIBELLES_RESOLUTION,
+  RESOLUTION_MAX_JOURS,
   TYPES_TRACE,
   UNITES_TEMPS,
   construireParamAxe,
@@ -65,6 +67,17 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
   // explicite) — distincte de "Unité de temps" ci-dessus, qui sert à un
   // usage différent (convertir "Temps" en grandeur d'axe du croisement).
   const [resolutionTemps, setResolutionTemps] = useState("jour");
+  // "Heure" grisée au-delà de RESOLUTION_MAX_JOURS.heure (31/08/2026,
+  // demande explicite) — au-delà, la source InfluxDB interrogée pour le
+  // retrait est déjà horaire (cf. _mesure_retrait, mesures.py) : demander
+  // "Heure" n'apporterait rien de plus que "Jour" tout en générant une
+  // réponse inutilement volumineuse. Repasse sur "Jour" si l'utilisateur
+  // élargit la plage alors que "Heure" était sélectionnée.
+  const joursPlage = debut && fin ? (new Date(fin).getTime() - new Date(debut).getTime()) / 86_400_000 : null;
+  const heureIndisponible = joursPlage != null && joursPlage > RESOLUTION_MAX_JOURS.heure;
+  useEffect(() => {
+    if (heureIndisponible && resolutionTemps === "heure") setResolutionTemps("jour");
+  }, [heureIndisponible]); // eslint-disable-line react-hooks/exhaustive-deps
   const [survolTemps, setSurvolTemps] = useState(null);
   const [survolRetraitTeneur, setSurvolRetraitTeneur] = useState(null);
   // Panneau "retrait en fonction du temps, axe teneur en eau" (30/08/2026,
@@ -81,9 +94,9 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
   // ou par canal, pas par grandeur X/Y). couleurFond s'applique aux 3
   // canevas, dessiné explicitement (ils étaient transparents jusqu'ici,
   // simplement posés sur le fond de la page).
-  const [couleurX, setCouleurX] = useState("#7fd4ff");
-  const [couleurY, setCouleurY] = useState("#ffb37f");
-  const [couleurFond, setCouleurFond] = useState("#12141c");
+  const [couleurX, setCouleurX] = useState("#2563eb");
+  const [couleurY, setCouleurY] = useState("#ea580c");
+  const [couleurFond, setCouleurFond] = useState("#ffffff");
   const canvasRef = useRef(null);
   const canvasDroiteRef = useRef(null);
   const canvasRetraitTeneurRef = useRef(null);
@@ -351,8 +364,8 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
     const y = (v) => h - marge - ((v - (yMin - padY)) / (yMax + padY - (yMin - padY) || 1)) * (h - marge - 20);
 
     // Grille + graduations.
-    ctx.strokeStyle = "#2a2e3a";
-    ctx.fillStyle = "#a0a6b5";
+    ctx.strokeStyle = "#e2e5ea";
+    ctx.fillStyle = "#6b7280";
     ctx.font = "11px system-ui";
     ctx.lineWidth = 1;
     for (const gx of graduations(xMin - padX, xMax + padX)) {
@@ -382,7 +395,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       // que le dégradé temporel ci-dessous, qui n'a plus de sens dès qu'on
       // superpose plusieurs trajectoires distinctes.
       Object.entries(pointsParCanal).forEach(([c, pts]) => {
-        const couleur = COULEURS_CANAUX_RETRAIT[c] || "#a0a6b5";
+        const couleur = COULEURS_CANAUX_RETRAIT[c] || "#6b7280";
         if (typeTrace !== "nuage" && pts.length > 1) {
           ctx.strokeStyle = couleur;
           ctx.lineWidth = 1;
@@ -413,9 +426,9 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
         .forEach((c, i) => {
           const ly = 14 + i * 16;
           const xTexte = w - 8 - ctx.measureText(c).width;
-          ctx.fillStyle = COULEURS_CANAUX_RETRAIT[c] || "#a0a6b5";
+          ctx.fillStyle = COULEURS_CANAUX_RETRAIT[c] || "#6b7280";
           ctx.fillRect(xTexte - 14, ly, 10, 10);
-          ctx.fillStyle = "#e6e6e6";
+          ctx.fillStyle = "#1a1d23";
           ctx.fillText(c, xTexte, ly + 9);
         });
     } else {
@@ -452,7 +465,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
     if (survol) {
       const px = x(survol.x);
       const py = y(survol.y);
-      ctx.strokeStyle = "#7fd4ff";
+      ctx.strokeStyle = "#2563eb";
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(px, py);
@@ -461,7 +474,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       ctx.lineTo(marge, py);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "#7fd4ff";
+      ctx.fillStyle = "#2563eb";
       ctx.beginPath();
       ctx.arc(px, py, 4, 0, 2 * Math.PI);
       ctx.fill();
@@ -477,7 +490,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       const hauteurBoite = 10 + lignesInfobulle.length * 12;
       ctx.fillStyle = "#0f1117";
       ctx.fillRect(px + 8, py - hauteurBoite + 6, largeurBoite, hauteurBoite);
-      ctx.strokeStyle = "#7fd4ff";
+      ctx.strokeStyle = "#2563eb";
       ctx.strokeRect(px + 8, py - hauteurBoite + 6, largeurBoite, hauteurBoite);
       ctx.fillStyle = "#e6e6e6";
       lignesInfobulle.forEach((ligne, i) => {
@@ -502,8 +515,8 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       ctx.arc(px, py, 4, 0, 2 * Math.PI);
       ctx.fill();
     };
-    croisementsX.forEach((c) => dessinerCroisement(x(c.x), y(c.y), "#7fff9e"));
-    croisementsY.forEach((c) => dessinerCroisement(x(c.x), y(c.y), "#ffb37f"));
+    croisementsX.forEach((c) => dessinerCroisement(x(c.x), y(c.y), "#16a34a"));
+    croisementsY.forEach((c) => dessinerCroisement(x(c.x), y(c.y), "#ea580c"));
   }, [
     points,
     pointsParCanal,
@@ -553,8 +566,8 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
     const tx = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (w - marge - 20);
     const ty = (v) => h - marge - ((v - (vMin - padV)) / (vMax + padV - (vMin - padV) || 1)) * (h - marge - 20);
 
-    ctx.strokeStyle = "#2a2e3a";
-    ctx.fillStyle = "#a0a6b5";
+    ctx.strokeStyle = "#e2e5ea";
+    ctx.fillStyle = "#6b7280";
     ctx.font = "11px system-ui";
     ctx.lineWidth = 1;
     for (const gv of graduations(vMin - padV, vMax + padV)) {
@@ -572,7 +585,8 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       ctx.stroke();
       ctx.fillText(tick.label, px - 15, h - marge + 16);
     }
-    ctx.fillText("Temps", w - 40, h - marge + 34);
+    const libelleTemps = `Temps (${LIBELLES_RESOLUTION[resolutionTemps]})`;
+    ctx.fillText(libelleTemps, w - 8 - ctx.measureText(libelleTemps).width, h - marge + 34);
     ctx.save();
     ctx.translate(14, marge - 4);
     ctx.rotate(-Math.PI / 2);
@@ -635,7 +649,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       const xTexte = w - 8 - ctx.measureText(libelle).width;
       ctx.fillStyle = COULEUR_X;
       ctx.fillRect(xTexte - 14, ligneLegende, 10, 10);
-      ctx.fillStyle = "#e6e6e6";
+      ctx.fillStyle = "#1a1d23";
       ctx.fillText(libelle, xTexte, ligneLegende + 9);
       ligneLegende += 16;
     }
@@ -644,7 +658,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       const xTexte = w - 8 - ctx.measureText(libelle).width;
       ctx.fillStyle = COULEUR_Y;
       ctx.fillRect(xTexte - 14, ligneLegende, 10, 10);
-      ctx.fillStyle = "#e6e6e6";
+      ctx.fillStyle = "#1a1d23";
       ctx.fillText(libelle, xTexte, ligneLegende + 9);
     }
 
@@ -669,8 +683,8 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
         ctx.fill();
       });
     };
-    croisementsX.forEach((c) => dessinerCroisementTemps(c, "#7fff9e"));
-    croisementsY.forEach((c) => dessinerCroisementTemps(c, "#ffb37f"));
+    croisementsX.forEach((c) => dessinerCroisementTemps(c, "#16a34a"));
+    croisementsY.forEach((c) => dessinerCroisementTemps(c, "#ea580c"));
 
     // Infobulle au survol (30/08/2026, demande explicite) — au lieu d'un
     // seul point (le plus proche toutes courbes confondues), affiche
@@ -731,7 +745,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       const boiteX = pxBoite + largeurBoite + 16 > w ? pxBoite - largeurBoite - 8 : pxBoite + 8;
       ctx.fillStyle = "#0f1117";
       ctx.fillRect(boiteX, pyMoyen - hauteurBoite / 2, largeurBoite, hauteurBoite);
-      ctx.strokeStyle = "#7fd4ff";
+      ctx.strokeStyle = "#2563eb";
       ctx.strokeRect(boiteX, pyMoyen - hauteurBoite / 2, largeurBoite, hauteurBoite);
       ctx.fillStyle = "#e6e6e6";
       lignesInfobulle.forEach((ligne, i) => {
@@ -845,6 +859,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
     const serieRetraitPanel = roleRetrait === "x" ? serieX : serieY;
     if (serieRetraitPanel.length === 0) return;
     const couleurRetraitPanel = roleRetrait === "x" ? couleurX : couleurY;
+    const couleurTeneurPanel = roleTeneurEau === "x" ? couleurX : couleurY;
 
     const temps = [...serieRetraitPanel, ...serieTeneurEauAxe].map((p) => new Date(p.time).getTime());
     const tMin = Math.min(...temps);
@@ -862,8 +877,8 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
     const tx = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (w - marge - 20);
     const ty = (v) => h - margeBas - ((v - (vMin - padV)) / (vMax + padV - (vMin - padV) || 1)) * (h - margeBas - 20);
 
-    ctx.strokeStyle = "#2a2e3a";
-    ctx.fillStyle = "#a0a6b5";
+    ctx.strokeStyle = "#e2e5ea";
+    ctx.fillStyle = "#6b7280";
     ctx.font = "11px system-ui";
     ctx.lineWidth = 1;
     for (const gv of graduations(vMin - padV, vMax + padV)) {
@@ -876,15 +891,16 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
     // Axe du bas, 1re rangée : temps (comme les autres panneaux).
     for (const tick of graduationsTemps(tMin, tMax, resolutionTemps)) {
       const px = tx(tick.t);
-      ctx.strokeStyle = "#2a2e3a";
+      ctx.strokeStyle = "#e2e5ea";
       ctx.beginPath();
       ctx.moveTo(px, 10);
       ctx.lineTo(px, h - margeBas);
       ctx.stroke();
-      ctx.fillStyle = "#a0a6b5";
+      ctx.fillStyle = "#6b7280";
       ctx.fillText(tick.label, px - 15, h - margeBas + 16);
     }
-    ctx.fillText("Temps", w - 40, h - margeBas + 32);
+    const libelleTempsRetrait = `Temps (${LIBELLES_RESOLUTION[resolutionTemps]})`;
+    ctx.fillText(libelleTempsRetrait, w - 8 - ctx.measureText(libelleTempsRetrait).width, h - margeBas + 32);
     ctx.save();
     ctx.translate(14, marge - 4);
     ctx.rotate(-Math.PI / 2);
@@ -895,8 +911,8 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
     // Axe du bas, 2e rangée (demande explicite) : une graduation par relevé
     // réel de teneur en eau, étiquetée avec sa valeur.
     const yLigneTeneur = h - margeBas + 55;
-    ctx.strokeStyle = "#4a4f5e";
-    ctx.fillStyle = "#a0a6b5";
+    ctx.strokeStyle = couleurTeneurPanel;
+    ctx.fillStyle = couleurTeneurPanel;
     serieTeneurEauAxe.forEach((p) => {
       const px = tx(new Date(p.time).getTime());
       ctx.beginPath();
@@ -982,8 +998,8 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
         ctx.fillText(valeurTeneur.toFixed(2), px - 12, yLigneTeneur + 18);
       }
     };
-    croisementsX.forEach((c) => dessinerCroisement(c, "#7fff9e"));
-    croisementsY.forEach((c) => dessinerCroisement(c, "#ffb37f"));
+    croisementsX.forEach((c) => dessinerCroisement(c, "#16a34a"));
+    croisementsY.forEach((c) => dessinerCroisement(c, "#ea580c"));
 
     // Infobulle au survol — point de la courbe de retrait, graduation
     // teneur en eau, ou croisement, chaque champ conditionnel selon le cas.
@@ -1009,12 +1025,12 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
         pxBoite = pxRetrait;
       }
       if (pxTeneur != null) {
-        ctx.strokeStyle = "#a0a6b5";
+        ctx.strokeStyle = couleurTeneurPanel;
         ctx.beginPath();
         ctx.moveTo(pxTeneur, 10);
         ctx.lineTo(pxTeneur, yLigneTeneur);
         ctx.stroke();
-        ctx.fillStyle = "#a0a6b5";
+        ctx.fillStyle = couleurTeneurPanel;
         ctx.beginPath();
         ctx.arc(pxTeneur, yLigneTeneur, 4, 0, 2 * Math.PI);
         ctx.fill();
@@ -1040,7 +1056,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       const boiteX = pxBoite + largeurBoite + 16 > w ? pxBoite - largeurBoite - 8 : pxBoite + 8;
       ctx.fillStyle = "#0f1117";
       ctx.fillRect(boiteX, pyMoyen - hauteurBoite / 2, largeurBoite, hauteurBoite);
-      ctx.strokeStyle = "#7fd4ff";
+      ctx.strokeStyle = "#2563eb";
       ctx.strokeRect(boiteX, pyMoyen - hauteurBoite / 2, largeurBoite, hauteurBoite);
       ctx.fillStyle = "#e6e6e6";
       lignesInfobulle.forEach((ligne, i) => {
@@ -1217,6 +1233,9 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
         <div className="champ">
           <label>Résolution axe temps</label>
           <select value={resolutionTemps} onChange={(e) => setResolutionTemps(e.target.value)}>
+            <option value="heure" disabled={heureIndisponible}>
+              Heure{heureIndisponible ? ` (indisponible au-delà de ${RESOLUTION_MAX_JOURS.heure} jours)` : ""}
+            </option>
             <option value="jour">Jour</option>
             <option value="semaine">Semaine</option>
             <option value="mois">Mois</option>
@@ -1281,23 +1300,23 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
       {(croisementsX.length > 0 || croisementsY.length > 0) && (
         <div style={{ fontSize: "0.85rem", maxHeight: "160px", overflowY: "auto", marginBottom: "0.75rem" }}>
           {croisementsX.length > 0 && (
-            <p style={{ color: "#a0a6b5", margin: "0 0 0.25rem" }}>
+            <p style={{ color: "#6b7280", margin: "0 0 0.25rem" }}>
               {croisementsX.length} croisement(s) à {libelleAxe("x")} = {valeurCibleX} :
             </p>
           )}
           {croisementsX.map((c, i) => (
-            <div key={`x${i}`} style={{ color: "#7fff9e" }}>
+            <div key={`x${i}`} style={{ color: "#16a34a" }}>
               {c.canal ? `[${c.canal}] ` : ""}
               {libelleAxe("x")} = {valeurCibleX} · {libelleAxe("y")} ≈ {c.y.toFixed(2)}
             </div>
           ))}
           {croisementsY.length > 0 && (
-            <p style={{ color: "#a0a6b5", margin: "0.5rem 0 0.25rem" }}>
+            <p style={{ color: "#6b7280", margin: "0.5rem 0 0.25rem" }}>
               {croisementsY.length} croisement(s) à {libelleAxe("y")} = {valeurCibleY} :
             </p>
           )}
           {croisementsY.map((c, i) => (
-            <div key={`y${i}`} style={{ color: "#ffb37f" }}>
+            <div key={`y${i}`} style={{ color: "#ea580c" }}>
               {c.canal ? `[${c.canal}] ` : ""}
               {libelleAxe("x")} ≈ {c.x.toFixed(2)} · {libelleAxe("y")} = {valeurCibleY}
             </div>
@@ -1305,15 +1324,15 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
         </div>
       )}
       {erreur && <p className="erreur">{erreur}</p>}
-      {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
+      {enCours && <p style={{ color: "#6b7280" }}>Chargement...</p>}
       {!panelRetraitTeneurActif && !enCours && points.length === 0 && !erreur && (
-        <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>
+        <p style={{ color: "#6b7280" }}>Aucun point croisé pour cette sélection.</p>
       )}
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 400px", minWidth: 0 }}>
           {panelRetraitTeneurActif ? (
             <>
-              <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
+              <p style={{ color: "#6b7280", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
                 {libelleAxe(roleRetrait)} en fonction du temps — axe teneur en eau
               </p>
               <canvas
@@ -1332,7 +1351,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
             </>
           ) : (
             <>
-              <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
+              <p style={{ color: "#6b7280", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
                 Croisement {libelleAxe("y")} = f({libelleAxe("x")})
               </p>
               <canvas
@@ -1348,7 +1367,7 @@ export default function Nomogramme({ mur, couche, debutInitial, finInitial }) {
           )}
         </div>
         <div style={{ flex: "1 1 400px", minWidth: 0 }}>
-          <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
+          <p style={{ color: "#6b7280", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
             Évolution dans le temps — {libelleAxe("x")} et {libelleAxe("y")}
           </p>
           <canvas

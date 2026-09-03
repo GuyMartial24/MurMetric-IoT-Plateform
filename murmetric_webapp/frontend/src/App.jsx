@@ -1,6 +1,17 @@
 import { useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { Menu } from "lucide-react";
 import Logo from "./components/Logo.jsx";
+import { Button } from "./components/ui/button.jsx";
+import { Avatar, AvatarFallback } from "./components/ui/avatar.jsx";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu.jsx";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "./components/ui/sheet.jsx";
+import { cn } from "./lib/utils.js";
 import { FournisseurEtatPages } from "./EtatPagesContext.jsx";
 import Assistant from "./pages/Assistant.jsx";
 import Capteurs from "./pages/Capteurs.jsx";
@@ -31,6 +42,59 @@ function EspaceProtege({ connecte, children }) {
   return connecte ? children : <Navigate to="/login" replace />;
 }
 
+const lienNavClasses = ({ isActive }) =>
+  cn(
+    "border-b-2 border-transparent py-1.5 text-sm text-muted-foreground no-underline transition-colors hover:text-foreground",
+    isActive && "border-ring text-foreground",
+  );
+
+function ListeNav({ className, onNaviguer }) {
+  return (
+    <nav className={className}>
+      {ONGLETS.map((onglet) => (
+        <NavLink
+          key={onglet.chemin}
+          to={onglet.chemin}
+          end={onglet.chemin === "/"}
+          onClick={onNaviguer}
+          className={lienNavClasses}
+        >
+          {onglet.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
+// Initiales pour l'avatar du menu compte — 1re lettre des 2 premiers mots du
+// nom affiché, ou ses 2 premières lettres si un seul mot. getNomAffiche()
+// peut renvoyer null (lu directement depuis localStorage).
+function initiales(nom) {
+  if (!nom) return "?";
+  const mots = nom.trim().split(/\s+/);
+  if (mots.length === 1) return mots[0].slice(0, 2).toUpperCase();
+  return (mots[0][0] + mots[1][0]).toUpperCase();
+}
+
+function ComptePanel({ className, onDeconnecter }) {
+  const nom = auth.getNomAffiche();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className={cn("gap-2 px-2", className)}>
+          <Avatar className="h-7 w-7">
+            <AvatarFallback className="text-xs">{initiales(nom)}</AvatarFallback>
+          </Avatar>
+          <span className="hidden text-sm text-muted-foreground sm:inline">{nom}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={onDeconnecter}>Déconnexion</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export default function App() {
   const [connecte, setConnecte] = useState(auth.estConnecte());
   const [menuOuvert, setMenuOuvert] = useState(false);
@@ -51,35 +115,28 @@ export default function App() {
   return (
     <FournisseurEtatPages>
       <div className="app">
-        <header className="app-header">
+        <header className="entete-accent flex items-center gap-8 bg-primary px-6 py-3">
           <Logo taille={30} />
-          <button
-            type="button"
-            className="menu-bascule"
-            onClick={() => setMenuOuvert((v) => !v)}
-            aria-label="Basculer le menu de navigation"
-            aria-expanded={menuOuvert}
-          >
-            ☰
-          </button>
-          <div className={`app-header-panel${menuOuvert ? " ouvert" : ""}`}>
-            <nav>
-              {ONGLETS.map((onglet) => (
-                <NavLink
-                  key={onglet.chemin}
-                  to={onglet.chemin}
-                  end={onglet.chemin === "/"}
-                  onClick={() => setMenuOuvert(false)}
-                >
-                  {onglet.label}
-                </NavLink>
-              ))}
-            </nav>
-            <div className="app-header-compte">
-              <span style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>{auth.getNomAffiche()}</span>
-              <button onClick={deconnecter}>Déconnexion</button>
-            </div>
-          </div>
+          <ListeNav className="hidden items-center gap-5 md:flex" />
+          <ComptePanel className="ml-auto hidden md:flex" onDeconnecter={deconnecter} />
+          <Sheet open={menuOuvert} onOpenChange={setMenuOuvert}>
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-auto md:hidden"
+                aria-label="Basculer le menu de navigation"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="flex w-72 flex-col gap-6">
+              <SheetTitle className="sr-only">Menu de navigation</SheetTitle>
+              <ListeNav className="flex flex-col gap-2" onNaviguer={() => setMenuOuvert(false)} />
+              <ComptePanel className="flex" onDeconnecter={deconnecter} />
+            </SheetContent>
+          </Sheet>
         </header>
         <main className="app-main">
           <Routes>

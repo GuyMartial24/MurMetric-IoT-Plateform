@@ -3,7 +3,7 @@
   "title": "MurMetric — Vue d'ensemble (SOCMA 1 & 2)",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 8,
+  "version": 9,
   "editable": true,
   "time": { "from": "now-1y", "to": "now" },
   "panels": [
@@ -17,7 +17,7 @@
       "targets": [{
         "refId": "A",
         "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
-        "query": "SELECT mean(\"temperature\") FROM \"mesures_capteurs\" WHERE \"nom_mur\" = 'SOCMA 1' AND $timeFilter GROUP BY time($__interval), \"nom_couche\" fill(null)",
+        "query": "SELECT \"temperature\" FROM \"mesures_capteurs\" WHERE \"nom_mur\" = 'SOCMA 1' AND $timeFilter GROUP BY \"nom_couche\"",
         "rawQuery": true,
         "resultFormat": "time_series"
       }]
@@ -32,7 +32,7 @@
       "targets": [{
         "refId": "A",
         "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
-        "query": "SELECT mean(\"temperature\") FROM \"mesures_capteurs\" WHERE \"nom_mur\" = 'SOCMA 2' AND $timeFilter GROUP BY time($__interval), \"nom_couche\" fill(null)",
+        "query": "SELECT \"temperature\" FROM \"mesures_capteurs\" WHERE \"nom_mur\" = 'SOCMA 2' AND $timeFilter GROUP BY \"nom_couche\"",
         "rawQuery": true,
         "resultFormat": "time_series"
       }]
@@ -47,7 +47,7 @@
       "targets": [{
         "refId": "A",
         "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
-        "query": "SELECT mean(\"humidite\") FROM \"mesures_capteurs\" WHERE \"nom_mur\" = 'SOCMA 1' AND $timeFilter GROUP BY time($__interval), \"nom_couche\" fill(null)",
+        "query": "SELECT \"humidite\" FROM \"mesures_capteurs\" WHERE \"nom_mur\" = 'SOCMA 1' AND $timeFilter GROUP BY \"nom_couche\"",
         "rawQuery": true,
         "resultFormat": "time_series"
       }]
@@ -62,7 +62,7 @@
       "targets": [{
         "refId": "A",
         "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
-        "query": "SELECT mean(\"humidite\") FROM \"mesures_capteurs\" WHERE \"nom_mur\" = 'SOCMA 2' AND $timeFilter GROUP BY time($__interval), \"nom_couche\" fill(null)",
+        "query": "SELECT \"humidite\" FROM \"mesures_capteurs\" WHERE \"nom_mur\" = 'SOCMA 2' AND $timeFilter GROUP BY \"nom_couche\"",
         "rawQuery": true,
         "resultFormat": "time_series"
       }]
@@ -141,6 +141,58 @@
         "rawQuery": true,
         "resultFormat": "time_series"
       }]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Retrait NON agrégé — SOCMA 1 (HA1, 10 Hz — élargir la plage avec prudence)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 45 },
+      "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "B" },
+            "properties": [
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.drawStyle", "value": "points" },
+              { "id": "custom.pointSize", "value": 6 },
+              { "id": "unit", "value": "percent" }
+            ]
+          }
+        ]
+      },
+      "timeFrom": "2h",
+      "targets": [
+        { "refId": "A", "alias": "HA1 (retrait filtré, brut)", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT \"valeur_filtree\" FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HA1' AND $timeFilter", "rawQuery": true, "resultFormat": "time_series" },
+        { "refId": "B", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT \"teneur_eau_pourcent\" FROM \"mesures_teneur_eau\" WHERE \"mur\" = 'SOCMA 1' AND $timeFilter GROUP BY \"couche\"", "rawQuery": true, "resultFormat": "time_series" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Retrait NON agrégé — SOCMA 2 (HB1, 10 Hz — élargir la plage avec prudence)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 45 },
+      "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "B" },
+            "properties": [
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.drawStyle", "value": "points" },
+              { "id": "custom.pointSize", "value": 6 },
+              { "id": "unit", "value": "percent" }
+            ]
+          }
+        ]
+      },
+      "timeFrom": "2h",
+      "targets": [
+        { "refId": "A", "alias": "HB1 (retrait filtré, brut)", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT \"valeur_filtree\" FROM \"mesures_dewesoft\" WHERE \"canal_nom\" = 'HB1' AND $timeFilter", "rawQuery": true, "resultFormat": "time_series" },
+        { "refId": "B", "datasource": { "type": "influxdb", "uid": "P15E06DA4BAFBC791" }, "query": "SELECT \"teneur_eau_pourcent\" FROM \"mesures_teneur_eau\" WHERE \"mur\" = 'SOCMA 2' AND $timeFilter GROUP BY \"couche\"", "rawQuery": true, "resultFormat": "time_series" }
+      ]
     }
   ]
 }

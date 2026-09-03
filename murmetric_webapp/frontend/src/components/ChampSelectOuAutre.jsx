@@ -1,6 +1,15 @@
 import { useState } from "react";
+import { List } from "lucide-react";
+import { Button } from "./ui/button.jsx";
+import { classesChampNatif } from "../lib/utils.js";
 
 const VALEUR_AUTRE = "__autre__";
+
+// <select> et <input> restent des balises natives (pas de <Select> Radix
+// ici, cf. classesChampNatif) : ce composant est aussi utilisé dans des
+// cellules de tableau denses (Capteurs.jsx, TeneurEau.jsx), où le
+// listbox/popover de Radix Select serait un changement de comportement
+// plus risqué que nécessaire pour un simple habillage visuel.
 
 // Combo <select> (valeurs déjà connues) + bascule vers un <input> texte
 // libre pour une valeur inédite — remplace un champ texte libre pur pour
@@ -14,24 +23,27 @@ export default function ChampSelectOuAutre({ valeur, options, onChange, placehol
 
   if (saisieLibre) {
     return (
-      <span style={{ display: "inline-flex", gap: "0.3rem", alignItems: "center" }}>
+      <span className="inline-flex items-center gap-1.5">
         <input
           required={required}
           value={valeur}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
+          className={classesChampNatif}
         />
         {options.length > 0 && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             title="Choisir dans la liste existante"
             onClick={() => {
               setSaisieLibre(false);
               onChange("");
             }}
           >
-            ☰
-          </button>
+            <List />
+          </Button>
         )}
       </span>
     );
@@ -49,6 +61,7 @@ export default function ChampSelectOuAutre({ valeur, options, onChange, placehol
           onChange(e.target.value);
         }
       }}
+      className={classesChampNatif}
     >
       <option value="" disabled>
         — choisir —

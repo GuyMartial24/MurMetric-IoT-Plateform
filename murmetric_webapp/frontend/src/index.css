@@ -1,3 +1,23 @@
+/* Preflight volontairement exclu (migration Tailwind/shadcn, phase 1,
+   2026-08-31) : cette feuille stylise encore des balises brutes (button,
+   input, select, table...) hors layer pour toutes les pages pas encore
+   migrées — importer preflight.css réinitialiserait aussi h1-h6/p/ul
+   (aucune règle existante dessus) sur TOUTE l'appli avant même que ces
+   pages soient touchées. On importe donc seulement theme+utilities, et le
+   layer `legacy` ci-dessous regroupe les anciennes règles balise-brute :
+   priorité la plus basse, donc un futur composant shadcn (classes
+   utilitaires, layer `utilities`) l'emporte automatiquement dessus sans
+   hack de spécificité, alors qu'une page non migrée continue de voir
+   `legacy` comme seule règle qui matche (rendu identique à avant). */
+@layer theme, legacy, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
 * {
   box-sizing: border-box;
 }
@@ -9,89 +29,14 @@ body {
     -apple-system,
     "Segoe UI",
     sans-serif;
-  background: #0f1117;
-  color: #e6e6e6;
+  background: var(--background);
+  color: var(--foreground);
 }
 
 .app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-  padding: 0.75rem 1.5rem;
-  background: #171a23;
-  border-bottom: 1px solid #2a2e3a;
-}
-
-/* Panneau regroupant nav + compte — un seul élément à replier en dessous du
-   seuil (860px, non revérifié en navigateur), plutôt que deux séparément. */
-.app-header-panel {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-  flex: 1;
-}
-
-.app-header nav {
-  display: flex;
-  gap: 1.25rem;
-}
-
-.app-header nav a {
-  color: #a0a6b5;
-  text-decoration: none;
-  padding: 0.35rem 0;
-  border-bottom: 2px solid transparent;
-}
-
-.app-header nav a.active {
-  color: #fff;
-  border-bottom-color: #7fd4ff;
-}
-
-.app-header-compte {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-/* Bouton hamburger — masqué par défaut, visible seulement sous le seuil. */
-.menu-bascule {
-  display: none;
-  margin-left: auto;
-}
-
-@media (max-width: 860px) {
-  .menu-bascule {
-    display: inline-flex;
-  }
-
-  .app-header-panel {
-    display: none;
-    flex-direction: column;
-    align-items: stretch;
-    width: 100%;
-    gap: 0.75rem;
-  }
-
-  .app-header-panel.ouvert {
-    display: flex;
-  }
-
-  .app-header nav {
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .app-header-compte {
-    margin-left: 0;
-  }
 }
 
 .app-main {
@@ -103,8 +48,8 @@ body {
 }
 
 .carte {
-  background: #171a23;
-  border: 1px solid #2a2e3a;
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 1.25rem;
   margin-bottom: 1.25rem;
@@ -119,70 +64,53 @@ body {
 
 .champ label {
   font-size: 0.8rem;
-  color: #a0a6b5;
+  color: var(--muted-foreground);
 }
 
-input,
-select,
-textarea,
-button {
-  font: inherit;
-  background: #0f1117;
-  color: #e6e6e6;
-  border: 1px solid #2a2e3a;
-  border-radius: 4px;
-  padding: 0.45rem 0.6rem;
-}
+@layer legacy {
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    background: var(--background);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.45rem 0.6rem;
+  }
 
-/* L'icône de calendrier des <input type="date"> est noire par défaut
-   (Chrome/Edge) — invisible sur fond sombre. filter: invert(1) la rend
-   blanche ; propriété spécifique à WebKit/Blink, sans effet ailleurs
-   (pas nécessaire sur Firefox, dont l'icône s'adapte déjà). */
-input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(1);
-  cursor: pointer;
-}
+  /* L'icône de calendrier des <input type="date"> est noire par défaut
+     (Chrome/Edge) — invisible sur fond sombre uniquement ; sur le fond
+     clair de la charte du 01/09/2026, l'icône native (déjà sombre) reste
+     lisible telle quelle, plus besoin de l'inverser. */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+  }
 
-button {
-  cursor: pointer;
-  background: #1f4e6e;
-  border-color: #2f6f96;
-}
+  button {
+    cursor: pointer;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    border-color: var(--primary);
+  }
 
-button:hover {
-  background: #2a638a;
-}
+  button:hover {
+    background: var(--accent);
+  }
 
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Défile horizontalement plutôt que d'écraser les colonnes ou de forcer un
-   défilement de toute la page sur un écran étroit. */
-.tableau-scroll {
-  overflow-x: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-
-th,
-td {
-  text-align: left;
-  padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid #2a2e3a;
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
 .erreur {
-  color: #ff8080;
+  color: var(--destructive);
 }
 
 .avertissement {
-  color: #e0b34d;
+  color: var(--warning);
   font-size: 0.9rem;
 }
 
@@ -190,26 +118,6 @@ td {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 0.75rem;
-}
-
-/* Formulaires plus denses (nombreux petits champs, ex. FiltreHampel) — en
-   grille, un champ qui se retrouve seul sur sa ligne s'étire sur toute la
-   largeur (minmax(..., 1fr)) ; en flex, chaque champ garde sa taille
-   naturelle et le retour à la ligne reste propre. */
-.form-compact {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.form-compact .champ {
-  flex: 0 0 auto;
-  margin-bottom: 0;
-}
-
-.form-compact .champ input,
-.form-compact .champ select {
-  width: 100%;
 }
 
 .chat-message {
@@ -220,9 +128,107 @@ td {
 }
 
 .chat-message.utilisateur {
-  background: #1f2938;
+  background: #eff6ff;
 }
 
 .chat-message.assistant {
-  background: #142a1f;
+  background: #f0fdf4;
+}
+
+/* Un seul thème (pas de bascule clair/sombre dans cette appli) — passé de
+   sombre à clair le 01/09/2026 (demande explicite : "charte plus claire,
+   couleur gaie, fond jamais sombre"). Cartes blanches, texte quasi-noir
+   (jamais #000000 pur), accent bleu vif (#2563EB) — volontairement PAS
+   vert/orange pour ce rôle : ces teintes sont déjà prises par la
+   sémantique statut existante (vert=OK, ambre=attention, rouge=erreur —
+   Pastille.jsx, Monitoring.jsx), les réutiliser comme couleur de marque
+   aurait créé une ambiguïté. `class="dark"` retiré de index.html : plus
+   de thème sombre à activer via les variantes `dark:` intégrées aux
+   composants shadcn générés.
+   Fond de page (--background) ajusté le 01/09/2026 (retour utilisateur :
+   "le fond est trop blanc") — un premier essai à #F6F7F9 était trop
+   proche du blanc des cartes (--card), l'ensemble se lisait comme une
+   seule masse blanche sans profondeur. Passé à un gris Slate-200 net
+   (#E2E8F0) : contraste visible page/carte tout en restant neutre (cf.
+   CLAUDE.md, "strict neutral background"). --muted et --border/--input
+   réajustés en conséquence pour rester cohérents avec ce fond plus foncé
+   (sinon les bordures de carte devenaient presque invisibles dessus). */
+@theme inline {
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: #cbd5e1;
+  --foreground: #1a1d23;
+  --card: #ffffff;
+  --card-foreground: #1a1d23;
+  --popover: #ffffff;
+  --popover-foreground: #1a1d23;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #ffffff;
+  --secondary-foreground: #1a1d23;
+  --muted: #e2e8f0;
+  --muted-foreground: #6b7280;
+  --accent: #1d4ed8;
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --warning: #d97706;
+  --warning-foreground: #ffffff;
+  --border: #94a3b8;
+  --input: #94a3b8;
+  --ring: #60a5fa;
+  --radius: 0.5rem;
+}
+
+/* Bandeau d'en-tête coloré (01/09/2026, inspiration soumise par l'utilisateur
+   — capture d'écran Toptal), scope de tokens réutilisant le mécanisme
+   standard shadcn de re-thématisation par variables CSS (le même principe
+   qu'un `.dark{}`, ici limité au `<header>`). Tous les composants shadcn
+   utilisés dedans (Button ghost, Avatar/AvatarFallback, le texte
+   `text-muted-foreground` du nom de compte) s'adaptent donc automatiquement
+   au fond bleu, sans classe à ajouter composant par composant. `ListeNav`/
+   `ComptePanel` sont aussi rendus dans le tiroir mobile (Sheet, portal HORS
+   du `<header>`) : n'héritant PAS de ce scope, ils gardent les tokens clairs
+   normaux — comportement voulu, le tiroir a un fond clair (`bg-popover`).
+   `color: var(--foreground)` explicite en plus des variables : redéfinir la
+   custom property seule ne suffit pas pour un élément qui n'a AUCUNE classe
+   `text-*` (ex. l'icône du bouton hamburger, en `currentColor` hérité) —
+   `color` doit être réaffirmé ici pour que l'héritage CSS normal reparte du
+   blanc à cette hauteur de l'arbre. */
+.entete-accent {
+  --foreground: #ffffff;
+  --muted-foreground: #bfdbfe;
+  --muted: rgb(255 255 255 / 14%);
+  --border: rgb(255 255 255 / 35%);
+  --ring: #ffffff;
+  color: var(--foreground);
 }

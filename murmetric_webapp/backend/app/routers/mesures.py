@@ -2,6 +2,7 @@
 (HR/T capteurs BLE, retrait DeweSoft, teneur en eau) — alimente à la fois
 l'abaque (vue d'ensemble) et l'agrégation utilisée par l'assistant IA."""
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -87,7 +88,22 @@ def construire_requete_flux(
     fenetre: str | None,
 ) -> str:
     """Construit la requête Flux de courbe pour une sélection mur/couche/position/canal."""
-    mesure = _MESURE_PAR_TYPE[type_mesure]
+    # _mesure_retrait (pas _MESURE_PAR_TYPE brut) pour retrait — faille de
+    # sécurité corrigée le 31/08/2026 : cet endpoint (GET /api/mesures, sans
+    # authentification) renvoyait des points BRUTS dès que `fenetre` était
+    # omis, sans aucun plafond de durée — une plage large (facilement
+    # obtenue via debut/fin explicites, y compris depuis le bouton "Charger
+    # la courbe temporelle" de Vue d'ensemble en usage normal, pas besoin
+    # d'intention malveillante) matérialisait des dizaines/centaines de
+    # millions de points en mémoire Python (query_api().query(), pas
+    # streamé) — même mécanisme exact qu'un incident réel rencontré ce jour
+    # sur un autre endpoint (voir _requeter_axe plus bas), qui a fait
+    # planter le pod (OOMKilled) avec seulement 1 jour sur 1 canal.
+    mesure = (
+        _mesure_retrait(debut, fin)
+        if type_mesure == "retrait"
+        else _MESURE_PAR_TYPE[type_mesure]
+    )
     champs = _CHAMPS_PAR_TYPE[type_mesure]
 
     filtres = [f'r._measurement == "{mesure}"']
@@ -621,13 +637,33 @@ def lister_mesures(
     fin: str | None = Query(None, description="ISO 8601, défaut : maintenant"),
     fenetre: str | None = Query(
         None,
-        description="Fenêtre d'agrégation Flux, ex. '1h', '1d' — absent = points bruts",
+        description=(
+            "Fenêtre d'agrégation Flux, ex. '1h', '1d' — absent = points bruts pour "
+            "hr_t/teneur_eau (volume négligeable) ; pour retrait, déduite "
+            "automatiquement de l'étendue debut/fin (cf. _fenetre_auto) plutôt que "
+            "brute, pour les mêmes raisons de sécurité que croisement-libre."
+        ),
     ),
 ):
     """Points de courbe (bruts ou agrégés) pour une sélection mur/couche/position/canal."""
     debut_iso, fin_iso = _valider_bornes(debut, fin, type)
+    # Jamais de points bruts non plafonnés pour retrait sans fenêtre explicite
+    # (faille corrigée le 31/08/2026, cf. construire_requete_flux) — hr_t/
+    # teneur_eau restent bruts par défaut, volume négligeable établi ailleurs
+    # dans ce fichier (cf. _FENETRE_DEFAUT_JOURS).
+    fenetre_effective = fenetre or (
+        _fenetre_auto(debut_iso, fin_iso) if type == "retrait" else None
+    )
+    # Même filet de sécurité que croisement_libre (31/08/2026) : une fenêtre
+    # explicite plus fine que _fenetre_auto pour cette plage est plafonnée,
+    # endpoint public (sans authentification) donc particulièrement exposé
+    # à un appel direct hors interface.
+    if type == "retrait" and fenetre_effective:
+        fenetre_plancher = _fenetre_auto(debut_iso, fin_iso)
+        if _duree_secondes(fenetre_effective) < _duree_secondes(fenetre_plancher):
+            fenetre_effective = fenetre_plancher
     flux = construire_requete_flux(
-        type, mur, couche, position, canal_nom, debut_iso, fin_iso, fenetre
+        type, mur, couche, position, canal_nom, debut_iso, fin_iso, fenetre_effective
     )
     return {"requete_flux": flux, "points": executer_requete(flux)}
 
@@ -848,6 +884,29 @@ def _requeter_axe(
     return resultat
 
 
+_UNITE_SECONDES = {
+    "s": 1,
+    "m": 60,
+    "h": 3600,
+    "d": 86_400,
+    "w": 604_800,
+    "mo": 2_592_000,
+}
+
+
+def _duree_secondes(duree: str) -> float:
+    """Convertit une durée Flux simple ("1h", "5m", "3d", "1mo"...) en
+    secondes, pour comparer deux fenêtres entre elles (cf. le plafond
+    appliqué à `fenetre` dans croisement_libre, 31/08/2026). Vocabulaire
+    limité à ce qu'émettent FENETRE_PAR_RESOLUTION (frontend) et
+    _fenetre_auto ci-dessous — pas un parseur Flux général."""
+    correspondance = re.fullmatch(r"(\d+)(mo|[smhdw])", duree)
+    if not correspondance:
+        raise ValueError(f"Durée non reconnue : {duree!r}")
+    valeur, unite = correspondance.groups()
+    return int(valeur) * _UNITE_SECONDES[unite]
+
+
 def _fenetre_auto(debut_iso: str, fin_iso: str) -> str:
     """Fenêtre d'agrégation adaptée à l'étendue [debut_iso, fin_iso] — utilisée
     par croisement_libre quand l'appelant n'impose pas de fenêtre explicite.
@@ -975,6 +1034,24 @@ def croisement_libre(
     )
     debut_iso, fin_iso = _valider_bornes(debut, fin, type_borne)
     fenetre_effective = fenetre or _fenetre_auto(debut_iso, fin_iso)
+
+    # Filet de sécurité (31/08/2026, demande explicite — "exploiter toutes
+    # les plages possibles" sans rouvrir le risque de timeout) : le frontend
+    # fournit désormais toujours une fenêtre explicite (FENETRE_PAR_RESOLUTION,
+    # cf. Nomogramme.jsx), donc `_fenetre_auto` ci-dessus n'est en pratique
+    # jamais invoquée depuis l'interface — un appel API direct pourrait
+    # cependant demander ex. fenetre=1m sur 200 jours. Pour retrait
+    # uniquement (seule mesure à source InfluxDB variable selon la plage,
+    # cf. _mesure_retrait) : la fenêtre effective ne peut jamais être plus
+    # fine que ce que _fenetre_auto calculerait pour cette même plage —
+    # sinon la finesse de la fenêtre elle-même a un coût réel, mesuré
+    # indépendamment du volume de points (cf. _fenetre_auto, leçon du
+    # 30/08/2026). hr_t/teneur_eau non concernés : mesure InfluxDB unique
+    # quelle que soit la plage, pas de palier équivalent à protéger.
+    if type_borne == "retrait":
+        fenetre_plancher = _fenetre_auto(debut_iso, fin_iso)
+        if _duree_secondes(fenetre_effective) < _duree_secondes(fenetre_plancher):
+            fenetre_effective = fenetre_plancher
 
     try:
         with ThreadPoolExecutor(max_workers=3) as executor:

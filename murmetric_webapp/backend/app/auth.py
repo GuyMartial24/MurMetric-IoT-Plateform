@@ -7,6 +7,7 @@ pour Grafana), les suivants sont créés par un utilisateur déjà connecté."""
 
 import json
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -18,6 +19,47 @@ from . import config
 
 _verrou = threading.Lock()
 _bearer = HTTPBearer()
+
+# Anti brute-force sur /login (31/08/2026, revue de sécurité) — jusqu'ici
+# aucune limite de tentatives, un mot de passe pouvait être deviné par
+# essais répétés sans autre frein que le coût de calcul de bcrypt lui-même.
+# En mémoire (pas de dépendance externe type Redis) — cohérent avec le
+# déploiement mono-réplique (replicas: 1, cf. k8s/webapp/deployment.yaml) et
+# le reste du projet (ex. suivi des tâches d'export, export.py). Par
+# identifiant (username), pas par IP : un VPS derrière Caddy peut voir la
+# même IP pour plusieurs utilisateurs légitimes (réseau d'entreprise),
+# alors qu'un attaquant ciblant un compte précis se distingue déjà par le
+# username visé.
+_TENTATIVES_MAX = 5
+_FENETRE_VERROUILLAGE_S = 300
+_verrou_tentatives = threading.Lock()
+_tentatives_echouees: dict[str, list[float]] = {}
+
+
+def _verifier_pas_verrouille(identifiant: str) -> None:
+    with _verrou_tentatives:
+        maintenant = time.time()
+        historique = [
+            t
+            for t in _tentatives_echouees.get(identifiant, [])
+            if maintenant - t < _FENETRE_VERROUILLAGE_S
+        ]
+        _tentatives_echouees[identifiant] = historique
+        if len(historique) >= _TENTATIVES_MAX:
+            raise HTTPException(
+                status_code=429,
+                detail="Trop de tentatives échouées pour ce compte — réessaie dans quelques minutes.",
+            )
+
+
+def _enregistrer_echec_connexion(identifiant: str) -> None:
+    with _verrou_tentatives:
+        _tentatives_echouees.setdefault(identifiant, []).append(time.time())
+
+
+def _reinitialiser_tentatives(identifiant: str) -> None:
+    with _verrou_tentatives:
+        _tentatives_echouees.pop(identifiant, None)
 
 
 def _lire_utilisateurs() -> dict:
@@ -60,9 +102,13 @@ def creer_utilisateur(username: str, password: str, nom_affiche: str) -> None:
     with _verrou:
         utilisateurs = _lire_utilisateurs()
         if username in utilisateurs:
-            raise HTTPException(status_code=409, detail="Ce nom d'utilisateur existe déjà.")
+            raise HTTPException(
+                status_code=409, detail="Ce nom d'utilisateur existe déjà."
+            )
         utilisateurs[username] = {
-            "mot_de_passe_hash": bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode(),
+            "mot_de_passe_hash": bcrypt.hashpw(
+                password.encode(), bcrypt.gensalt()
+            ).decode(),
             "nom_affiche": nom_affiche or username,
             "cree_le": datetime.now(timezone.utc).isoformat(),
         }
@@ -85,7 +131,9 @@ def modifier_compte(
         if not compte or not bcrypt.checkpw(
             mot_de_passe_actuel.encode(), compte["mot_de_passe_hash"].encode()
         ):
-            raise HTTPException(status_code=401, detail="Mot de passe actuel incorrect.")
+            raise HTTPException(
+                status_code=401, detail="Mot de passe actuel incorrect."
+            )
 
         if nouveau_password:
             compte["mot_de_passe_hash"] = bcrypt.hashpw(
@@ -97,7 +145,9 @@ def modifier_compte(
         username_final = username_actuel
         if nouveau_username and nouveau_username != username_actuel:
             if nouveau_username in utilisateurs:
-                raise HTTPException(status_code=409, detail="Ce nom d'utilisateur existe déjà.")
+                raise HTTPException(
+                    status_code=409, detail="Ce nom d'utilisateur existe déjà."
+                )
             del utilisateurs[username_actuel]
             username_final = nouveau_username
 
@@ -107,31 +157,48 @@ def modifier_compte(
 
 
 def verifier_identifiants(username: str, password: str) -> dict | None:
-    """Vérifie un couple username/mot de passe, retourne le compte si valide sinon None."""
+    """Vérifie un couple username/mot de passe, retourne le compte si valide
+    sinon None — verrouille temporairement après plusieurs échecs (cf.
+    _verifier_pas_verrouille ci-dessus)."""
+    _verifier_pas_verrouille(username)
     utilisateurs = _lire_utilisateurs()
     compte = utilisateurs.get(username)
-    if not compte or not bcrypt.checkpw(password.encode(), compte["mot_de_passe_hash"].encode()):
+    if not compte or not bcrypt.checkpw(
+        password.encode(), compte["mot_de_passe_hash"].encode()
+    ):
+        _enregistrer_echec_connexion(username)
         return None
+    _reinitialiser_tentatives(username)
     return compte
 
 
 def creer_jeton(username: str) -> str:
     """Génère un jeton JWT signé, valide JWT_EXPIRATION_HEURES heures."""
-    expiration = datetime.now(timezone.utc) + timedelta(hours=config.JWT_EXPIRATION_HEURES)
+    expiration = datetime.now(timezone.utc) + timedelta(
+        hours=config.JWT_EXPIRATION_HEURES
+    )
     return jwt.encode(
-        {"sub": username, "exp": expiration}, config.JWT_SECRET_KEY, algorithm=config.JWT_ALGORITHM
+        {"sub": username, "exp": expiration},
+        config.JWT_SECRET_KEY,
+        algorithm=config.JWT_ALGORITHM,
     )
 
 
-def utilisateur_courant(identifiants: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
+def utilisateur_courant(
+    identifiants: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> dict:
     """Dépendance FastAPI — protège une route (`Depends(utilisateur_courant)`),
     retourne {"username": ..., "nom_affiche": ...} si le jeton est valide."""
     try:
         payload = jwt.decode(
-            identifiants.credentials, config.JWT_SECRET_KEY, algorithms=[config.JWT_ALGORITHM]
+            identifiants.credentials,
+            config.JWT_SECRET_KEY,
+            algorithms=[config.JWT_ALGORITHM],
         )
     except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail="Jeton invalide ou expiré.") from exc
+        raise HTTPException(
+            status_code=401, detail="Jeton invalide ou expiré."
+        ) from exc
 
     username = payload.get("sub")
     utilisateurs = _lire_utilisateurs()

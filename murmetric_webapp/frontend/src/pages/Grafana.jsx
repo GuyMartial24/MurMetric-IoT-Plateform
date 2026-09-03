@@ -1,3 +1,6 @@
+import { Button } from "../components/ui/button.jsx";
+import { Card, CardContent } from "../components/ui/card.jsx";
+
 // Grafana embarqué en iframe (logique_projet.md section 32) : accès anonyme
 // lecture seule + allow_embedding activés côté Grafana le 12/08/2026.
 // HTTPS depuis le 19/08/2026 (reverse proxy Caddy, section 37 addendum) —
@@ -10,24 +13,22 @@ const GRAFANA_URL = `${GRAFANA_BASE}/d/murmetric-hrt-socma?kiosk&theme=dark`;
 
 export default function Grafana() {
   return (
-    <div>
-      <div className="carte">
-        <p style={{ margin: 0, color: "#a0a6b5", fontSize: "0.85rem" }}>
-          Vue intégrée en lecture seule (dashboard fixe). Pour composer tes propres graphiques (choisir librement
-          mur/couche/canal/champ, créer de nouveaux panels), ouvre Grafana en plein écran et connecte-toi avec un compte
-          admin — l'accès anonyme intégré ici reste volontairement limité à la lecture.
-        </p>
-        <a href={GRAFANA_BASE} target="_blank" rel="noreferrer">
-          <button style={{ marginTop: "0.75rem" }}>Ouvrir Grafana en plein écran ↗</button>
-        </a>
-      </div>
-      <div className="carte" style={{ padding: 0, overflow: "hidden" }}>
-        <iframe
-          title="Dashboards Grafana MurMetric"
-          src={GRAFANA_URL}
-          style={{ width: "100%", height: "75vh", border: "none" }}
-        />
-      </div>
+    <div className="flex flex-col gap-6">
+      <Card>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            Vue intégrée en lecture seule (dashboard fixe). Pour composer tes propres graphiques (choisir librement
+            mur/couche/canal/champ, créer de nouveaux panels), ouvre Grafana en plein écran et connecte-toi avec un
+            compte admin — l'accès anonyme intégré ici reste volontairement limité à la lecture.
+          </p>
+          <a href={GRAFANA_BASE} target="_blank" rel="noreferrer" className="self-start">
+            <Button>Ouvrir Grafana en plein écran ↗</Button>
+          </a>
+        </CardContent>
+      </Card>
+      <Card className="p-0">
+        <iframe title="Dashboards Grafana MurMetric" src={GRAFANA_URL} className="h-[75vh] w-full border-none" />
+      </Card>
     </div>
   );
 }

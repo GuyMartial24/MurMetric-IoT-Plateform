@@ -37,15 +37,15 @@ const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ, typeTrace
   return (
     <div>
       <svg ref={svgRef} viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
-        {typeTrace !== "nuage" && <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />}
+        {typeTrace !== "nuage" && <path d={chemin} fill="none" stroke="#2563eb" strokeWidth="1.5" />}
         {typeTrace !== "trait" &&
           valeurs.map((p, i) => (
-            <circle key={i} cx={x(new Date(p.time).getTime())} cy={y(p.value)} r="2" fill="#7fd4ff" />
+            <circle key={i} cx={x(new Date(p.time).getTime())} cy={y(p.value)} r="2" fill="#2563eb" />
           ))}
-        <text x={marge} y={16} fill="#a0a6b5" fontSize="12">
+        <text x={marge} y={16} fill="#6b7280" fontSize="12">
           {champ} — max {vMax.toFixed(2)}
         </text>
-        <text x={marge} y={hauteur - 8} fill="#a0a6b5" fontSize="12">
+        <text x={marge} y={hauteur - 8} fill="#6b7280" fontSize="12">
           min {vMin.toFixed(2)} — {valeurs.length} points
         </text>
       </svg>
@@ -59,7 +59,7 @@ const GraphiqueSVG = forwardRef(function GraphiqueSVG({ points, champ, typeTrace
         }}
       >
         <BoutonsExport obtenirElement={() => svgRef.current} type="svg" nomFichier={`courbe-${champ}`} imbrique />
-        <span style={{ width: "1px", alignSelf: "stretch", background: "#3a4152" }} />
+        <span style={{ width: "1px", alignSelf: "stretch", background: "#e2e5ea" }} />
         <BoutonsExportDonnees lignes={valeurs} nomFichier={`courbe-${champ}`} imbrique />
       </div>
     </div>

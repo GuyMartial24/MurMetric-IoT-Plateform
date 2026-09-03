@@ -2,6 +2,10 @@ import { useRef, useState } from "react";
 import { api } from "../api.js";
 import { CANAUX_RETRAIT } from "../nomogrammeAxes.js";
 import BoutonsExport from "./BoutonsExport.jsx";
+import { Button } from "./ui/button.jsx";
+import { Input } from "./ui/input.jsx";
+import { Label } from "./ui/label.jsx";
+import { classesChampNatif } from "../lib/utils.js";
 
 // Filtre de Hampel recalculé à la volée sur le retrait BRUT — répond à une
 // question explicite de l'utilisateur (13/08/2026) : le seuil d'ingestion
@@ -55,15 +59,15 @@ export default function FiltreHampel({ mur }) {
 
   return (
     <div>
-      <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
+      <p className="text-sm text-muted-foreground">
         Recalcule le filtre de Hampel à la volée sur les valeurs brutes (rien n'est modifié en base) — pour comparer
         différents réglages de fenêtre/seuil sans toucher au réglage d'ingestion. Période limitée à 2h (données à 100
         Hz).
       </p>
-      <div className="form-compact" style={{ marginBottom: "0.75rem" }}>
-        <div className="champ" style={{ width: "90px" }}>
-          <label>Canal</label>
-          <select value={canal} onChange={(e) => setCanal(e.target.value)}>
+      <div className="mb-3 flex flex-wrap gap-3">
+        <div className="flex w-[90px] flex-col gap-1">
+          <Label className="text-xs font-normal text-muted-foreground">Canal</Label>
+          <select value={canal} onChange={(e) => setCanal(e.target.value)} className={classesChampNatif}>
             {CANAUX_RETRAIT.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -71,21 +75,21 @@ export default function FiltreHampel({ mur }) {
             ))}
           </select>
         </div>
-        <div className="champ" style={{ width: "195px" }}>
-          <label>Début</label>
-          <input type="datetime-local" value={debut} onChange={(e) => setDebut(e.target.value)} />
+        <div className="flex w-[195px] flex-col gap-1">
+          <Label className="text-xs font-normal text-muted-foreground">Début</Label>
+          <Input type="datetime-local" value={debut} onChange={(e) => setDebut(e.target.value)} />
         </div>
-        <div className="champ" style={{ width: "195px" }}>
-          <label>Fin</label>
-          <input type="datetime-local" value={fin} onChange={(e) => setFin(e.target.value)} />
+        <div className="flex w-[195px] flex-col gap-1">
+          <Label className="text-xs font-normal text-muted-foreground">Fin</Label>
+          <Input type="datetime-local" value={fin} onChange={(e) => setFin(e.target.value)} />
         </div>
-        <div className="champ" style={{ width: "110px" }}>
-          <label>Fenêtre</label>
-          <input type="number" min="1" max="200" value={fenetre} onChange={(e) => setFenetre(Number(e.target.value))} />
+        <div className="flex w-[110px] flex-col gap-1">
+          <Label className="text-xs font-normal text-muted-foreground">Fenêtre</Label>
+          <Input type="number" min="1" max="200" value={fenetre} onChange={(e) => setFenetre(Number(e.target.value))} />
         </div>
-        <div className="champ" style={{ width: "90px" }}>
-          <label>Seuil K</label>
-          <input
+        <div className="flex w-[90px] flex-col gap-1">
+          <Label className="text-xs font-normal text-muted-foreground">Seuil K</Label>
+          <Input
             type="number"
             min="0.1"
             step="0.1"
@@ -93,9 +97,9 @@ export default function FiltreHampel({ mur }) {
             onChange={(e) => setSeuilK(Number(e.target.value))}
           />
         </div>
-        <div className="champ" style={{ width: "110px" }}>
-          <label>Borne min</label>
-          <input
+        <div className="flex w-[110px] flex-col gap-1">
+          <Label className="text-xs font-normal text-muted-foreground">Borne min</Label>
+          <Input
             type="number"
             step="0.1"
             value={borneMin}
@@ -103,9 +107,9 @@ export default function FiltreHampel({ mur }) {
             placeholder="ex. -50"
           />
         </div>
-        <div className="champ" style={{ width: "110px" }}>
-          <label>Borne max</label>
-          <input
+        <div className="flex w-[110px] flex-col gap-1">
+          <Label className="text-xs font-normal text-muted-foreground">Borne max</Label>
+          <Input
             type="number"
             step="0.1"
             value={borneMax}
@@ -114,19 +118,19 @@ export default function FiltreHampel({ mur }) {
           />
         </div>
       </div>
-      <p style={{ color: "#a0a6b5", fontSize: "0.78rem", margin: "-0.25rem 0 0.75rem" }}>
+      <p className="-mt-1 mb-3 text-xs text-muted-foreground">
         Les bornes physiques sont une 2e couche indépendante du Hampel — elles rattrapent les rafales d'échantillons
         aberrants trop longues pour la fenêtre glissante (remplacement par interpolation entre voisins valides).
       </p>
-      <button onClick={appliquer} disabled={enCours}>
+      <Button onClick={appliquer} disabled={enCours}>
         {enCours ? "Calcul..." : "Appliquer"}
-      </button>
-      {erreur && <p className="erreur">{erreur}</p>}
+      </Button>
+      {erreur && <p className="text-sm text-destructive">{erreur}</p>}
       {resultat && (
         <>
-          <p style={{ marginTop: "0.75rem" }}>
+          <p className="mt-3 text-sm">
             {resultat.nb_points} points ·{" "}
-            <span style={{ color: "#ff8080" }}>{resultat.nb_aberrants} détecté(s) comme aberrant(s)</span> avec fenêtre=
+            <span className="text-destructive">{resultat.nb_aberrants} détecté(s) comme aberrant(s)</span> avec fenêtre=
             {resultat.fenetre}, K={resultat.seuil_k}
           </p>
           {points.length > 0 && <GraphiqueHampel points={points} />}
@@ -158,16 +162,18 @@ function GraphiqueHampel({ points }) {
   return (
     <div>
       <svg ref={svgRef} viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
-        <path d={cheminBrut} fill="none" stroke="#5a6270" strokeWidth="1" />
-        <path d={cheminFiltre} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
-        {points.map((p, i) => p.aberrant && <circle key={i} cx={x(temps[i])} cy={y(p.brut)} r="3" fill="#ff8080" />)}
-        <text x={marge} y={16} fill="#5a6270" fontSize="12">
+        <path d={cheminBrut} fill="none" stroke="#6b7280" strokeWidth="1" />
+        <path d={cheminFiltre} fill="none" stroke="var(--ring)" strokeWidth="1.5" />
+        {points.map(
+          (p, i) => p.aberrant && <circle key={i} cx={x(temps[i])} cy={y(p.brut)} r="3" fill="var(--destructive)" />,
+        )}
+        <text x={marge} y={16} fill="#6b7280" fontSize="12">
           — brut
         </text>
-        <text x={marge + 60} y={16} fill="#7fd4ff" fontSize="12">
+        <text x={marge + 60} y={16} fill="var(--ring)" fontSize="12">
           — filtré (ajusté)
         </text>
-        <text x={marge + 190} y={16} fill="#ff8080" fontSize="12">
+        <text x={marge + 190} y={16} fill="var(--destructive)" fontSize="12">
           ● point corrigé
         </text>
       </svg>

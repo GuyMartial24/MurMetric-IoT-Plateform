@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { GRANDEURS_MESURABLES } from "../nomogrammeAxes.js";
+import { Label } from "./ui/label.jsx";
+import { classesChampNatif } from "../lib/utils.js";
 
 // Sélection partagée par la Vue d'ensemble et l'Assistant IA — même forme
 // que le modèle `Selection` côté backend (app/routers/assistant.py).
@@ -31,7 +33,7 @@ import { GRANDEURS_MESURABLES } from "../nomogrammeAxes.js";
 // affiche les valeurs telles qu'elles existent réellement, pas besoin de
 // deviner l'orthographe exacte en tapant. Couche reste optionnelle
 // ("— toutes —" en premier choix) — Mur ne l'est pas dans l'usage courant.
-export default function SelecteurMesure({ valeur, onChange }) {
+export default function SelecteurMesure({ valeur, onChange, children }) {
   const [combinaisons, setCombinaisons] = useState([]);
 
   useEffect(() => {
@@ -74,10 +76,14 @@ export default function SelecteurMesure({ valeur, onChange }) {
   const canaux = [...new Set(combinaisons.map((c) => c.canal_nom).filter(Boolean))];
 
   return (
-    <div className="selection-form">
-      <div className="champ">
-        <label>Grandeur</label>
-        <select value={grandeurActuelle} onChange={(e) => definirGrandeur(e.target.value)}>
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3">
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs font-normal text-muted-foreground">Grandeur</Label>
+        <select
+          value={grandeurActuelle}
+          onChange={(e) => definirGrandeur(e.target.value)}
+          className={classesChampNatif}
+        >
           {GRANDEURS_MESURABLES.map((g) => (
             <option key={g.valeur} value={g.valeur}>
               {g.label}
@@ -85,9 +91,9 @@ export default function SelecteurMesure({ valeur, onChange }) {
           ))}
         </select>
       </div>
-      <div className="champ">
-        <label>Mur</label>
-        <select value={valeur.mur || ""} onChange={(e) => definir("mur", e.target.value)}>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs font-normal text-muted-foreground">Mur</Label>
+        <select value={valeur.mur || ""} onChange={(e) => definir("mur", e.target.value)} className={classesChampNatif}>
           {murs.length === 0 && <option value={valeur.mur || ""}>{valeur.mur || "Chargement..."}</option>}
           {murs.map((m) => (
             <option key={m} value={m}>
@@ -96,8 +102,8 @@ export default function SelecteurMesure({ valeur, onChange }) {
           ))}
         </select>
       </div>
-      <div className="champ">
-        <label>Couche</label>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs font-normal text-muted-foreground">Couche</Label>
         <select
           value={valeur.couche || ""}
           onChange={(e) => definir("couche", e.target.value)}
@@ -107,6 +113,7 @@ export default function SelecteurMesure({ valeur, onChange }) {
               ? "Sans objet pour le retrait (capteurs positionnés en surface, pas par couche)"
               : undefined
           }
+          className={classesChampNatif}
         >
           <option value="">— toutes —</option>
           {couches.map((c) => (
@@ -117,9 +124,13 @@ export default function SelecteurMesure({ valeur, onChange }) {
         </select>
       </div>
       {valeur.type === "retrait" && (
-        <div className="champ">
-          <label>Canal</label>
-          <select value={valeur.canal_nom || ""} onChange={(e) => definir("canal_nom", e.target.value)}>
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs font-normal text-muted-foreground">Canal</Label>
+          <select
+            value={valeur.canal_nom || ""}
+            onChange={(e) => definir("canal_nom", e.target.value)}
+            className={classesChampNatif}
+          >
             <option value="">— tous —</option>
             {canaux.map((c) => (
               <option key={c} value={c}>
@@ -129,14 +140,25 @@ export default function SelecteurMesure({ valeur, onChange }) {
           </select>
         </div>
       )}
-      <div className="champ">
-        <label>Début</label>
-        <input type="date" value={valeur.debut || ""} onChange={(e) => definir("debut", e.target.value)} />
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs font-normal text-muted-foreground">Début</Label>
+        <input
+          type="date"
+          value={valeur.debut || ""}
+          onChange={(e) => definir("debut", e.target.value)}
+          className={classesChampNatif}
+        />
       </div>
-      <div className="champ">
-        <label>Fin</label>
-        <input type="date" value={valeur.fin || ""} onChange={(e) => definir("fin", e.target.value)} />
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs font-normal text-muted-foreground">Fin</Label>
+        <input
+          type="date"
+          value={valeur.fin || ""}
+          onChange={(e) => definir("fin", e.target.value)}
+          className={classesChampNatif}
+        />
       </div>
+      {children}
     </div>
   );
 }

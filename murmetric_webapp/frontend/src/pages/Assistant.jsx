@@ -2,8 +2,13 @@ import { useRef, useState } from "react";
 import { api } from "../api.js";
 import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
+import { Button } from "../components/ui/button.jsx";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card.jsx";
+import { Label } from "../components/ui/label.jsx";
+import { Textarea } from "../components/ui/textarea.jsx";
 import { useEtatAssistant } from "../EtatPagesContext.jsx";
 import { svgVersDataUrl } from "../exportGraphique.js";
+import { classesChampNatif } from "../lib/utils.js";
 import { libelleGrandeur } from "../nomogrammeAxes.js";
 
 // Au-delà, la requête risque d'échouer côté API Gemini (charge utile trop
@@ -29,7 +34,7 @@ function TexteAssistant({ texte }) {
   return paragraphes.map((paragraphe, i) => {
     const estNote = /^note\s*:/i.test(paragraphe.trim());
     return (
-      <p key={i} style={estNote ? { fontStyle: "italic", color: "#a0a6b5", fontSize: "0.85rem" } : undefined}>
+      <p key={i} className={estNote ? "text-sm text-muted-foreground italic" : undefined}>
         {paragraphe}
       </p>
     );
@@ -152,125 +157,123 @@ export default function Assistant() {
 
   return (
     <div>
-      <div className="carte">
-        <h2>Assistant IA</h2>
-        <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
-          Ancré sur la sélection ci-dessous — jamais sur des points bruts, uniquement sur des statistiques pré-agrégées,
-          sauf si tu joins une image (le graphique de l'appli, ou une capture collée/importée) : l'IA l'analyse alors
-          directement. Les brouillons de rapport sont à relire avant usage.
-        </p>
-        <SelecteurMesure valeur={selection} onChange={setSelection} />
-        <div className="champ" style={{ marginTop: "0.75rem", maxWidth: "260px" }}>
-          <label>Mode</label>
-          <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option value="explain">Explication de la courbe</option>
-            <option value="report">Brouillon de rapport d'instrumentation</option>
-          </select>
-        </div>
-        <button onClick={chargerCourbe} disabled={enCoursCourbe} style={{ marginTop: "0.75rem" }}>
-          {enCoursCourbe ? "Chargement..." : "Charger la courbe (pour l'analyse visuelle, optionnel)"}
-        </button>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Assistant IA</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            Ancré sur la sélection ci-dessous — jamais sur des points bruts, uniquement sur des statistiques
+            pré-agrégées, sauf si tu joins une image (le graphique de l'appli, ou une capture collée/importée) : l'IA
+            l'analyse alors directement. Les brouillons de rapport sont à relire avant usage.
+          </p>
+          <SelecteurMesure valeur={selection} onChange={setSelection} />
+          <div className="flex max-w-[260px] flex-col gap-1">
+            <Label className="text-xs font-normal text-muted-foreground">Mode</Label>
+            <select value={mode} onChange={(e) => setMode(e.target.value)} className={classesChampNatif}>
+              <option value="explain">Explication de la courbe</option>
+              <option value="report">Brouillon de rapport d'instrumentation</option>
+            </select>
+          </div>
+          <Button onClick={chargerCourbe} disabled={enCoursCourbe} className="self-start">
+            {enCoursCourbe ? "Chargement..." : "Charger la courbe (pour l'analyse visuelle, optionnel)"}
+          </Button>
+        </CardContent>
+      </Card>
 
       {points && points.length > 0 && (
-        <div className="carte">
-          <h3 style={{ marginTop: 0 }}>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</h3>
-          <GraphiqueSVG ref={graphiqueRef} points={points} champ={selection.champ} />
-        </div>
+        <Card className="mt-5">
+          <CardHeader>
+            <CardTitle>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <GraphiqueSVG ref={graphiqueRef} points={points} champ={selection.champ} />
+          </CardContent>
+        </Card>
       )}
       {points && points.length === 0 && (
-        <div className="carte">
-          <p>
-            Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie le
-            mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
-          </p>
-        </div>
+        <Card className="mt-5">
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie le
+              mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
+            </p>
+          </CardContent>
+        </Card>
       )}
 
-      <div className="carte">
-        {historique.map((m, i) => (
-          <div key={i} className={`chat-message ${m.role}`}>
-            {m.etiquette && (
-              <span
-                style={{
-                  display: "inline-block",
-                  fontSize: "0.72rem",
-                  color: "#a0a6b5",
-                  border: "1px solid #3a4152",
-                  borderRadius: "4px",
-                  padding: "0 0.35rem",
-                  marginRight: "0.4rem",
-                }}
-              >
-                {m.etiquette}
+      <Card className="mt-5">
+        <CardContent>
+          {historique.map((m, i) => (
+            <div key={i} className={`chat-message ${m.role}`}>
+              {m.etiquette && (
+                <span className="mr-1.5 inline-block rounded border border-border px-1.5 text-xs text-muted-foreground">
+                  {m.etiquette}
+                </span>
+              )}
+              {m.role === "assistant" ? <TexteAssistant texte={m.texte} /> : m.texte}
+            </div>
+          ))}
+          {erreur && (
+            <p className="text-sm text-destructive">
+              {erreur}
+              {dernierEchec && (
+                <Button variant="outline" size="sm" onClick={reessayer} disabled={enCours} className="ml-2.5">
+                  Réessayer
+                </Button>
+              )}
+            </p>
+          )}
+          {imageJointe && (
+            <div className="mb-2 flex items-center gap-2.5">
+              <img src={imageJointe} alt="Image jointe" className="max-h-[70px] rounded border border-border" />
+              <span className="text-xs text-muted-foreground">
+                Image jointe — sera envoyée avec le prochain message.
               </span>
-            )}
-            {m.role === "assistant" ? <TexteAssistant texte={m.texte} /> : m.texte}
+              <Button variant="ghost" size="sm" onClick={() => setImageJointe(null)}>
+                Retirer
+              </Button>
+            </div>
+          )}
+          <input
+            type="file"
+            accept="image/*"
+            ref={inputFichierRef}
+            className="hidden"
+            onChange={(e) => {
+              attacherImage(e.target.files[0]);
+              e.target.value = "";
+            }}
+          />
+          <Textarea
+            rows={3}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onPaste={collerImage}
+            placeholder="ex. Explique l'évolution de la température sur cette sélection (Ctrl+V pour coller une capture)"
+          />
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button onClick={() => envoyer(imageJointe ? "image" : "texte")} disabled={enCours}>
+              {enCours ? "Réflexion..." : "Envoyer"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => envoyer("graphique")}
+              disabled={enCours || !points || points.length === 0}
+              title={
+                !points || points.length === 0
+                  ? "Charge d'abord la courbe ci-dessus"
+                  : "Envoie l'image du graphique à l'IA (analyse visuelle)"
+              }
+            >
+              {enCours ? "Réflexion..." : "Envoyer avec le graphique"}
+            </Button>
+            <Button variant="outline" type="button" onClick={() => inputFichierRef.current.click()} disabled={enCours}>
+              Joindre une image
+            </Button>
           </div>
-        ))}
-        {erreur && (
-          <p className="erreur">
-            {erreur}
-            {dernierEchec && (
-              <button onClick={reessayer} disabled={enCours} style={{ marginLeft: "0.6rem" }}>
-                Réessayer
-              </button>
-            )}
-          </p>
-        )}
-        {imageJointe && (
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" }}>
-            <img
-              src={imageJointe}
-              alt="Image jointe"
-              style={{ maxHeight: "70px", borderRadius: "4px", border: "1px solid #3a4152" }}
-            />
-            <span style={{ fontSize: "0.8rem", color: "#a0a6b5" }}>
-              Image jointe — sera envoyée avec le prochain message.
-            </span>
-            <button onClick={() => setImageJointe(null)} style={{ fontSize: "0.8rem" }}>
-              Retirer
-            </button>
-          </div>
-        )}
-        <input
-          type="file"
-          accept="image/*"
-          ref={inputFichierRef}
-          style={{ display: "none" }}
-          onChange={(e) => {
-            attacherImage(e.target.files[0]);
-            e.target.value = "";
-          }}
-        />
-        <textarea
-          rows={3}
-          style={{ width: "100%" }}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onPaste={collerImage}
-          placeholder="ex. Explique l'évolution de la température sur cette sélection (Ctrl+V pour coller une capture)"
-        />
-        <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
-          <button onClick={() => envoyer(imageJointe ? "image" : "texte")} disabled={enCours}>
-            {enCours ? "Réflexion..." : "Envoyer"}
-          </button>
-          <button
-            onClick={() => envoyer("graphique")}
-            disabled={enCours || !points || points.length === 0}
-            title={
-              !points || points.length === 0
-                ? "Charge d'abord la courbe ci-dessus"
-                : "Envoie l'image du graphique à l'IA (analyse visuelle)"
-            }
-          >
-            {enCours ? "Réflexion..." : "Envoyer avec le graphique"}
-          </button>
-          <button type="button" onClick={() => inputFichierRef.current.click()} disabled={enCours}>
-            Joindre une image
-          </button>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -27,7 +27,7 @@ spec:
           # une requête qui dépasse échoue maintenant avec une erreur claire
           # côté client au lieu de faire tomber tout le pod.
           args:
-            - "--query-memory-bytes=1073741824"
+            - "--query-memory-bytes=3221225472"
             - "--query-initial-memory-bytes=10485760"
           # Poste le plus gourmand de la chaîne pendant un import massif (c'est
           # lui qui indexe et écrit les points), d'où le plafond le plus haut —
@@ -62,6 +62,17 @@ spec:
           # 4 cœurs, seulement 67% déjà alloué en limites tous pods
           # confondus : marge pour laisser InfluxDB utiliser plus de cœurs
           # sur ces agrégations, sans viser le plafond du nœud.
+          #
+          # --query-memory-bytes 1Gi -> 3Gi le 31/08/2026 : un test légitime
+          # (max() horodaté par jour, groupé par canal_nom, mesures_dewesoft,
+          # 7 jours x 8 canaux — panneaux Grafana retrait "non agrégé" à
+          # plusieurs canaux) a échoué juste sous le plafond (alloué
+          # 1073005056/1073741824, il manquait ~2,8 Mio) — preuve que 1Gi
+          # est devenu trop juste pour ce type de requête groupée, pas
+          # seulement pour les lectures brutes mono-canal (qui restent sûres
+          # bien en dessous, ~72k points/2,4 Mo pour 1 canal/2h, mesuré le
+          # même jour). Reste largement sous le plafond du pod (8Gi) : marge
+          # réelle, cohérent avec les remontées précédentes de ce fichier.
           resources:
             requests:
               cpu: 250m

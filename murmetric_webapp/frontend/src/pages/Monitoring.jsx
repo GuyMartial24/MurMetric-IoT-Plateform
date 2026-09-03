@@ -5,6 +5,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import Pastille from "../components/Pastille.jsx";
+import { Button } from "../components/ui/button.jsx";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card.jsx";
+import { Skeleton } from "../components/ui/skeleton.jsx";
 
 const COULEURS = {
   ok: "#4caf50",
@@ -59,29 +62,60 @@ export default function Monitoring() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-        <h2 style={{ margin: 0 }}>Monitoring des pipelines d'ingestion</h2>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="m-0 text-lg font-semibold">Monitoring des pipelines d'ingestion</h2>
+        <div className="flex items-center gap-3">
           {derniereActualisation && (
-            <span style={{ color: "#a0a6b5", fontSize: "0.8rem" }}>
+            <span className="text-xs text-muted-foreground">
               Actualisé {derniereActualisation.toLocaleTimeString("fr-FR")}
             </span>
           )}
-          <button onClick={charger}>Actualiser</button>
+          <Button variant="outline" size="sm" onClick={charger}>
+            Actualiser
+          </Button>
         </div>
       </div>
-      <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
+      <p className="text-sm text-muted-foreground">
         Fraîcheur des données réellement écrites en InfluxDB (seules les sources avec "ingestion" activé sont prises en
         compte) + dernier battement de vie reçu du process d'ingestion lui-même. Rafraîchi automatiquement toutes les
         30s.
       </p>
-      {erreur && <p className="erreur">{erreur}</p>}
-      {etat &&
-        Object.entries(etat).map(([pipeline, infos]) => (
-          <CartePipeline key={pipeline} pipeline={pipeline} infos={infos} />
-        ))}
-      <CarteEspaceDisque />
+      {erreur && <p className="text-sm text-destructive">{erreur}</p>}
+      <div className="mt-3 flex flex-col gap-5">
+        {etat === null && !erreur && (
+          <>
+            <CartePipelineSquelette />
+            <CartePipelineSquelette />
+          </>
+        )}
+        {etat &&
+          Object.entries(etat).map(([pipeline, infos]) => (
+            <CartePipeline key={pipeline} pipeline={pipeline} infos={infos} />
+          ))}
+        <CarteEspaceDisque />
+      </div>
     </div>
+  );
+}
+
+function CartePipelineSquelette() {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2.5">
+          <Skeleton className="h-3 w-3 shrink-0 rounded-full" />
+          <Skeleton className="h-4 w-48" />
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-wrap gap-8">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className="flex flex-col gap-1.5">
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -102,32 +136,43 @@ function CarteEspaceDisque() {
   }, []);
 
   return (
-    <div className="carte">
-      <h3 style={{ marginTop: 0 }}>Espace disque InfluxDB</h3>
-      <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
-        Mesuré toutes les 6h par une tâche cron sur le VPS (taille réelle sur disque, pas un nombre de points).
-      </p>
-      {erreur && <p className="erreur">{erreur}</p>}
-      {donnees && (
-        <>
-          <div style={{ fontSize: "0.88rem" }}>
-            <div style={{ color: "#a0a6b5" }}>Dernière mesure</div>
-            <div>
-              {formaterOctets(donnees.dernier_octets)}
-              {donnees.mesure_le ? ` (${ilYA(donnees.mesure_le)})` : ""}
-            </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Espace disque InfluxDB</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <p className="text-sm text-muted-foreground">
+          Mesuré toutes les 6h par une tâche cron sur le VPS (taille réelle sur disque, pas un nombre de points).
+        </p>
+        {erreur && <p className="text-sm text-destructive">{erreur}</p>}
+        {donnees === null && !erreur && (
+          <div className="flex flex-col gap-1.5">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="mt-2 h-[120px] w-full" />
           </div>
-          <GraphiqueEspaceDisque points={donnees.points} />
-        </>
-      )}
-    </div>
+        )}
+        {donnees && (
+          <>
+            <div className="text-sm">
+              <div className="text-muted-foreground">Dernière mesure</div>
+              <div>
+                {formaterOctets(donnees.dernier_octets)}
+                {donnees.mesure_le ? ` (${ilYA(donnees.mesure_le)})` : ""}
+              </div>
+            </div>
+            <GraphiqueEspaceDisque points={donnees.points} />
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
 function GraphiqueEspaceDisque({ points }) {
   if (!points || points.length < 2) {
     return (
-      <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
+      <p className="text-sm text-muted-foreground">
         Pas encore assez de mesures pour tracer une évolution (une mesure toutes les 6h).
       </p>
     );
@@ -148,12 +193,10 @@ function GraphiqueEspaceDisque({ points }) {
   const chemin = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(temps[i])},${y(valeurs[i])}`).join(" ");
 
   return (
-    <div style={{ marginTop: "0.75rem" }}>
-      <div style={{ color: "#a0a6b5", fontSize: "0.78rem", marginBottom: "0.25rem" }}>
-        Évolution sur les 30 derniers jours.
-      </div>
+    <div className="mt-3">
+      <div className="mb-1 text-xs text-muted-foreground">Évolution sur les 30 derniers jours.</div>
       <svg viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
-        <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
+        <path d={chemin} fill="none" stroke="var(--ring)" strokeWidth="1.5" />
       </svg>
     </div>
   );
@@ -164,85 +207,86 @@ function CartePipeline({ pipeline, infos }) {
   const hb = infos.heartbeat;
 
   return (
-    <div className="carte">
-      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" }}>
-        <span
-          style={{ width: "12px", height: "12px", borderRadius: "50%", background: couleur, display: "inline-block" }}
-        />
-        <h3 style={{ margin: 0 }}>{LIBELLES_PIPELINE[pipeline] || pipeline}</h3>
-        <span style={{ color: couleur, fontWeight: 600, fontSize: "0.9rem" }}>
-          {LIBELLES_STATUT[infos.statut] || infos.statut}
-        </span>
-      </div>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "2rem", fontSize: "0.88rem" }}>
-        <div>
-          <div style={{ color: "#a0a6b5" }}>Dernière donnée reçue</div>
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2.5">
+          <span className="inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: couleur }} />
+          <CardTitle>{LIBELLES_PIPELINE[pipeline] || pipeline}</CardTitle>
+          <span className="text-sm font-semibold" style={{ color: couleur }}>
+            {LIBELLES_STATUT[infos.statut] || infos.statut}
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-wrap gap-8 text-sm">
           <div>
-            {infos.dernier_point
-              ? `${new Date(infos.dernier_point).toLocaleString("fr-FR")} (${ilYA(infos.dernier_point)})`
-              : "aucune"}
+            <div className="text-muted-foreground">Dernière donnée reçue</div>
+            <div>
+              {infos.dernier_point
+                ? `${new Date(infos.dernier_point).toLocaleString("fr-FR")} (${ilYA(infos.dernier_point)})`
+                : "aucune"}
+            </div>
           </div>
-        </div>
-        <div>
-          <div style={{ color: "#a0a6b5" }}>Sources actives (ingestion activée)</div>
-          <div>{infos.nb_sources_actives}</div>
-        </div>
-        <div>
-          <div style={{ color: "#a0a6b5" }}>Points reçus (24h, InfluxDB)</div>
-          <div>{infos.points_24h != null ? infos.points_24h.toLocaleString("fr-FR") : "?"}</div>
-        </div>
-        {hb ? (
-          <>
-            <div>
-              <div style={{ color: "#a0a6b5" }}>Process ({hb.machine || "?"})</div>
-              <div>en marche depuis {hb.demarre_le ? new Date(hb.demarre_le).toLocaleString("fr-FR") : "?"}</div>
-            </div>
-            <div>
-              <div style={{ color: "#a0a6b5" }}>Connexion MQTT</div>
-              <div>
-                {hb.mqtt_connecte ? (
-                  <Pastille etat="ok" texte="Connecté" />
-                ) : (
-                  <Pastille etat="erreur" texte="Déconnecté" />
-                )}
-              </div>
-            </div>
-            <div>
-              <div style={{ color: "#a0a6b5" }}>Buffer local en attente</div>
-              <div>{hb.buffer_sqlite_en_attente ?? "?"} message(s)</div>
-            </div>
-            <div>
-              <div style={{ color: "#a0a6b5" }}>Registre capteurs (API)</div>
-              <div>
-                {hb.registre_api_ok ? (
-                  <Pastille etat="ok" texte="À jour" />
-                ) : (
-                  <Pastille etat="attention" texte="Dernier appel en échec" />
-                )}
-              </div>
-            </div>
-            <div>
-              <div style={{ color: "#a0a6b5" }}>Points publiés / bufferisés (cumul process)</div>
-              <div>
-                {hb.nb_points_publies != null ? hb.nb_points_publies.toLocaleString("fr-FR") : "?"} /{" "}
-                {hb.nb_points_bufferises != null ? hb.nb_points_bufferises.toLocaleString("fr-FR") : "?"}
-              </div>
-            </div>
-            <div>
-              <div style={{ color: "#a0a6b5" }}>Dernier battement</div>
-              <div>{ilYA(hb.recu_le)}</div>
-            </div>
-          </>
-        ) : (
-          <div style={{ color: "#a0a6b5" }}>
-            Aucun battement de vie reçu (process jamais démarré depuis le déploiement du monitoring, ou trop ancien).
+          <div>
+            <div className="text-muted-foreground">Sources actives (ingestion activée)</div>
+            <div>{infos.nb_sources_actives}</div>
           </div>
-        )}
-      </div>
+          <div>
+            <div className="text-muted-foreground">Points reçus (24h, InfluxDB)</div>
+            <div>{infos.points_24h != null ? infos.points_24h.toLocaleString("fr-FR") : "?"}</div>
+          </div>
+          {hb ? (
+            <>
+              <div>
+                <div className="text-muted-foreground">Process ({hb.machine || "?"})</div>
+                <div>en marche depuis {hb.demarre_le ? new Date(hb.demarre_le).toLocaleString("fr-FR") : "?"}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Connexion MQTT</div>
+                <div>
+                  {hb.mqtt_connecte ? (
+                    <Pastille etat="ok" texte="Connecté" />
+                  ) : (
+                    <Pastille etat="erreur" texte="Déconnecté" />
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Buffer local en attente</div>
+                <div>{hb.buffer_sqlite_en_attente ?? "?"} message(s)</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Registre capteurs (API)</div>
+                <div>
+                  {hb.registre_api_ok ? (
+                    <Pastille etat="ok" texte="À jour" />
+                  ) : (
+                    <Pastille etat="attention" texte="Dernier appel en échec" />
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Points publiés / bufferisés (cumul process)</div>
+                <div>
+                  {hb.nb_points_publies != null ? hb.nb_points_publies.toLocaleString("fr-FR") : "?"} /{" "}
+                  {hb.nb_points_bufferises != null ? hb.nb_points_bufferises.toLocaleString("fr-FR") : "?"}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Dernier battement</div>
+                <div>{ilYA(hb.recu_le)}</div>
+              </div>
+            </>
+          ) : (
+            <div className="text-muted-foreground">
+              Aucun battement de vie reçu (process jamais démarré depuis le déploiement du monitoring, ou trop ancien).
+            </div>
+          )}
+        </div>
 
-      {hb && <GraphiqueBuffer pipeline={pipeline} />}
-    </div>
+        {hb && <GraphiqueBuffer pipeline={pipeline} />}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -276,13 +320,13 @@ function GraphiqueBuffer({ pipeline }) {
   const chemin = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(temps[i])},${y(valeurs[i])}`).join(" ");
 
   return (
-    <div style={{ marginTop: "0.75rem" }}>
-      <div style={{ color: "#a0a6b5", fontSize: "0.78rem", marginBottom: "0.25rem" }}>
+    <div className="mt-3">
+      <div className="mb-1 text-xs text-muted-foreground">
         Messages en attente dans le buffer local (24 dernières heures) — une valeur qui grimpe et ne redescend pas
         signale une perte de connexion au cloud prolongée.
       </div>
       <svg ref={svgRef} viewBox={`0 0 ${largeur} ${hauteur}`} width="100%" height={hauteur}>
-        <path d={chemin} fill="none" stroke="#7fd4ff" strokeWidth="1.5" />
+        <path d={chemin} fill="none" stroke="var(--ring)" strokeWidth="1.5" />
       </svg>
     </div>
   );

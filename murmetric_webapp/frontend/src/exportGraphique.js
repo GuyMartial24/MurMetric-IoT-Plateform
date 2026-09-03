@@ -5,7 +5,7 @@
 // les deux types de rendu utilisés dans l'appli : <canvas> (Nomogramme
 // 2D/3D) directement, <svg> (GraphiqueSVG, FiltreHampel) via une conversion
 // (sérialisation -> <img> -> canvas hors-écran).
-const FOND = "#0f1117"; // même couleur que --body-bg (index.css) : sans ça,
+const FOND = "#e2e8f0"; // même couleur que --background (index.css) : sans ça,
 // un SVG exporté a un fond transparent, illisible une fois collé sur du blanc.
 
 export function canvasVersDataUrl(canvas) {

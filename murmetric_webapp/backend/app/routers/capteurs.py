@@ -15,6 +15,7 @@ webapp (cf. config.py) et sont la source de vérité :
   session utilisateur possible pour un process qui tourne sans surveillance.
 """
 
+import hmac
 import json
 import threading
 from datetime import datetime, timedelta, timezone
@@ -435,8 +436,20 @@ def modifier_capteur_retrait(
 
 def _verifier_cle_ingestion(x_ingestion_key: str | None = Header(default=None)) -> None:
     """Dépendance FastAPI : exige l'en-tête X-Ingestion-Key (404 générique si absent/faux,
-    pas 401/403 — ne pas révéler l'existence de la route à un appelant non autorisé)."""
-    if not config.INGESTION_API_KEY or x_ingestion_key != config.INGESTION_API_KEY:
+    pas 401/403 — ne pas révéler l'existence de la route à un appelant non autorisé).
+
+    Comparaison en temps constant (31/08/2026, durcissement — revue de
+    sécurité) : `!=` sur des chaînes s'arrête au premier caractère différent,
+    ce qui fuit une information temporelle exploitable en théorie pour
+    reconstituer la clé caractère par caractère (timing attack). Peu
+    praticable à distance (le bruit réseau noie généralement l'écart), mais
+    `hmac.compare_digest` coûte rien à utiliser systématiquement pour un
+    secret comparé côté serveur."""
+    if (
+        not config.INGESTION_API_KEY
+        or not x_ingestion_key
+        or not hmac.compare_digest(x_ingestion_key, config.INGESTION_API_KEY)
+    ):
         raise HTTPException(status_code=404)
 
 

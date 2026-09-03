@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { telechargerCSV, telechargerExcel } from "../exportDonnees.js";
+import { Button } from "./ui/button.jsx";
 
 export default function BoutonsExportDonnees({ lignes, nomFichier = "donnees", imbrique = false }) {
   const [enCours, setEnCours] = useState(false);
@@ -21,17 +22,17 @@ export default function BoutonsExportDonnees({ lignes, nomFichier = "donnees", i
 
   const boutons = (
     <>
-      <button type="button" onClick={() => telechargerCSV(lignes, `${nomFichier}.csv`)}>
+      <Button type="button" variant="outline" size="sm" onClick={() => telechargerCSV(lignes, `${nomFichier}.csv`)}>
         Export CSV
-      </button>
-      <button type="button" onClick={exporterExcel} disabled={enCours}>
+      </Button>
+      <Button type="button" variant="outline" size="sm" onClick={exporterExcel} disabled={enCours}>
         {enCours ? "..." : "Export Excel"}
-      </button>
-      {erreur && <span style={{ color: "#ff8080", fontSize: "0.8rem" }}>{erreur}</span>}
+      </Button>
+      {erreur && <span className="text-xs text-destructive">{erreur}</span>}
     </>
   );
 
   if (imbrique) return boutons;
 
-  return <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>{boutons}</div>;
+  return <div className="mt-2 flex items-center gap-2">{boutons}</div>;
 }

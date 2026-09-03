@@ -2,12 +2,20 @@ import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import BoutonsExportDonnees from "../components/BoutonsExportDonnees.jsx";
 import ChampSelectOuAutre from "../components/ChampSelectOuAutre.jsx";
+import { Button } from "../components/ui/button.jsx";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card.jsx";
+import { Input } from "../components/ui/input.jsx";
+import { Label } from "../components/ui/label.jsx";
+import { Skeleton } from "../components/ui/skeleton.jsx";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table.jsx";
+import { classesChampNatif } from "../lib/utils.js";
 import { useCouchesParMur, useMursCouchesConnus } from "../mursCouches.js";
 
 const VIDE = { mur: "", couche: "", valeur_pourcent: "", commentaire: "", date_mesure: "" };
 
 export default function TeneurEau() {
   const [liste, setListe] = useState([]);
+  const [chargementInitial, setChargementInitial] = useState(true);
   const [saisie, setSaisie] = useState(VIDE);
   const [enEdition, setEnEdition] = useState(null); // { original, valeurs }
   const [erreur, setErreur] = useState(null);
@@ -26,6 +34,8 @@ export default function TeneurEau() {
       setListe(await api.listerTeneurEau());
     } catch (e) {
       setErreur(e.message);
+    } finally {
+      setChargementInitial(false);
     }
   };
 
@@ -107,79 +117,92 @@ export default function TeneurEau() {
   );
 
   return (
-    <div>
-      <div className="carte">
-        <h2>Nouvelle saisie — teneur en eau</h2>
-        <form onSubmit={soumettre} className="selection-form">
-          <div className="champ">
-            <label>Mur</label>
-            <ChampSelectOuAutre
-              required
-              valeur={saisie.mur}
-              options={mursConnus}
-              onChange={(v) => setSaisie({ ...saisie, mur: v })}
-              placeholder="SOCMA 1"
-            />
-          </div>
-          <div className="champ">
-            <label>Couche</label>
-            <ChampSelectOuAutre
-              required
-              valeur={saisie.couche}
-              options={couchesPourSaisie}
-              onChange={(v) => setSaisie({ ...saisie, couche: v })}
-              placeholder="interface carreau et exterieur"
-            />
-          </div>
-          <div className="champ">
-            <label>Valeur (%)</label>
-            <input
-              required
-              type="number"
-              step="0.01"
-              value={saisie.valeur_pourcent}
-              onChange={(e) => setSaisie({ ...saisie, valeur_pourcent: e.target.value })}
-            />
-          </div>
-          <div className="champ">
-            <label>Date de mesure</label>
-            <input
-              type="datetime-local"
-              value={saisie.date_mesure}
-              onChange={(e) => setSaisie({ ...saisie, date_mesure: e.target.value })}
-            />
-          </div>
-          <div className="champ" style={{ gridColumn: "1 / -1" }}>
-            <label>Commentaire</label>
-            <input value={saisie.commentaire} onChange={(e) => setSaisie({ ...saisie, commentaire: e.target.value })} />
-          </div>
-        </form>
-        <button onClick={soumettre} disabled={enCours}>
-          {enCours ? "Envoi..." : "Enregistrer"}
-        </button>
-        {erreur && <p className="erreur">{erreur}</p>}
-      </div>
+    <div className="flex flex-col gap-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Nouvelle saisie — teneur en eau</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <form onSubmit={soumettre} className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3">
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs font-normal text-muted-foreground">Mur</Label>
+              <ChampSelectOuAutre
+                required
+                valeur={saisie.mur}
+                options={mursConnus}
+                onChange={(v) => setSaisie({ ...saisie, mur: v })}
+                placeholder="SOCMA 1"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs font-normal text-muted-foreground">Couche</Label>
+              <ChampSelectOuAutre
+                required
+                valeur={saisie.couche}
+                options={couchesPourSaisie}
+                onChange={(v) => setSaisie({ ...saisie, couche: v })}
+                placeholder="interface carreau et exterieur"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs font-normal text-muted-foreground">Valeur (%)</Label>
+              <Input
+                required
+                type="number"
+                step="0.01"
+                value={saisie.valeur_pourcent}
+                onChange={(e) => setSaisie({ ...saisie, valeur_pourcent: e.target.value })}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs font-normal text-muted-foreground">Date de mesure</Label>
+              <Input
+                type="datetime-local"
+                value={saisie.date_mesure}
+                onChange={(e) => setSaisie({ ...saisie, date_mesure: e.target.value })}
+              />
+            </div>
+            <div className="col-span-full flex flex-col gap-1">
+              <Label className="text-xs font-normal text-muted-foreground">Commentaire</Label>
+              <Input
+                value={saisie.commentaire}
+                onChange={(e) => setSaisie({ ...saisie, commentaire: e.target.value })}
+              />
+            </div>
+          </form>
+          <Button onClick={soumettre} disabled={enCours} className="self-start">
+            {enCours ? "Envoi..." : "Enregistrer"}
+          </Button>
+          {erreur && <p className="text-sm text-destructive">{erreur}</p>}
+        </CardContent>
+      </Card>
 
-      <div className="carte">
-        <h2>
-          Saisies existantes ({groupesFiltres.length}
-          {groupesFiltres.length !== groupes.length ? ` / ${groupes.length}` : ""})
-        </h2>
-        <BoutonsExportDonnees lignes={groupesFiltres} nomFichier="teneur_eau" />
-        <div className="tableau-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Mur</th>
-                <th>Couche</th>
-                <th>Valeur (%)</th>
-                <th>Date</th>
-                <th>Commentaire</th>
-                <th></th>
-              </tr>
-              <tr>
-                <th>
-                  <select value={filtreMur} onChange={(e) => setFiltreMur(e.target.value)}>
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Saisies existantes ({groupesFiltres.length}
+            {groupesFiltres.length !== groupes.length ? ` / ${groupes.length}` : ""})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <BoutonsExportDonnees lignes={groupesFiltres} nomFichier="teneur_eau" />
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Mur</TableHead>
+                <TableHead>Couche</TableHead>
+                <TableHead>Valeur (%)</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Commentaire</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+              <TableRow>
+                <TableHead>
+                  <select
+                    value={filtreMur}
+                    onChange={(e) => setFiltreMur(e.target.value)}
+                    className={classesChampNatif}
+                  >
                     <option value="">Tous</option>
                     {mursDisponibles.map((m) => (
                       <option key={m} value={m}>
@@ -187,9 +210,13 @@ export default function TeneurEau() {
                       </option>
                     ))}
                   </select>
-                </th>
-                <th>
-                  <select value={filtreCouche} onChange={(e) => setFiltreCouche(e.target.value)}>
+                </TableHead>
+                <TableHead>
+                  <select
+                    value={filtreCouche}
+                    onChange={(e) => setFiltreCouche(e.target.value)}
+                    className={classesChampNatif}
+                  >
                     <option value="">Toutes</option>
                     {couchesDisponibles.map((c) => (
                       <option key={c} value={c}>
@@ -197,81 +224,107 @@ export default function TeneurEau() {
                       </option>
                     ))}
                   </select>
-                </th>
-                <th></th>
-                <th></th>
-                <th></th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {groupesFiltres.map((g) => (
-                <tr key={`${g.mur}|${g.couche}|${g.time}`}>
-                  {enEdition?.original.mur === g.mur &&
-                  enEdition.original.couche === g.couche &&
-                  enEdition.original.date_mesure === g.time ? (
-                    <>
-                      <td>
-                        <ChampSelectOuAutre
-                          valeur={enEdition.valeurs.mur}
-                          options={mursConnus}
-                          onChange={(v) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, mur: v } })}
-                        />
-                      </td>
-                      <td>
-                        <ChampSelectOuAutre
-                          valeur={enEdition.valeurs.couche}
-                          options={couchesPourEdition}
-                          onChange={(v) => setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: v } })}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={enEdition.valeurs.valeur_pourcent}
-                          onChange={(e) =>
-                            setEnEdition({
-                              ...enEdition,
-                              valeurs: { ...enEdition.valeurs, valeur_pourcent: e.target.value },
-                            })
-                          }
-                        />
-                      </td>
-                      <td colSpan={2}>
-                        <input
-                          value={enEdition.valeurs.commentaire}
-                          onChange={(e) =>
-                            setEnEdition({
-                              ...enEdition,
-                              valeurs: { ...enEdition.valeurs, commentaire: e.target.value },
-                            })
-                          }
-                        />
-                      </td>
-                      <td>
-                        <button onClick={enregistrerCorrection}>Enregistrer</button>{" "}
-                        <button onClick={() => setEnEdition(null)}>Annuler</button>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td>{g.mur}</td>
-                      <td>{g.couche}</td>
-                      <td>{g.value?.toFixed(2)}</td>
-                      <td>{new Date(g.time).toLocaleString("fr-FR")}</td>
-                      <td>{g.commentaire}</td>
-                      <td>
-                        <button onClick={() => demarrerEdition(g)}>Éditer</button>
-                      </td>
-                    </>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                </TableHead>
+                <TableHead></TableHead>
+                <TableHead></TableHead>
+                <TableHead></TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {chargementInitial
+                ? Array.from({ length: 5 }, (_, i) => (
+                    <TableRow key={`squelette-${i}`}>
+                      {Array.from({ length: 6 }, (_, j) => (
+                        <TableCell key={j}>
+                          <Skeleton className="h-4 w-full" />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                : groupesFiltres.map((g) => (
+                    <TableRow key={`${g.mur}|${g.couche}|${g.time}`}>
+                      {enEdition?.original.mur === g.mur &&
+                      enEdition.original.couche === g.couche &&
+                      enEdition.original.date_mesure === g.time ? (
+                        <>
+                          <TableCell className="whitespace-normal">
+                            <ChampSelectOuAutre
+                              valeur={enEdition.valeurs.mur}
+                              options={mursConnus}
+                              onChange={(v) =>
+                                setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, mur: v } })
+                              }
+                            />
+                          </TableCell>
+                          <TableCell className="whitespace-normal">
+                            <ChampSelectOuAutre
+                              valeur={enEdition.valeurs.couche}
+                              options={couchesPourEdition}
+                              onChange={(v) =>
+                                setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, couche: v } })
+                              }
+                            />
+                          </TableCell>
+                          <TableCell className="whitespace-normal">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={enEdition.valeurs.valeur_pourcent}
+                              onChange={(e) =>
+                                setEnEdition({
+                                  ...enEdition,
+                                  valeurs: { ...enEdition.valeurs, valeur_pourcent: e.target.value },
+                                })
+                              }
+                              className={classesChampNatif}
+                            />
+                          </TableCell>
+                          <TableCell colSpan={2} className="whitespace-normal">
+                            <input
+                              value={enEdition.valeurs.commentaire}
+                              onChange={(e) =>
+                                setEnEdition({
+                                  ...enEdition,
+                                  valeurs: { ...enEdition.valeurs, commentaire: e.target.value },
+                                })
+                              }
+                              className={classesChampNatif}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1.5">
+                              <Button size="sm" onClick={enregistrerCorrection}>
+                                Enregistrer
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => setEnEdition(null)}>
+                                Annuler
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </>
+                      ) : (
+                        <>
+                          <TableCell className="whitespace-normal">{g.mur}</TableCell>
+                          <TableCell className="whitespace-normal">{g.couche}</TableCell>
+                          <TableCell className="whitespace-normal font-mono">{g.value?.toFixed(2)}</TableCell>
+                          <TableCell className="whitespace-normal">
+                            {new Date(g.time).toLocaleString("fr-FR")}
+                          </TableCell>
+                          <TableCell className="whitespace-normal">{g.commentaire}</TableCell>
+                          <TableCell>
+                            <Button size="sm" variant="outline" onClick={() => demarrerEdition(g)}>
+                              Éditer
+                            </Button>
+                          </TableCell>
+                        </>
+                      )}
+                    </TableRow>
+                  ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
 }

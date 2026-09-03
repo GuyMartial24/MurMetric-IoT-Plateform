@@ -3,6 +3,12 @@ import { api } from "../api.js";
 import BoutonsExportDonnees from "../components/BoutonsExportDonnees.jsx";
 import ChampSelectOuAutre from "../components/ChampSelectOuAutre.jsx";
 import Pastille from "../components/Pastille.jsx";
+import { Button } from "../components/ui/button.jsx";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card.jsx";
+import { Checkbox } from "../components/ui/checkbox.jsx";
+import { Skeleton } from "../components/ui/skeleton.jsx";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table.jsx";
+import { classesChampNatif } from "../lib/utils.js";
 import { useCouchesParMur, useMursCouchesConnus } from "../mursCouches.js";
 
 // Édition en place (chantier "source unique", section 32, 13/08/2026) :
@@ -41,13 +47,14 @@ export default function Capteurs() {
   const lignes = (donnees) => (donnees ? Object.entries(donnees).filter(([cle]) => cle !== "_schema") : []);
 
   return (
-    <div>
-      {erreur && <p className="erreur">{erreur}</p>}
+    <div className="flex flex-col gap-5">
+      {erreur && <p className="text-sm text-destructive">{erreur}</p>}
 
       <TableauCapteurs
         titre="Capteurs HR/T"
         typeMesure="hr_t"
         lignes={lignes(hrT)}
+        chargement={hrT === null}
         colonnes={[
           "nom",
           "famille_capteur",
@@ -72,6 +79,7 @@ export default function Capteurs() {
         titre="Canaux retrait"
         typeMesure="retrait"
         lignes={lignes(retrait)}
+        chargement={retrait === null}
         colonnes={["nom_mur", "nom_couche", "position", "ingestion"]}
         champsEditables={["nom_mur", "nom_couche", "position", "ingestion"]}
         colonnesFiltrables={["nom_mur", "nom_couche", "position", "ingestion"]}
@@ -217,6 +225,7 @@ function TableauCapteurs({
   recharger,
   nomFichierExport,
   avertissementEdition,
+  chargement = false,
 }) {
   const [enEdition, setEnEdition] = useState(null); // { cle, valeurs }
   const [enCours, setEnCours] = useState(false);
@@ -287,47 +296,52 @@ function TableauCapteurs({
   };
 
   return (
-    <div className="carte">
-      <h2>
-        {titre} ({lignesFiltrees.length}
-        {lignesFiltrees.length !== lignes.length ? ` / ${lignes.length}` : ""})
-      </h2>
-      <BoutonsExportDonnees
-        lignes={lignesFiltrees.map(([cle, c]) => ({ [cleColonne]: cle, ...c }))}
-        nomFichier={nomFichierExport}
-      />
-      {erreur && <p className="erreur">{erreur}</p>}
-      {enEdition && avertissementEdition && <p className="avertissement">{avertissementEdition}</p>}
-      <div className="tableau-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>{cleColonne}</th>
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          {titre} ({lignesFiltrees.length}
+          {lignesFiltrees.length !== lignes.length ? ` / ${lignes.length}` : ""})
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <BoutonsExportDonnees
+          lignes={lignesFiltrees.map(([cle, c]) => ({ [cleColonne]: cle, ...c }))}
+          nomFichier={nomFichierExport}
+        />
+        {erreur && <p className="text-sm text-destructive">{erreur}</p>}
+        {enEdition && avertissementEdition && <p className="text-sm text-warning">{avertissementEdition}</p>}
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{cleColonne}</TableHead>
               {colonnes.map((champ) => (
-                <th key={champ}>{LIBELLES[champ]}</th>
+                <TableHead key={champ}>{LIBELLES[champ]}</TableHead>
               ))}
-              <th></th>
-            </tr>
-            <tr>
-              <th>
+              <TableHead></TableHead>
+            </TableRow>
+            <TableRow>
+              <TableHead>
                 <input
                   placeholder="Filtrer..."
                   value={filtres._cle || ""}
                   onChange={(e) => setFiltres({ ...filtres, _cle: e.target.value })}
+                  className={classesChampNatif}
                 />
-              </th>
+              </TableHead>
               {colonnes.map((champ) => (
-                <th key={champ}>
+                <TableHead key={champ}>
                   {champ === "nom" ? (
                     <input
                       placeholder="Filtrer..."
                       value={filtres[champ] || ""}
                       onChange={(e) => setFiltres({ ...filtres, [champ]: e.target.value })}
+                      className={classesChampNatif}
                     />
                   ) : colonnesFiltrables.includes(champ) ? (
                     <select
                       value={filtres[champ] || ""}
                       onChange={(e) => setFiltres({ ...filtres, [champ]: e.target.value })}
+                      className={classesChampNatif}
                     >
                       <option value="">Tous</option>
                       {optionsPourColonne(champ).map((v) => (
@@ -337,159 +351,180 @@ function TableauCapteurs({
                       ))}
                     </select>
                   ) : null}
-                </th>
+                </TableHead>
               ))}
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {lignesFiltrees.map(([cle, c]) => {
-              const edition = enEdition?.cle === cle;
-              return (
-                <tr key={cle}>
-                  <td>{cle}</td>
-                  {colonnes.map((champ) => (
-                    <td key={champ}>
-                      {edition && champsEditables.includes(champ) ? (
-                        champ === "ingestion" ? (
-                          <input
-                            type="checkbox"
-                            checked={enEdition.valeurs.ingestion}
-                            onChange={(e) =>
-                              setEnEdition({
-                                ...enEdition,
-                                valeurs: { ...enEdition.valeurs, ingestion: e.target.checked },
-                              })
-                            }
-                          />
-                        ) : champ === "lint_cible_s" ? (
-                          c.famille_capteur === "bluemaestro" ? (
-                            <select
-                              value={enEdition.valeurs.lint_cible_s}
-                              onChange={(e) =>
-                                setEnEdition({
-                                  ...enEdition,
-                                  valeurs: { ...enEdition.valeurs, lint_cible_s: Number(e.target.value) },
-                                })
-                              }
-                            >
-                              {PRESETS_LINT_CIBLE_S.map((p) => (
-                                <option key={p.s} value={p.s}>
-                                  {p.libelle}
-                                </option>
-                              ))}
-                            </select>
-                          ) : c.famille_capteur === "ela" ? (
-                            <input
-                              placeholder="Pense-bête, ex. « 5 min »"
-                              value={enEdition.valeurs.note_frequence_nfc}
-                              onChange={(e) =>
-                                setEnEdition({
-                                  ...enEdition,
-                                  valeurs: { ...enEdition.valeurs, note_frequence_nfc: e.target.value },
-                                })
-                              }
-                            />
-                          ) : (
-                            "—"
-                          )
-                        ) : champ === "nom_mur" || champ === "nom_couche" ? (
-                          <ChampSelectOuAutre
-                            valeur={enEdition.valeurs[champ]}
-                            options={champ === "nom_mur" ? mursConnus : couchesConnues}
-                            onChange={(v) =>
-                              setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, [champ]: v } })
-                            }
-                          />
-                        ) : (
-                          <input
-                            value={enEdition.valeurs[champ]}
-                            onChange={(e) =>
-                              setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, [champ]: e.target.value } })
-                            }
-                          />
-                        )
-                      ) : champ === "ingestion" ? (
-                        c.ingestion ? (
-                          <Pastille etat="ok" texte="Oui" />
-                        ) : (
-                          "—"
-                        )
-                      ) : champ === "derniere_detection" ? (
-                        (() => {
-                          const { texte, etat } = etatDerniereDetection(c.derniere_detection);
-                          return <Pastille etat={etat} texte={texte} />;
-                        })()
-                      ) : champ === "derniere_batterie" ? (
-                        (() => {
-                          const info = etatBatterie(c.derniere_batterie, c.famille_capteur, c.derniere_detection);
-                          return info ? <Pastille etat={info.etat} texte={info.texte} /> : "—";
-                        })()
-                      ) : champ === "dernier_rssi" ? (
-                        c.dernier_rssi !== undefined && c.dernier_rssi !== null ? (
-                          c.dernier_rssi
-                        ) : (
-                          "—"
-                        )
-                      ) : champ === "lint_cible_s" ? (
-                        c.famille_capteur === "bluemaestro" ? (
-                          (() => {
-                            const cible = c.lint_cible_s ?? 86400;
-                            const applique = c.lint_max_confirme_s;
-                            return applique === cible ? (
-                              <Pastille etat="ok" texte={formatDuree(applique)} />
-                            ) : (
-                              <Pastille
-                                etat="attention"
-                                texte={`${formatDuree(cible)} (cible${
-                                  applique != null ? `, ${formatDuree(applique)} appliqué` : ", en attente"
-                                })`}
+              <TableHead></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {chargement
+              ? Array.from({ length: 5 }, (_, i) => (
+                  <TableRow key={`squelette-${i}`}>
+                    <TableCell>
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
+                    {colonnes.map((champ) => (
+                      <TableCell key={champ}>
+                        <Skeleton className="h-4 w-full" />
+                      </TableCell>
+                    ))}
+                    <TableCell>
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
+                  </TableRow>
+                ))
+              : lignesFiltrees.map(([cle, c]) => {
+                  const edition = enEdition?.cle === cle;
+                  return (
+                    <TableRow key={cle}>
+                      <TableCell>{cle}</TableCell>
+                      {colonnes.map((champ) => (
+                        <TableCell key={champ} className="whitespace-normal">
+                          {edition && champsEditables.includes(champ) ? (
+                            champ === "ingestion" ? (
+                              <Checkbox
+                                checked={enEdition.valeurs.ingestion}
+                                onCheckedChange={(checked) =>
+                                  setEnEdition({
+                                    ...enEdition,
+                                    valeurs: { ...enEdition.valeurs, ingestion: checked === true },
+                                  })
+                                }
                               />
-                            );
-                          })()
-                        ) : c.famille_capteur === "ela" ? (
-                          <div>
-                            <div>NFC : {c.note_frequence_nfc || "—"}</div>
-                            <div style={{ fontSize: "0.85em", opacity: 0.7 }}>
-                              Observé :{" "}
-                              {c.derniere_mesure?.intervalle_observe_s != null
-                                ? formatDuree(Math.round(c.derniere_mesure.intervalle_observe_s))
-                                : "—"}
-                            </div>
+                            ) : champ === "lint_cible_s" ? (
+                              c.famille_capteur === "bluemaestro" ? (
+                                <select
+                                  value={enEdition.valeurs.lint_cible_s}
+                                  onChange={(e) =>
+                                    setEnEdition({
+                                      ...enEdition,
+                                      valeurs: { ...enEdition.valeurs, lint_cible_s: Number(e.target.value) },
+                                    })
+                                  }
+                                  className={classesChampNatif}
+                                >
+                                  {PRESETS_LINT_CIBLE_S.map((p) => (
+                                    <option key={p.s} value={p.s}>
+                                      {p.libelle}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : c.famille_capteur === "ela" ? (
+                                <input
+                                  placeholder="Pense-bête, ex. « 5 min »"
+                                  value={enEdition.valeurs.note_frequence_nfc}
+                                  onChange={(e) =>
+                                    setEnEdition({
+                                      ...enEdition,
+                                      valeurs: { ...enEdition.valeurs, note_frequence_nfc: e.target.value },
+                                    })
+                                  }
+                                  className={classesChampNatif}
+                                />
+                              ) : (
+                                "—"
+                              )
+                            ) : champ === "nom_mur" || champ === "nom_couche" ? (
+                              <ChampSelectOuAutre
+                                valeur={enEdition.valeurs[champ]}
+                                options={champ === "nom_mur" ? mursConnus : couchesConnues}
+                                onChange={(v) =>
+                                  setEnEdition({ ...enEdition, valeurs: { ...enEdition.valeurs, [champ]: v } })
+                                }
+                              />
+                            ) : (
+                              <input
+                                value={enEdition.valeurs[champ]}
+                                onChange={(e) =>
+                                  setEnEdition({
+                                    ...enEdition,
+                                    valeurs: { ...enEdition.valeurs, [champ]: e.target.value },
+                                  })
+                                }
+                                className={classesChampNatif}
+                              />
+                            )
+                          ) : champ === "ingestion" ? (
+                            c.ingestion ? (
+                              <Pastille etat="ok" texte="Oui" />
+                            ) : (
+                              "—"
+                            )
+                          ) : champ === "derniere_detection" ? (
+                            (() => {
+                              const { texte, etat } = etatDerniereDetection(c.derniere_detection);
+                              return <Pastille etat={etat} texte={texte} />;
+                            })()
+                          ) : champ === "derniere_batterie" ? (
+                            (() => {
+                              const info = etatBatterie(c.derniere_batterie, c.famille_capteur, c.derniere_detection);
+                              return info ? <Pastille etat={info.etat} texte={info.texte} /> : "—";
+                            })()
+                          ) : champ === "dernier_rssi" ? (
+                            <span className="font-mono">
+                              {c.dernier_rssi !== undefined && c.dernier_rssi !== null ? c.dernier_rssi : "—"}
+                            </span>
+                          ) : champ === "lint_cible_s" ? (
+                            c.famille_capteur === "bluemaestro" ? (
+                              (() => {
+                                const cible = c.lint_cible_s ?? 86400;
+                                const applique = c.lint_max_confirme_s;
+                                return applique === cible ? (
+                                  <Pastille etat="ok" texte={formatDuree(applique)} />
+                                ) : (
+                                  <Pastille
+                                    etat="attention"
+                                    texte={`${formatDuree(cible)} (cible${
+                                      applique != null ? `, ${formatDuree(applique)} appliqué` : ", en attente"
+                                    })`}
+                                  />
+                                );
+                              })()
+                            ) : c.famille_capteur === "ela" ? (
+                              <div>
+                                <div>NFC : {c.note_frequence_nfc || "—"}</div>
+                                <div className="text-xs opacity-70">
+                                  Observé :{" "}
+                                  {c.derniere_mesure?.intervalle_observe_s != null
+                                    ? formatDuree(Math.round(c.derniere_mesure.intervalle_observe_s))
+                                    : "—"}
+                                </div>
+                              </div>
+                            ) : (
+                              "—"
+                            )
+                          ) : champ === "derniere_mesure" ? (
+                            (() => {
+                              const info = texteMesure(c.derniere_mesure);
+                              return info ? <Pastille etat={info.etat} texte={info.texte} /> : "—";
+                            })()
+                          ) : (
+                            c[champ]
+                          )}
+                        </TableCell>
+                      ))}
+                      <TableCell>
+                        {edition ? (
+                          <div className="flex gap-1.5">
+                            <Button size="sm" onClick={valider} disabled={enCours}>
+                              {enCours ? "..." : "Enregistrer"}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setEnEdition(null)} disabled={enCours}>
+                              Annuler
+                            </Button>
                           </div>
                         ) : (
-                          "—"
-                        )
-                      ) : champ === "derniere_mesure" ? (
-                        (() => {
-                          const info = texteMesure(c.derniere_mesure);
-                          return info ? <Pastille etat={info.etat} texte={info.texte} /> : "—";
-                        })()
-                      ) : (
-                        c[champ]
-                      )}
-                    </td>
-                  ))}
-                  <td>
-                    {edition ? (
-                      <>
-                        <button onClick={valider} disabled={enCours}>
-                          {enCours ? "..." : "Enregistrer"}
-                        </button>{" "}
-                        <button onClick={() => setEnEdition(null)} disabled={enCours}>
-                          Annuler
-                        </button>
-                      </>
-                    ) : (
-                      <button onClick={() => demarrerEdition(cle, c)}>Éditer</button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+                          <Button size="sm" variant="outline" onClick={() => demarrerEdition(cle, c)}>
+                            Éditer
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }

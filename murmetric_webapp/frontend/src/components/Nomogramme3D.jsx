@@ -6,6 +6,8 @@ import {
   AXES_GRANDEURS,
   COULEURS_CANAUX_RETRAIT,
   FENETRE_PAR_RESOLUTION,
+  LIBELLES_RESOLUTION,
+  RESOLUTION_MAX_JOURS,
   TYPES_TRACE,
   UNITES_TEMPS,
   construireParamAxe,
@@ -100,11 +102,19 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
   // axes indépendants superposés serait illisible, contrairement au cas à
   // 2 courbes du nomogramme 2D).
   const [resolutionTemps, setResolutionTemps] = useState("jour");
+  // "Heure" grisée au-delà de RESOLUTION_MAX_JOURS.heure — cf. Nomogramme.jsx
+  // pour la justification complète (source InfluxDB retrait déjà horaire
+  // au-delà de cette plage).
+  const joursPlage = debut && fin ? (new Date(fin).getTime() - new Date(debut).getTime()) / 86_400_000 : null;
+  const heureIndisponible = joursPlage != null && joursPlage > RESOLUTION_MAX_JOURS.heure;
+  useEffect(() => {
+    if (heureIndisponible && resolutionTemps === "heure") setResolutionTemps("jour");
+  }, [heureIndisponible]); // eslint-disable-line react-hooks/exhaustive-deps
   const [survolTemps, setSurvolTemps] = useState(null);
-  const [couleurX, setCouleurX] = useState("#7fd4ff");
-  const [couleurY, setCouleurY] = useState("#ffb37f");
-  const [couleurZ, setCouleurZ] = useState("#c47fff"); // pas #7fff9e (déjà pris par le marqueur de croisement)
-  const [couleurFond, setCouleurFond] = useState("#12141c");
+  const [couleurX, setCouleurX] = useState("#2563eb");
+  const [couleurY, setCouleurY] = useState("#ea580c");
+  const [couleurZ, setCouleurZ] = useState("#9333ea"); // pas #16a34a (déjà pris par le marqueur de croisement)
+  const [couleurFond, setCouleurFond] = useState("#ffffff");
 
   const [yaw, setYaw] = useState(VUES_PREREGLEES.isometrique.yaw);
   const [pitch, setPitch] = useState(VUES_PREREGLEES.isometrique.pitch);
@@ -323,7 +333,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
 
     const proj = (nx, ny, nz) => projeter(nx, ny, nz, yaw, pitch, zoom, w, h);
 
-    ctx.strokeStyle = "#2a2e3a";
+    ctx.strokeStyle = "#e2e5ea";
     ctx.lineWidth = 1;
     for (const [a, b] of ARETES_CUBE) {
       const pa = proj(...SOMMETS_CUBE[a]);
@@ -334,7 +344,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
       ctx.stroke();
     }
 
-    ctx.fillStyle = "#a0a6b5";
+    ctx.fillStyle = "#6b7280";
     ctx.font = "11px system-ui";
     const origine = proj(-1, -1, -1);
     const boutX = proj(1, -1, -1),
@@ -364,7 +374,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         });
         Object.entries(projetesParCanal).forEach(([c, pts]) => {
           if (pts.length < 2) return;
-          ctx.strokeStyle = COULEURS_CANAUX_RETRAIT[c] || "#a0a6b5";
+          ctx.strokeStyle = COULEURS_CANAUX_RETRAIT[c] || "#6b7280";
           ctx.lineWidth = 1;
           for (let i = 0; i < pts.length - 1; i++) {
             ctx.beginPath();
@@ -382,7 +392,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         const parProfondeur = [...projetes].sort((a, b) => a.profondeur - b.profondeur);
         for (const pp of parProfondeur) {
           const estSurvole = survol && survol.point === pp.point;
-          ctx.fillStyle = estSurvole ? "#ffffff" : COULEURS_CANAUX_RETRAIT[pp.point.canal] || "#a0a6b5";
+          ctx.fillStyle = estSurvole ? "#1a1d23" : COULEURS_CANAUX_RETRAIT[pp.point.canal] || "#6b7280";
           ctx.beginPath();
           ctx.arc(pp.x, pp.y, estSurvole ? 5 : 3, 0, 2 * Math.PI);
           ctx.fill();
@@ -390,7 +400,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
       } else if (survol) {
         const pp = projetes.find((p) => p.point === survol.point);
         if (pp) {
-          ctx.fillStyle = "#ffffff";
+          ctx.fillStyle = "#1a1d23";
           ctx.beginPath();
           ctx.arc(pp.x, pp.y, 5, 0, 2 * Math.PI);
           ctx.fill();
@@ -406,9 +416,9 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         .forEach((c, i) => {
           const ly = 14 + i * 16;
           const xTexte = w - 8 - ctx.measureText(c).width;
-          ctx.fillStyle = COULEURS_CANAUX_RETRAIT[c] || "#a0a6b5";
+          ctx.fillStyle = COULEURS_CANAUX_RETRAIT[c] || "#6b7280";
           ctx.fillRect(xTexte - 14, ly, 10, 10);
-          ctx.fillStyle = "#e6e6e6";
+          ctx.fillStyle = "#1a1d23";
           ctx.fillText(c, xTexte, ly + 9);
         });
     } else {
@@ -434,7 +444,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         for (const pp of parProfondeur) {
           const hue = 220 - pp.frac * 220;
           const estSurvole = survol && survol.point === pp.point;
-          ctx.fillStyle = estSurvole ? "#ffffff" : `hsl(${hue}, 80%, 60%)`;
+          ctx.fillStyle = estSurvole ? "#1a1d23" : `hsl(${hue}, 80%, 60%)`;
           ctx.beginPath();
           ctx.arc(pp.x, pp.y, estSurvole ? 5 : 3, 0, 2 * Math.PI);
           ctx.fill();
@@ -444,7 +454,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         // marqueur au survol pour la lecture de valeur.
         const pp = projetes.find((p) => p.point === survol.point);
         if (pp) {
-          ctx.fillStyle = "#ffffff";
+          ctx.fillStyle = "#1a1d23";
           ctx.beginPath();
           ctx.arc(pp.x, pp.y, 5, 0, 2 * Math.PI);
           ctx.fill();
@@ -466,7 +476,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
       const hauteurBoite = 10 + lignesInfobulle.length * 12;
       ctx.fillStyle = "#0f1117";
       ctx.fillRect(survol.x + 8, survol.y - hauteurBoite + 6, largeurBoite, hauteurBoite);
-      ctx.strokeStyle = "#7fd4ff";
+      ctx.strokeStyle = "#2563eb";
       ctx.strokeRect(survol.x + 8, survol.y - hauteurBoite + 6, largeurBoite, hauteurBoite);
       ctx.fillStyle = "#e6e6e6";
       lignesInfobulle.forEach((ligne, i) => {
@@ -486,7 +496,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
       const [nx, ny, nz] = normaliser(c, bornes);
       const pp = proj(nx, ny, nz);
       const estSurvole = survol && survol.point === c;
-      const couleur = estSurvole ? "#ffffff" : "#7fff9e";
+      const couleur = estSurvole ? "#1a1d23" : "#16a34a";
       ctx.fillStyle = couleur;
       ctx.beginPath();
       ctx.arc(pp.x, pp.y, estSurvole ? 7 : 5, 0, 2 * Math.PI);
@@ -552,8 +562,8 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
     const tx = (t) => marge + ((t - tMin) / (tMax - tMin || 1)) * (w - marge - 20);
     const ty = (v) => h - marge - ((v - (vMin - padV)) / (vMax + padV - (vMin - padV) || 1)) * (h - marge - 20);
 
-    ctx.strokeStyle = "#2a2e3a";
-    ctx.fillStyle = "#a0a6b5";
+    ctx.strokeStyle = "#e2e5ea";
+    ctx.fillStyle = "#6b7280";
     ctx.font = "11px system-ui";
     ctx.lineWidth = 1;
     for (const gv of graduations(vMin - padV, vMax + padV)) {
@@ -565,15 +575,16 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
     }
     for (const tick of graduationsTemps(tMin, tMax, resolutionTemps)) {
       const px = tx(tick.t);
-      ctx.strokeStyle = "#2a2e3a";
+      ctx.strokeStyle = "#e2e5ea";
       ctx.beginPath();
       ctx.moveTo(px, 10);
       ctx.lineTo(px, h - marge);
       ctx.stroke();
-      ctx.fillStyle = "#a0a6b5";
+      ctx.fillStyle = "#6b7280";
       ctx.fillText(tick.label, px - 15, h - marge + 16);
     }
-    ctx.fillText("Temps", w - 40, h - marge + 34);
+    const libelleTemps = `Temps (${LIBELLES_RESOLUTION[resolutionTemps]})`;
+    ctx.fillText(libelleTemps, w - 8 - ctx.measureText(libelleTemps).width, h - marge + 34);
     ctx.save();
     ctx.translate(14, marge - 4);
     ctx.rotate(-Math.PI / 2);
@@ -629,7 +640,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
       const xTexte = w - 8 - ctx.measureText(libelle).width;
       ctx.fillStyle = COULEURS_ROLE[role];
       ctx.fillRect(xTexte - 14, ly, 10, 10);
-      ctx.fillStyle = "#e6e6e6";
+      ctx.fillStyle = "#1a1d23";
       ctx.fillText(libelle, xTexte, ly + 9);
     });
 
@@ -640,14 +651,14 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
     croisements.forEach((c) => {
       if (c.time == null) return;
       const px = tx(new Date(c.time).getTime());
-      ctx.strokeStyle = "#7fff9e";
+      ctx.strokeStyle = "#16a34a";
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(px, 10);
       ctx.lineTo(px, h - marge);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "#7fff9e";
+      ctx.fillStyle = "#16a34a";
       rolesPresents.forEach((role) => {
         if (c[role] == null) return;
         ctx.beginPath();
@@ -697,7 +708,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
       const boiteX = pxBoite + largeurBoite + 16 > w ? pxBoite - largeurBoite - 8 : pxBoite + 8;
       ctx.fillStyle = "#0f1117";
       ctx.fillRect(boiteX, pyAncrage - hauteurBoite / 2, largeurBoite, hauteurBoite);
-      ctx.strokeStyle = "#7fd4ff";
+      ctx.strokeStyle = "#2563eb";
       ctx.strokeRect(boiteX, pyAncrage - hauteurBoite / 2, largeurBoite, hauteurBoite);
       ctx.fillStyle = "#e6e6e6";
       lignesInfobulle.forEach((ligne, i) => {
@@ -916,6 +927,9 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         <div className="champ">
           <label>Résolution axe temps</label>
           <select value={resolutionTemps} onChange={(e) => setResolutionTemps(e.target.value)}>
+            <option value="heure" disabled={heureIndisponible}>
+              Heure{heureIndisponible ? ` (indisponible au-delà de ${RESOLUTION_MAX_JOURS.heure} jours)` : ""}
+            </option>
             <option value="jour">Jour</option>
             <option value="semaine">Semaine</option>
             <option value="mois">Mois</option>
@@ -974,7 +988,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
               alignItems: "center",
               gap: "0.4rem",
               fontSize: "0.78rem",
-              color: "#a0a6b5",
+              color: "#6b7280",
             }}
           >
             <span>ancien</span>
@@ -990,7 +1004,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
           </div>
         )}
       </div>
-      <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.5rem" }}>
+      <p style={{ color: "#6b7280", fontSize: "0.8rem", margin: "0 0 0.5rem" }}>
         Glisser pour tourner · molette pour zoomer · survoler un point pour lire ses 3 valeurs.
       </p>
 
@@ -1009,7 +1023,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         </div>
       </div>
       {croisements.length > 0 && (
-        <p style={{ fontSize: "0.85rem", color: "#7fff9e" }}>
+        <p style={{ fontSize: "0.85rem", color: "#16a34a" }}>
           {croisements.map((c, i) => (
             <span key={i} style={{ marginRight: "1rem" }}>
               {c.canal ? `[${c.canal}] ` : ""}
@@ -1019,9 +1033,9 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         </p>
       )}
       {erreur && <p className="erreur">{erreur}</p>}
-      {enCours && <p style={{ color: "#a0a6b5" }}>Chargement...</p>}
+      {enCours && <p style={{ color: "#6b7280" }}>Chargement...</p>}
       {!enCours && points.length === 0 && !erreur && (
-        <p style={{ color: "#a0a6b5" }}>Aucun point croisé pour cette sélection.</p>
+        <p style={{ color: "#6b7280" }}>Aucun point croisé pour cette sélection.</p>
       )}
       <canvas
         ref={canvasRef}
@@ -1036,7 +1050,7 @@ export default function Nomogramme3D({ mur, couche, debutInitial, finInitial }) 
         <BoutonsExport obtenirElement={() => canvasRef.current} type="canvas" nomFichier="nomogramme-3d" />
       )}
       <div style={{ marginTop: "1rem" }}>
-        <p style={{ color: "#a0a6b5", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
+        <p style={{ color: "#6b7280", fontSize: "0.8rem", margin: "0 0 0.25rem" }}>
           Évolution dans le temps —{" "}
           {ROLES.filter((r) => choixParRole[r] !== "temps")
             .map(libelleAxe)

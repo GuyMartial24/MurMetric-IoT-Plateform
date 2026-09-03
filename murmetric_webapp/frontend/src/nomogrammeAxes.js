@@ -19,6 +19,12 @@ const RESOLUTIONS_TEMPS_MAX_TICKS = 15;
 
 function debutPeriode(ms, resolution) {
   const d = new Date(ms);
+  // "heure" n'arrondit qu'aux minutes — contrairement aux autres résolutions,
+  // qui repartent toutes de minuit (d.setHours(0,0,0,0) plus bas).
+  if (resolution === "heure") {
+    d.setMinutes(0, 0, 0);
+    return d;
+  }
   d.setHours(0, 0, 0, 0);
   if (resolution === "semaine") {
     const jour = d.getDay();
@@ -33,7 +39,8 @@ function debutPeriode(ms, resolution) {
 
 function avancerPeriode(date, resolution) {
   const d = new Date(date);
-  if (resolution === "jour") d.setDate(d.getDate() + 1);
+  if (resolution === "heure") d.setHours(d.getHours() + 1);
+  else if (resolution === "jour") d.setDate(d.getDate() + 1);
   else if (resolution === "semaine") d.setDate(d.getDate() + 7);
   else if (resolution === "mois") d.setMonth(d.getMonth() + 1);
   else d.setFullYear(d.getFullYear() + 1);
@@ -43,6 +50,10 @@ function avancerPeriode(date, resolution) {
 function formatterPeriode(date, resolution) {
   if (resolution === "annee") return date.getFullYear().toString();
   if (resolution === "mois") return date.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+  // Date + heure (pas seulement l'heure) : à cette résolution, la plage
+  // couverte dépasse presque toujours une seule journée civile.
+  if (resolution === "heure")
+    return `${date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} ${date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
   return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
 }
 
@@ -89,15 +100,18 @@ export const CANAUX_RETRAIT = ["HA1", "HA2", "VA1", "VA2", "HB1", "HB2", "VB1", 
 // différentes — cf. discussion utilisateur du 28/08/2026). Palette fixe
 // plutôt que le dégradé temporel habituel (ancien/récent), qui n'a plus de
 // sens dès qu'on distingue des canaux plutôt qu'une seule trajectoire.
+// Teintes "600" (Tailwind) — assez foncées/saturées pour rester lisibles
+// sur le fond clair de la charte du 01/09/2026 (les pastels d'origine,
+// calibrés pour un fond quasi-noir, seraient devenus quasi invisibles).
 export const COULEURS_CANAUX_RETRAIT = {
-  HA1: "#7fd4ff",
-  HA2: "#7fff9e",
-  VA1: "#ffb37f",
-  VA2: "#ff7f9e",
-  HB1: "#c47fff",
-  HB2: "#ffe97f",
-  VB1: "#7fffe0",
-  VB2: "#ff9ff0",
+  HA1: "#0284c7",
+  HA2: "#16a34a",
+  VA1: "#ea580c",
+  VA2: "#e11d48",
+  HB1: "#9333ea",
+  HB2: "#ca8a04",
+  VB1: "#0d9488",
+  VB2: "#c026d3",
 };
 
 // Catalogue complet des grandeurs mesurables, pour le sélecteur "Grandeur"
@@ -130,10 +144,42 @@ export const TYPES_TRACE = [
 // mesures.py), jamais selon cette fenêtre. Pas d'entrée "année" — retirée
 // du sélecteur (30/08/2026, demande explicite), une agrégation annuelle
 // n'ayant guère de sens tant que le projet ne couvre pas plusieurs années.
+// "heure" ajoutée le 31/08/2026 (demande explicite) — le palier 14-90 jours
+// de _mesure_retrait calcule déjà cette fenêtre en interne (source
+// mesures_dewesoft_5m, jamais de lecture du brut) mais ne l'exposait pas
+// à l'utilisateur ; cf. RESOLUTION_MAX_JOURS ci-dessous pour la limite au
+// delà de laquelle cette résolution n'apporte plus rien.
 export const FENETRE_PAR_RESOLUTION = {
+  heure: "1h",
   jour: "1d",
   semaine: "1w",
   mois: "1mo",
+};
+
+// Plage maximale (en jours, Fin - Début) pour laquelle une résolution reste
+// pertinente côté serveur — au-delà, la source InfluxDB interrogée pour le
+// retrait devient déjà plus grossière que la résolution demandée (cf.
+// _mesure_retrait, mesures.py : source horaire au-delà de 90 jours), donc
+// "Heure" n'apporterait rien de plus que "Jour" tout en générant une
+// réponse inutilement volumineuse (des dizaines de milliers de points
+// quasi identiques). Jour/Semaine/Mois n'ont pas de plafond : les coarsir
+// sur n'importe quelle plage ne présente aucun risque, contrairement à les
+// affiner — seule "Heure" a besoin de cette limite.
+export const RESOLUTION_MAX_JOURS = {
+  heure: 90,
+};
+
+// Libellé de chaque résolution, affiché sur l'axe temps des panneaux
+// "évolution dans le temps" (31/08/2026, demande explicite) — jusqu'ici un
+// simple "Temps" fixe, sans indiquer l'unité réellement utilisée pour
+// grouper les points (dépend de la résolution choisie, elle-même souvent
+// contrainte par la plage Début/Fin, cf. RESOLUTION_MAX_JOURS). Réutilisé
+// pour composer "Temps (jour)", "Temps (heure)", etc.
+export const LIBELLES_RESOLUTION = {
+  heure: "heure",
+  jour: "jour",
+  semaine: "semaine",
+  mois: "mois",
 };
 
 export const UNITES_TEMPS = {

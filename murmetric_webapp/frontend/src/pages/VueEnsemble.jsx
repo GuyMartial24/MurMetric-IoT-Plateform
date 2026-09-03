@@ -5,7 +5,11 @@ import GraphiqueSVG from "../components/GraphiqueSVG.jsx";
 import Nomogramme from "../components/Nomogramme.jsx";
 import Nomogramme3D from "../components/Nomogramme3D.jsx";
 import SelecteurMesure from "../components/SelecteurMesure.jsx";
+import { Button } from "../components/ui/button.jsx";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card.jsx";
+import { Label } from "../components/ui/label.jsx";
 import { useEtatVueEnsemble } from "../EtatPagesContext.jsx";
+import { classesChampNatif } from "../lib/utils.js";
 import { TYPES_TRACE, libelleGrandeur } from "../nomogrammeAxes.js";
 
 export default function VueEnsemble() {
@@ -32,81 +36,108 @@ export default function VueEnsemble() {
   };
 
   return (
-    <div>
-      <div className="carte">
-        <h2>Vue d'ensemble</h2>
-        <SelecteurMesure valeur={selection} onChange={setSelection} />
-        <div className="selection-form" style={{ marginTop: "0.75rem" }}>
-          <div className="champ">
-            <label>Type de tracé</label>
-            <select value={typeTrace} onChange={(e) => setTypeTrace(e.target.value)}>
-              {TYPES_TRACE.map((t) => (
-                <option key={t.valeur} value={t.valeur}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <button onClick={charger} disabled={enCours} style={{ marginTop: "0.75rem" }}>
-          {enCours ? "Chargement..." : "Charger la courbe temporelle"}
-        </button>
-        {erreur && <p className="erreur">{erreur}</p>}
-      </div>
+    <div className="flex flex-col gap-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Vue d'ensemble</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <SelecteurMesure valeur={selection} onChange={setSelection}>
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs font-normal text-muted-foreground">Type de tracé</Label>
+              <select value={typeTrace} onChange={(e) => setTypeTrace(e.target.value)} className={classesChampNatif}>
+                {TYPES_TRACE.map((t) => (
+                  <option key={t.valeur} value={t.valeur}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </SelecteurMesure>
+          <Button onClick={charger} disabled={enCours} className="self-start">
+            {enCours ? "Chargement..." : "Charger la courbe temporelle"}
+          </Button>
+          {erreur && <p className="text-sm text-destructive">{erreur}</p>}
+        </CardContent>
+      </Card>
       {points && points.length > 0 && (
-        <div className="carte">
-          <h3 style={{ marginTop: 0 }}>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</h3>
-          <GraphiqueSVG points={points} champ={selection.champ} typeTrace={typeTrace} />
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Courbe — {libelleGrandeur(`${selection.type}:${selection.champ}`)}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <GraphiqueSVG points={points} champ={selection.champ} typeTrace={typeTrace} />
+          </CardContent>
+        </Card>
       )}
       {points && points.length === 0 && (
-        <div className="carte">
-          <p>
-            Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie le
-            mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
-          </p>
-        </div>
+        <Card>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Aucune donnée pour cette sélection sur la période choisie — essaie d'élargir la période, ou vérifie le
+              mur/la couche (la dernière mesure disponible peut être plus ancienne que la période demandée).
+            </p>
+          </CardContent>
+        </Card>
       )}
       {(selection.type === "hr_t" || selection.type === "retrait") && (
-        <div className="carte">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Nomogramme — grandeurs croisées</h3>
-            <div>
-              <button onClick={() => setMode3D(false)} disabled={!mode3D} style={{ marginRight: "0.5rem" }}>
-                2D
-              </button>
-              <button onClick={() => setMode3D(true)} disabled={mode3D}>
-                3D (HR/T + retrait)
-              </button>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle>Nomogramme — grandeurs croisées</CardTitle>
+              <div className="flex gap-2">
+                <Button
+                  variant={!mode3D ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setMode3D(false)}
+                  disabled={!mode3D}
+                >
+                  2D
+                </Button>
+                <Button
+                  variant={mode3D ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setMode3D(true)}
+                  disabled={mode3D}
+                >
+                  3D (HR/T + retrait)
+                </Button>
+              </div>
             </div>
-          </div>
-          <p style={{ color: "#a0a6b5", fontSize: "0.85rem" }}>
-            {mode3D
-              ? "Compose librement 3 grandeurs (HR/T, retrait, temps) — glisse pour tourner, molette pour zoomer, survole un point pour lire ses valeurs."
-              : "Compose librement 2 grandeurs (HR/T, retrait, temps) — survole un point pour lire sa valeur par projection sur les axes."}
-          </p>
-          {mode3D ? (
-            <Nomogramme3D
-              mur={selection.mur}
-              couche={selection.couche}
-              debutInitial={selection.debut}
-              finInitial={selection.fin}
-            />
-          ) : (
-            <Nomogramme
-              mur={selection.mur}
-              couche={selection.couche}
-              debutInitial={selection.debut}
-              finInitial={selection.fin}
-            />
-          )}
-        </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              {mode3D
+                ? "Compose librement 3 grandeurs (HR/T, retrait, temps) — glisse pour tourner, molette pour zoomer, survole un point pour lire ses valeurs."
+                : "Compose librement 2 grandeurs (HR/T, retrait, temps) — survole un point pour lire sa valeur par projection sur les axes."}
+            </p>
+            {mode3D ? (
+              <Nomogramme3D
+                mur={selection.mur}
+                couche={selection.couche}
+                debutInitial={selection.debut}
+                finInitial={selection.fin}
+              />
+            ) : (
+              <Nomogramme
+                mur={selection.mur}
+                couche={selection.couche}
+                debutInitial={selection.debut}
+                finInitial={selection.fin}
+              />
+            )}
+          </CardContent>
+        </Card>
       )}
       {selection.type === "retrait" && (
-        <div className="carte">
-          <h3 style={{ marginTop: 0 }}>Filtre de Hampel — comparer brut/filtré avec un réglage ajustable</h3>
-          <FiltreHampel mur={selection.mur} />
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Filtre de Hampel — comparer brut/filtré avec un réglage ajustable</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FiltreHampel mur={selection.mur} />
+          </CardContent>
+        </Card>
       )}
     </div>
   );
