@@ -196,6 +196,38 @@ complément des mesures automatiques des capteurs.
 
 ![Teneur en eau](docs/screenshots/teneur-eau.png)
 
+### Dashboards Grafana intégrés
+
+Vue Grafana en lecture seule, embarquée directement dans la webapp — accès
+rapide sans changer d'outil, avec un lien vers l'instance Grafana complète
+pour composer ses propres panneaux.
+
+![Grafana intégré](docs/screenshots/grafana.png)
+
+### Export de données
+
+Génère des fichiers CSV/Parquet côté serveur sur une période choisie —
+téléchargement direct pour une période raisonnable, ou tâche de fond pour un
+historique complet.
+
+![Export de données](docs/screenshots/export.png)
+
+### Assistant IA
+
+Assistant ancré sur la sélection courante (mur/couche/période), qui ne
+raisonne que sur des statistiques pré-agrégées — jamais sur les points
+bruts — sauf lorsqu'une image de graphique lui est jointe pour analyse
+visuelle directe.
+
+![Assistant IA](docs/screenshots/assistant.png)
+
+### Paramètres du compte
+
+Gestion du compte connecté (changement de mot de passe, création de
+nouveaux comptes) et configuration des identifiants API de l'Assistant IA.
+
+![Paramètres](docs/screenshots/parametres.png)
+
 ---
 
 ## 6. Capteurs utilisés
