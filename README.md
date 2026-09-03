@@ -12,13 +12,14 @@
 2. [Enjeux du projet](#2-enjeux-du-projet)
 3. [Contraintes techniques](#3-contraintes-techniques)
 4. [Architecture générale](#4-architecture-générale)
-5. [Capteurs utilisés](#5-capteurs-utilisés)
-6. [Choix technologiques](#6-choix-technologiques)
-7. [Structure du projet](#7-structure-du-projet)
-8. [Installation et déploiement](#8-installation-et-déploiement)
-9. [Configuration des capteurs](#9-configuration-des-capteurs)
-10. [Déploiement Kubernetes (SaaS)](#10-déploiement-kubernetes-saas)
-11. [Auteur et organisation](#11-auteur-et-organisation)
+5. [Interface web (webapp)](#5-interface-web-webapp)
+6. [Capteurs utilisés](#6-capteurs-utilisés)
+7. [Choix technologiques](#7-choix-technologiques)
+8. [Structure du projet](#8-structure-du-projet)
+9. [Installation et déploiement](#9-installation-et-déploiement)
+10. [Configuration des capteurs](#10-configuration-des-capteurs)
+11. [Déploiement Kubernetes (SaaS)](#11-déploiement-kubernetes-saas)
+12. [Auteur et organisation](#12-auteur-et-organisation)
 
 ---
 
@@ -160,9 +161,44 @@ Les défis sont multiples :
 | Terrain → VPS | SQLite local + republication auto | Coupure réseau, VPS inaccessible |
 | Mosquitto → InfluxDB | Kafka (rétention 7 jours) | Crash InfluxDB, redémarrage consumer |
 
+Cette résilience est directement observable depuis la webapp, sur la page
+**Monitoring des pipelines d'ingestion** : fraîcheur des données réellement
+écrites en InfluxDB, état des connexions MQTT et des buffers locaux — un
+coup d'œil suffit pour repérer un capteur ou une passerelle qui décroche.
+
+![Monitoring des pipelines d'ingestion](docs/screenshots/monitoring.png)
+
 ---
 
-## 5. Capteurs utilisés
+## 5. Interface web (webapp)
+
+L'interface web **MurMetric** (React + Tailwind CSS + shadcn/ui, servie par
+FastAPI) donne aux équipes FRD-CODEM un accès direct aux données sans passer
+par les outils techniques du pipeline (Grafana, InfluxDB).
+
+### Connexion
+
+![Login](docs/screenshots/login.png)
+
+### Vue d'ensemble — nomogramme de croisement 2D/3D
+
+Compose librement deux grandeurs (température, humidité, retrait, temps) et
+affiche leur relation ainsi que leur évolution dans le temps, avec survol
+multi-courbes pour lire précisément chaque valeur.
+
+![Vue d'ensemble](docs/screenshots/vue-ensemble.png)
+
+### Saisies de teneur en eau
+
+Historique des relevés terrain (teneur en eau par mur/couche, cf. section 1
+— cinétiques de séchage), saisie manuelle et import rétroactif, en
+complément des mesures automatiques des capteurs.
+
+![Teneur en eau](docs/screenshots/teneur-eau.png)
+
+---
+
+## 6. Capteurs utilisés
 
 ### Blue Maestro Disc Maxi (température + humidité)
 
@@ -190,7 +226,7 @@ maximiser l'autonomie. Cette configuration est automatique au démarrage via
 
 ---
 
-## 6. Choix technologiques
+## 7. Choix technologiques
 
 ### Python
 
@@ -258,7 +294,7 @@ Orchestration pour le passage en mode **SaaS multi-clients** :
 
 ---
 
-## 7. Structure du projet
+## 8. Structure du projet
 
 ```
 MurMetric-IoT-Plateform/
@@ -296,12 +332,12 @@ MurMetric-IoT-Plateform/
 │   ├── bridge-mqtt-kafka/  (deployment, configmap)
 │   └── kafka-consumer-influx/  (deployment — scalable)
 │
-└── 📄 logique_projet.md                 # Documentation technique détaillée
+└── 📁 murmetric_webapp/                 # Interface web (React + FastAPI)
 ```
 
 ---
 
-## 8. Installation et déploiement
+## 9. Installation et déploiement
 
 ### Prérequis
 
@@ -376,7 +412,7 @@ docker compose logs -f kafka-consumer
 
 ---
 
-## 9. Configuration des capteurs
+## 10. Configuration des capteurs
 
 Les capteurs BLE sont gérés via `capteurs.json`, un fichier JSON avec
 **hot-reload** : toute modification est prise en compte sans redémarrage.
@@ -419,9 +455,17 @@ topic `frd/capteurs/registre` et stockée dans la mesure `registre_capteurs`
 d'InfluxDB. Les applications clientes peuvent ainsi interroger les métadonnées
 (GPS, prestation, catégorie R&D) en même temps que les mesures.
 
+Ce registre est directement consultable et éditable depuis la webapp (page
+**Capteurs**) : identifiant, mur, couche, dernière détection, batterie, RSSI,
+avec filtres et export CSV/Excel — l'étape "Validation opérateur" du workflow
+ci-dessus se fait typiquement ici plutôt qu'en éditant `capteurs.json` à la
+main.
+
+![Gestion des capteurs](docs/screenshots/capteurs.png)
+
 ---
 
-## 10. Déploiement Kubernetes (SaaS)
+## 11. Déploiement Kubernetes (SaaS)
 
 La cible à long terme de MurMetric est une **offre SaaS** permettant à d'autres
 maîtres d'ouvrage, bureaux d'études et laboratoires de déployer la même
@@ -462,7 +506,7 @@ l'isolation des données entre clients.
 
 ---
 
-## 11. Auteur et organisation
+## 12. Auteur et organisation
 
 ### Auteur
 
@@ -487,7 +531,5 @@ environnementale.
 ![Docker](https://img.shields.io/badge/Docker-Compose-blue)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-k3s-blue)
 ![BLE](https://img.shields.io/badge/BLE-bleak-lightblue)
-
----
-
-*Documentation technique détaillée : voir [logique_projet.md](logique_projet.md)*
+![React](https://img.shields.io/badge/React-19-61DAFB)
+![Tailwind](https://img.shields.io/badge/Tailwind_CSS-v4-38BDF8)
