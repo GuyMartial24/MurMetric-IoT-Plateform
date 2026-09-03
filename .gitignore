@@ -46,6 +46,11 @@ murmetric_mosquitto_ca.pem
 # Documents tiers (PDFs, fichiers perso Sofiane Bourbia)
 Sofiane_Bourbia/
 
+# Documents personnels (thèse) — jamais dans ce repo
+Thèse_professionnelle_UTT/
+Plan_These_*.docx
+*.docx
+
 # Données POC / relevés terrain — volumineuses (data_retrait/ ~4 Go) et sans
 # équivalent dans le produit final (cf. logique_projet.md section 18) : ne
 # jamais versionner, seuls les scripts qui les traitent le sont.
