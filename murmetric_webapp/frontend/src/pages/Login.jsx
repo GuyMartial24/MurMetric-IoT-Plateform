@@ -75,7 +75,13 @@ export default function Login({ onConnecte }) {
 function LogoLight({ taille = 32 }) {
   return (
     <div
-      style={{ display: "flex", alignItems: "center", gap: "0.6rem", justifyContent: "center", flexDirection: "column" }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.6rem",
+        justifyContent: "center",
+        flexDirection: "column",
+      }}
     >
       <svg width={taille} height={taille} viewBox="0 0 64 64" aria-hidden="true">
         <path
