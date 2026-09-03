@@ -1,0 +1,47 @@
+{
+  "_schema": {
+    "_description": "Mapping MAC → identité et configuration des capteurs BLE (Blue Maestro et ELA Innovation). JSON ne supporte pas les commentaires : ce champ _schema documente la structure. Ne pas modifier les valeurs commençant par _ ni le champ mac.",
+    "mac": "Adresse BLE du capteur (XX:XX:XX:XX:XX:XX, majuscules). LECTURE SEULE — doit correspondre à la clé parente. Format provisoire accepté (8 caractères hex, sans ':') tant que la MAC complète n'est pas connue — cf. mac_complete_connue.",
+    "mac_complete_connue": "false = la clé/mac est un identifiant provisoire à 4 octets (issu d'un export historique BlueMaestro, pas d'un scan BLE réel) — à réconcilier avec la vraie MAC 6 octets (mêmes 4 premiers octets) dès qu'un scan BLE réel détecte ce capteur. Absent ou true = MAC réelle confirmée par scan BLE.",
+    "famille_capteur": "\"bluemaestro\" ou \"ela\" — LECTURE SEULE, déterminée automatiquement à l'auto-enregistrement selon le décodeur qui a reconnu le paquet BLE (cf. ingestion_capteurs_bluetooth.py). Absent sur les entrées créées avant le 11/08/2026 : traité comme \"bluemaestro\" par défaut (comportement historique). Sert uniquement à exclure les capteurs ELA de la reconfiguration GATT périodique (lint_configure n'a pas de sens pour eux, configuration par NFC).",
+    "numero_capteur_hr_t": "Numéro de capteur historique du parc BlueMaestro HR/T, tel qu'utilisé dans les noms de fichiers d'export. Traçabilité uniquement, non utilisé par le code.",
+    "nom": "Nom lisible du capteur (ex. disc-maxi-A03). Libre, éditable par l'utilisateur.",
+    "emplacement": "Localisation physique textuelle (ex. Atelier Nord — Paroi A). Libre, éditable.",
+    "nom_mur": "Nom du mur/paroi dans lequel le capteur est embarqué (ex. 'Mur 1', librement renommable). Éditable ; laisser vide si non applicable (ex. capteur ambiant non embarqué dans une paroi).",
+    "nom_couche": "Nom de la couche de la paroi où se trouve le capteur (ex. 'Milieu isolant'). Éditable ; laisser vide si non applicable.",
+    "position": "Position latérale du capteur sur le mur pour cette couche (ex. 'Bas gauche'). Éditable ; laisser vide si non applicable.",
+    "prestation": "Référence de la prestation ou du contrat auquel ce capteur est rattaché. Libre.",
+    "categorie R&D": "Catégorie R&D associée au capteur (ex. Hygrothermal, Retrait, Thermique). Libre.",
+    "ingestion": "true = mesures publiées sur MQTT ; false (défaut) = capteur exclu de l'ingestion.",
+    "lint_configure": "true une fois que configure_capteurs.py a réglé l'intervalle de log au maximum.",
+    "lint_max_confirme_s": "Valeur d'intervalle de log réellement appliquée par le firmware (secondes).",
+    "lint_gatt_absent": "true si le service GATT Nordic UART est absent sur ce capteur.",
+    "lint_gatt_non_supporte": "true si la commande setlog~/lint a retourné 'Unknown Command'."
+  },
+  "AA:BB:CC:11:22:33": {
+    "mac": "AA:BB:CC:11:22:33",
+    "nom": "disc-maxi-EX01",
+    "emplacement": "Atelier de démonstration",
+    "nom_mur": "Mur test 1",
+    "nom_couche": "milieu isolant",
+    "position": "",
+    "prestation": "DEMO-001",
+    "categorie R&D": "Hygrothermal",
+    "ingestion": true,
+    "lint_configure": true,
+    "lint_max_confirme_s": 86400.0
+  },
+  "AA:BB:CC:11:22:34": {
+    "mac": "AA:BB:CC:11:22:34",
+    "nom": "disc-maxi-EX02",
+    "emplacement": "Atelier de démonstration",
+    "nom_mur": "Mur test 1",
+    "nom_couche": "interface carreau isolant",
+    "position": "",
+    "prestation": "DEMO-001",
+    "categorie R&D": "Hygrothermal",
+    "ingestion": true,
+    "lint_configure": true,
+    "lint_max_confirme_s": 86400.0
+  }
+}

@@ -33,6 +33,13 @@ lancer_ingestion_dewesoft.bat
 lancer_ingestion_capteurs.sh
 murmetric_mosquitto_ca.pem
 
+# Vraies données FRD-CODEM (coordonnées GPS de chantiers, codes prestation
+# clients) — remplacées dans le repo par capteurs.example.json et
+# capteurs_retrait.example.json (données factices). Les vraies valeurs
+# vivent uniquement dans la doc de déploiement locale, hors GitHub.
+capteurs.json
+capteurs_retrait.json
+
 # Dossier virtuel Python
 .venv/
 

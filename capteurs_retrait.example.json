@@ -1,0 +1,30 @@
+{
+  "_schema": {
+    "_description": "Mapping nom de canal DeweSoft (fichiers .dxd) → étiquetage mur/couche/position pour les capteurs de retrait filaires. Contrairement aux capteurs BLE (capteurs.json), pas d'adresse MAC ni de découverte automatique : un canal est défini une fois pour toutes par le câblage du rig DeweSoft. Ce fichier est auto-enregistré (entrée vide créée à la première lecture d'un canal inconnu par ingestion_dewesoft_dxd.py), puis complété librement par l'utilisateur. Séparé de capteurs.json car les champs BLE (mac, lint_configure, lint_gatt_absent...) n'ont pas de sens pour un canal filaire.",
+    "canal": "Nom du canal tel qu'il apparaît dans les fichiers .dxd (ex. 'HA1'). LECTURE SEULE — doit correspondre à la clé parente.",
+    "nom_mur": "Nom du mur/paroi sur lequel le capteur est monté (ex. 'Mur 1', librement renommable). Éditable ; vide si non applicable/inconnu.",
+    "nom_couche": "Couche de la paroi, si applicable (rare pour un capteur monté en surface). Éditable ; vide par défaut.",
+    "position": "Position du capteur sur le mur (ex. 'Bas gauche'), si connue. Éditable ; vide par défaut.",
+    "categorie R&D": "Catégorie R&D associée (ex. 'Retrait'). Libre.",
+    "prestation": "Référence de la prestation ou du contrat associé. Libre.",
+    "ingestion": "true = ce canal est pris en compte par ingestion_dewesoft_dxd.py ; false (valeur par défaut à l'auto-enregistrement) = exclu tant que l'utilisateur n'a pas validé l'étiquetage."
+  },
+  "HA1": {
+    "canal": "HA1",
+    "nom_mur": "Mur test 1",
+    "nom_couche": "Pas de couche",
+    "position": "bas",
+    "categorie R&D": "Retrait",
+    "prestation": "DEMO-001",
+    "ingestion": true
+  },
+  "HA2": {
+    "canal": "HA2",
+    "nom_mur": "Mur test 1",
+    "nom_couche": "Pas de couche",
+    "position": "haut",
+    "categorie R&D": "Retrait",
+    "prestation": "DEMO-001",
+    "ingestion": true
+  }
+}
