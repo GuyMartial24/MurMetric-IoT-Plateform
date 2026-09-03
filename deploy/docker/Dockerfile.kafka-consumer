@@ -11,9 +11,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements-vps.txt ./
+COPY pipeline/requirements-vps.txt ./
 RUN pip install --no-cache-dir -r requirements-vps.txt
 
-COPY kafka_consumer_influx.py ./
+COPY pipeline/kafka_consumer_influx.py ./
 
 CMD ["python", "-u", "kafka_consumer_influx.py"]

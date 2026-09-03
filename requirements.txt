@@ -1,9 +1,9 @@
 # Dépendances MurMetric — fichier de référence global
 #
 # Utiliser le fichier adapté à chaque cible :
-#   Raspberry Pi  → pip install -r requirements-rpi.txt
-#   PC Windows    → pip install -r requirements-windows.txt
-#   VPS cloud     → pip install -r requirements-vps.txt  (ou via docker-compose)
+#   Raspberry Pi  → pip install -r ingestion/raspberry_pi/requirements-rpi.txt
+#   PC Windows    → pip install -r ingestion/pc_amiens/requirements-windows.txt
+#   VPS cloud     → pip install -r pipeline/requirements-vps.txt  (ou via docker-compose)
 #
 # Ce fichier liste toutes les dépendances pour référence uniquement.
 
