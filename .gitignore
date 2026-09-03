@@ -51,6 +51,10 @@ Thèse_professionnelle_UTT/
 Plan_These_*.docx
 *.docx
 
+# Doc de travail interne (contexte/décisions techniques détaillées) — reste
+# local, jamais poussé sur le repo
+logique_projet.md
+
 # Données POC / relevés terrain — volumineuses (data_retrait/ ~4 Go) et sans
 # équivalent dans le produit final (cf. logique_projet.md section 18) : ne
 # jamais versionner, seuls les scripts qui les traitent le sont.
